@@ -32,6 +32,8 @@ export interface DeskRow {
 export interface FloorInput {
   root: string;
   lanes: { key: string; branch: string; main: boolean; workers: { id: string }[] }[];
+  // Department the room belongs to; each department starts its own band.
+  group?: string;
 }
 export interface FloorLayout {
   width: number;
@@ -39,6 +41,8 @@ export interface FloorLayout {
   spineX: number;
   entrance: Loc;
   corridors: { band: number; y: number; top: number }[];
+  // Vertical extent of each band and the department its rooms belong to ('' for facilities).
+  bands: { band: number; top: number; bottom: number; group: string }[];
   cells: Cell[];
   rows: DeskRow[];
   seats: Map<string, Loc & { root: string }>;
@@ -57,7 +61,7 @@ const HEAD = 60;
 const ROW_H = 92;
 const PAD_B = 22;
 const CORRIDOR_H = 56;
-const BAND_GAP = 18;
+const BAND_GAP = 30;
 export const SEAT_W = 66;
 const SEAT_PAD = 26;
 const MAX_ROWS = 3;
@@ -96,10 +100,19 @@ export function floorLayout(
   const widthOf = (span: number) => span * cellW + (span - 1) * GAP;
   const seatsIn = (w: number) => Math.max(2, Math.min(8, Math.floor((w - 2 * SEAT_PAD) / SEAT_W)));
   const facilities = [
-    { key: MEETING, kind: 'meeting' as const, rows: facilityRows, span: 1, perRow: 0 },
-    { key: LOUNGE, kind: 'lounge' as const, rows: facilityRows, span: 1, perRow: 0 },
+    { key: MEETING, kind: 'meeting' as const, rows: facilityRows, span: 1, perRow: 0, group: '' },
+    { key: LOUNGE, kind: 'lounge' as const, rows: facilityRows, span: 1, perRow: 0, group: '' },
     ...(records
-      ? [{ key: RECORDS, kind: 'records' as const, rows: facilityRows, span: 1, perRow: 0 }]
+      ? [
+          {
+            key: RECORDS,
+            kind: 'records' as const,
+            rows: facilityRows,
+            span: 1,
+            perRow: 0,
+            group: '',
+          },
+        ]
       : []),
   ];
   const projectCells = rooms.map((room) => {
@@ -115,6 +128,7 @@ export function floorLayout(
       room,
       span,
       perRow,
+      group: room.group ?? '',
       rows: Math.min(maxRows, Math.max(1, needed)),
     };
   });
@@ -125,7 +139,14 @@ export function floorLayout(
   // Row-major packing; a cell that does not fit the rest of a row starts the next one.
   const grid: { entry: Entry; col: number }[][] = [];
   let col = cols;
+  let previous: string | undefined;
   for (const entry of entries) {
+    // A new department starts on the upper row of a fresh band, so bands never mix departments.
+    if (previous !== undefined && entry.group !== previous) {
+      if (grid.length % 2 === 1) grid.push([]);
+      col = cols;
+    }
+    previous = entry.group;
     if (col + entry.span > cols) {
       grid.push([]);
       col = 0;
@@ -135,11 +156,13 @@ export function floorLayout(
   }
   const gridRows = grid.length;
   const heightOf = (r: number) =>
-    HEAD + Math.max(...grid[r].map((g) => g.entry.rows)) * ROW_H + PAD_B;
+    grid[r].length ? HEAD + Math.max(...grid[r].map((g) => g.entry.rows)) * ROW_H + PAD_B : 0;
   const cells: Cell[] = [];
   const corridors: FloorLayout['corridors'] = [];
+  const bands: FloorLayout['bands'] = [];
   let y = 0;
   for (let band = 0; band * 2 < gridRows; band++) {
+    const top = y;
     for (const upper of [true, false]) {
       const r = band * 2 + (upper ? 0 : 1);
       if (!upper) {
@@ -165,6 +188,7 @@ export function floorLayout(
       }
       y += h;
     }
+    bands.push({ band, top, bottom: y, group: grid[band * 2][0]?.entry.group ?? '' });
     y += BAND_GAP;
   }
   const height = y + LOBBY_H;
@@ -227,6 +251,7 @@ export function floorLayout(
     spineX: SPINE_W / 2,
     entrance: { x: SPINE_W / 2, y: height - 26, cell: null, band: null },
     corridors,
+    bands,
     cells,
     rows,
     seats,

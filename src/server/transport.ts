@@ -5,6 +5,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { IncomingMessage } from 'node:http';
+import { isAbsolute, resolve } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import {
   startSchema,
   answerSchema,
@@ -323,6 +325,23 @@ export async function createServer({
     const project = await inspectProject(body.root);
     store.setHarness(project.root, body.harness);
     return store.getHarness(project.root);
+  });
+  app.get('/api/departments', async () => store.listDepartments());
+  app.post('/api/departments', async (req) => {
+    const body = z
+      .object({ name: z.string().trim().min(1).max(40), root: z.string().min(1).max(4096) })
+      .strict()
+      .parse(req.body);
+    if (!isAbsolute(body.root)) throw new Error('부서 폴더는 절대 경로여야 해요.');
+    // Stored as the real path so it matches room roots, which are canonical.
+    const root = await realpath(body.root).catch(() => resolve(body.root));
+    if (store.listDepartments().some((d) => d.root === root))
+      throw new Error('이 폴더는 이미 다른 부서예요.');
+    return store.addDepartment(body.name, root);
+  });
+  app.delete<{ Params: { id: string } }>('/api/departments/:id', async (req) => {
+    store.removeDepartment(z.string().uuid().parse(req.params.id));
+    return { ok: true };
   });
   app.get('/api/rooms/aliases', async () =>
     [...store.roomAliases()].map(([source, target]) => ({ source, target })),

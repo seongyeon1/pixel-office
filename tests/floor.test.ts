@@ -199,3 +199,65 @@ test('the whole map has a records room where running automated work sits, never 
   expect(p.get('auto-1')!.x).not.toBe(p.get('auto-2')!.x);
   expect(p.get('p')!.kind).not.toBe('records');
 });
+test('rooms are assigned to the deepest department folder, the rest to 기타', async () => {
+  const { departmentOf, byDepartment, OTHER } = await import('../src/client/floor/departments.js');
+  const deps = [
+    { id: 'skt', name: 'skt', root: '/p/skt' },
+    { id: 'c', name: 'c-agent', root: '/p/skt/c-agent' },
+    { id: 'lc', name: 'langconnect', root: '/p/langconnect' },
+  ];
+  expect(departmentOf('/p/skt/zez', deps)).toBe('skt');
+  expect(departmentOf('/p/skt/c-agent/c-agent', deps)).toBe('c');
+  expect(departmentOf('/p/skt', deps)).toBe('skt');
+  expect(departmentOf('/p/sktx', deps)).toBe(OTHER);
+  expect(departmentOf('/sy/pixel', deps)).toBe(OTHER);
+  expect(
+    byDepartment(
+      [
+        { root: '/sy/pixel' },
+        { root: '/p/langconnect/repo' },
+        { root: '/p/skt/zez' },
+        { root: '/p/skt/a' },
+      ],
+      deps,
+    ).map((r) => r.root),
+  ).toEqual(['/p/skt/a', '/p/skt/zez', '/p/langconnect/repo', '/sy/pixel']);
+});
+test('each department starts its own band and bands never mix departments', () => {
+  const room = (root: string, group: string) => ({
+    root,
+    group,
+    lanes: [lane(root, [`${root}-w`])],
+  });
+  const input = [
+    room('/a1', 'A'),
+    room('/a2', 'A'),
+    room('/a3', 'A'),
+    room('/a4', 'A'),
+    room('/b1', 'B'),
+    room('/o1', 'other'),
+  ];
+  for (const width of [360, 900, 1400]) {
+    const L = floorLayout(input, width);
+    for (const a of L.cells)
+      for (const b of L.cells) if (a !== b) expect(overlaps(a, b)).toBe(false);
+    const groupOfBand = new Map<number, Set<string>>();
+    for (const c of L.cells) {
+      const g = input.find((r) => r.root === c.key)?.group ?? '';
+      groupOfBand.set(c.band, (groupOfBand.get(c.band) ?? new Set()).add(g));
+    }
+    for (const groups of groupOfBand.values()) expect(groups.size).toBe(1);
+    expect(L.bands.map((b) => b.group)).toEqual(
+      [
+        ...new Set(
+          L.cells
+            .map((c) => [c.band, input.find((r) => r.root === c.key)?.group ?? ''] as const)
+            .map(([band, g]) => `${band}:${g}`),
+        ),
+      ].map((k) => k.split(':')[1]),
+    );
+    // Seats and routes still work across department bands.
+    const path = route({ ...L.seats.get('/a1-w')! }, { ...L.seats.get('/o1-w')! }, L);
+    expect(path.at(-1)!.cell).toBe('/o1');
+  }
+});

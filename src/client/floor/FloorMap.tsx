@@ -190,6 +190,7 @@ export function FloorMap({
   onOpen,
   onOpenRoom,
   office = false,
+  departmentOf,
   merging,
   selectedId,
   label = '프로젝트 통합 맵',
@@ -205,6 +206,8 @@ export function FloorMap({
   onOpenRoom?: (root: string) => void;
   // One repository's office: every desk row shown, the room first, captions always on.
   office?: boolean;
+  // Department id and name for a room; rooms of one department share bands.
+  departmentOf?: (root: string) => { id: string; name: string };
   merging?: RoomMerging;
   selectedId?: string;
   label?: string;
@@ -214,8 +217,13 @@ export function FloorMap({
   const catalog = useModelCatalog();
   // The floor border sits outside the layout.
   const layout = useMemo(
-    () => floorLayout(rooms, width - 6, office ? OFFICE : undefined),
-    [rooms, width, office],
+    () =>
+      floorLayout(
+        departmentOf ? rooms.map((r) => ({ ...r, group: departmentOf(r.root).id })) : rooms,
+        width - 6,
+        office ? OFFICE : undefined,
+      ),
+    [rooms, width, office, departmentOf],
   );
   const workers = useMemo(
     () =>
@@ -280,6 +288,34 @@ export function FloorMap({
         aria-label={label}
         style={{ width: layout.width, height: layout.height }}
       >
+        {departmentOf &&
+          layout.bands
+            .filter((b) => b.group)
+            .map((b, i, all) => {
+              const name = departmentOf(
+                layout.cells.find((c) => c.band === b.band && c.kind === 'room')!.key,
+              ).name;
+              // The plaque only on the first band of a department.
+              const first = i === 0 || all[i - 1].group !== b.group;
+              return (
+                <div
+                  key={`dept-${b.band}`}
+                  className="floor-dept"
+                  data-dept={b.group}
+                  style={{
+                    top: b.top - 26,
+                    height: b.bottom - b.top + 34,
+                    left: layout.spineX * 2,
+                  }}
+                >
+                  {first && (
+                    <span className="floor-dept-name" role="heading" aria-level={2}>
+                      {name}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
         <div className="floor-spine" style={{ width: layout.spineX * 2 }} aria-hidden="true" />
         {layout.corridors.map((c) => (
           <div
