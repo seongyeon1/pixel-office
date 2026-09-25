@@ -117,7 +117,8 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
       true,
     );
     // Everyone who arrived has walked in from the entrance and sat down.
-    await expect(page.locator('.floor-worker.walking')).toHaveCount(0, { timeout: 15000 });
+    // Office life keeps someone walking at almost any moment; wait for arrivals only.
+    await expect(page.locator('.floor-worker[data-arriving]')).toHaveCount(0, { timeout: 30000 });
     // A full-page capture renders beyond the viewport and catches the floor mid-reflow;
     // grow the viewport to the page instead and take an ordinary capture.
     const viewport = page.viewportSize()!;
@@ -125,7 +126,7 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
       width: viewport.width,
       height: await page.evaluate(() => document.documentElement.scrollHeight),
     });
-    await expect(page.locator('.floor-worker.walking')).toHaveCount(0);
+    await expect(page.locator('.floor-worker[data-arriving]')).toHaveCount(0);
     await page.screenshot({ path: `docs/images/project-map-${info.project.name}.png` });
     await page.setViewportSize(viewport);
     // Showing a room again after a search is not an arrival: its people are at their desks.
