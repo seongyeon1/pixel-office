@@ -15,6 +15,7 @@ import {
 import type { Store } from './store.js';
 import { inspectProject, createWorkspace, collectChanges } from './projects.js';
 import { phasePrompt } from './prompts.js';
+import { harnessDirFor } from './harness.js';
 export const nextAfterReview = (
   review: Review,
   revision: number,
@@ -117,6 +118,8 @@ export function createOrchestrator({
             ),
             role: isReview ? 'reviewer' : 'implementer',
             profile: run.team[provider],
+            harness: run.harness?.[provider],
+            harnessDir: harnessDirFor(dataDir, run.projectPath),
             signal: controller.signal,
           },
           emit,
@@ -210,6 +213,7 @@ export function createOrchestrator({
         const run: Run = {
           ...input,
           team: structuredClone(input.team),
+          harness: store.getHarness(project.root),
           id,
           projectPath: project.root,
           worktreePath: workspace.path,

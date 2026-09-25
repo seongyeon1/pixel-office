@@ -1,7 +1,9 @@
 import { query, type Query } from '@anthropic-ai/claude-agent-sdk';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { prepareClaudeHarness } from '../harness.js';
 import { realpath } from 'node:fs/promises';
 import { z } from 'zod';
 import { reviewSchema, reviewJsonSchema, type Adapter } from '../../shared/contracts.js';
@@ -23,7 +25,9 @@ export async function allowedFile(cwd: string, path: string) {
   }
   return isWithin(await realpath(cwd), target);
 }
-export function createClaudeAdapter(): Adapter {
+export function createClaudeAdapter({
+  claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+}: { claudeHome?: string } = {}): Adapter {
   let active: Query | undefined;
   return {
     async probe() {
@@ -54,13 +58,23 @@ export function createClaudeAdapter(): Adapter {
       let text = '';
       let stderr = '';
       try {
+        // Nothing chosen keeps the run fully isolated: no plugins, no project instructions.
+        const harness = input.harness
+          ? await prepareClaudeHarness(input.harness, {
+              claudeHome,
+              harnessDir: input.harnessDir ?? join(tmpdir(), 'pixel-harness', input.runId),
+              cwd: input.cwd,
+            })
+          : { plugins: [], promptPrefix: '' };
         const stream = query({
-          prompt: input.prompt,
+          prompt: harness.promptPrefix + input.prompt,
           options: {
             cwd: input.cwd,
             model: input.profile.model || undefined,
             abortController,
             settingSources: [],
+            // Chosen plugins arrive with their hooks and MCP servers stripped (see harness.ts).
+            plugins: harness.plugins,
             permissionMode: 'default',
             includePartialMessages: true,
             maxTurns: 30,

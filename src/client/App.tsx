@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Code2,
+  Puzzle,
   Folder,
   History,
   LayoutGrid,
@@ -50,6 +51,7 @@ import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
 import { compareFamilies, modelFamily, type ModelFamily } from './models/family';
+import { HarnessPanel } from './components/HarnessPanel';
 import type { ProjectWorker } from './overview/projects';
 import { ResumeDock } from './components/SessionResume';
 import { ObservedOffice } from './components/ObservedOffice';
@@ -92,6 +94,7 @@ export function App() {
   );
   const [targetSessionId, setTargetSessionId] = useState<string>();
   const [modal, setModal] = useState<'project' | 'team' | null>(null);
+  const [harnessOpen, setHarnessOpen] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [path, setPath] = useState(() => localStorage.getItem('pixel.project') ?? '');
   const [prompt, setPrompt] = useState('');
@@ -621,6 +624,15 @@ export function App() {
             >
               <Code2 size={16} />
               코드 · 터미널
+            </button>
+            <button
+              className="open-workspace"
+              disabled={!project || view === 'overview'}
+              title="이 레포의 앱 작업에 쓸 플러그인과 스킬"
+              onClick={() => setHarnessOpen(true)}
+            >
+              <Puzzle size={16} />
+              하네스
             </button>
             <span className="connection-pill">
               <span className="presence online" />
@@ -1221,6 +1233,9 @@ export function App() {
           </main>
         )}
       </div>
+      {harnessOpen && project && (
+        <HarnessPanel root={project.root} onClose={() => setHarnessOpen(false)} />
+      )}
       {modal && (
         <div
           className="modal-backdrop"

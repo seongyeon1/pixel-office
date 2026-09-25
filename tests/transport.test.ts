@@ -310,3 +310,90 @@ test('workspace routes and terminal websocket reject foreign origins and unknown
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('harness routes need a session, validate settings and store them per real repository', async () => {
+  const { mkdtemp, writeFile, realpath } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { emptyHarness } = await import('../src/shared/contracts.js');
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-harness-transport' });
+  let listed = 0;
+  const catalog = {
+    claude: {
+      plugins: [{ id: 'superpowers@mk', name: 'superpowers', description: '' }],
+      skills: [],
+    },
+    codex: { plugins: [], skills: [], error: 'codex not installed' },
+  };
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: o,
+    token: 'test-token',
+    port: 4317,
+    harnessCatalog: async () => {
+      listed++;
+      return catalog;
+    },
+  });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  expect((await app.inject({ url: '/api/harness/catalog', headers: { host } })).statusCode).toBe(
+    401,
+  );
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 'test-token' },
+    })
+  ).headers['set-cookie'] as string;
+  const get = (url: string) => app.inject({ url, headers: { host, cookie } });
+  const post = (payload: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url: '/api/harness', headers: { host, origin, cookie }, payload });
+  expect((await get('/api/harness/catalog')).json()).toEqual(catalog);
+  await get('/api/harness/catalog');
+  expect(listed).toBe(1);
+  const repo = await mkdtemp(join(tmpdir(), 'pixel-harness-repo-'));
+  execFileSync('git', ['init'], { cwd: repo, stdio: 'pipe' });
+  await writeFile(join(repo, 'a.txt'), 'a');
+  execFileSync('git', ['add', '.'], { cwd: repo, stdio: 'pipe' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=T', '-c', 'user.email=t@example.test', 'commit', '-m', 's'],
+    {
+      cwd: repo,
+      stdio: 'pipe',
+    },
+  );
+  const harness = emptyHarness();
+  harness.claude.plugins = ['superpowers@mk'];
+  harness.codex.projectDoc = true;
+  expect((await post({ root: repo, harness })).statusCode).toBe(200);
+  const root = await realpath(repo);
+  expect((await get(`/api/harness?root=${encodeURIComponent(root)}`)).json()).toEqual(harness);
+  // Unknown keys, non-repositories and foreign origins are refused.
+  expect((await post({ root: repo, harness: { ...harness, extra: {} } })).statusCode).toBe(400);
+  expect((await post({ root: tmpdir(), harness })).statusCode).toBeGreaterThanOrEqual(400);
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/harness',
+        headers: { host, origin: 'https://foreign.example', cookie },
+        payload: { root: repo, harness },
+      })
+    ).statusCode,
+  ).toBe(403);
+  await app.close();
+  store.close();
+});

@@ -6,8 +6,10 @@ import {
   reviewJsonSchema,
   type Adapter,
   type PhaseResult,
+  emptyHarness,
 } from '../../shared/contracts.js';
 import { RpcClient } from './codex-rpc.js';
+import { codexHarnessConfig } from '../harness.js';
 import { normalizeCodex } from './normalize.js';
 const exec = promisify(execFile);
 export function createCodexAdapter(): Adapter {
@@ -123,7 +125,21 @@ export function createCodexAdapter(): Adapter {
           capabilities: { experimentalApi: true },
         });
         rpc.notify('initialized');
+        // App runs are isolated like Claude's: only the repository's chosen plugins and skills.
+        const effective = await rpc.request('config/read', {
+          cwd: input.cwd,
+          includeLayers: false,
+        });
+        const skills = await rpc
+          .request('skills/list', { cwds: [input.cwd] })
+          .then((r: any) => (r.data ?? []).flatMap((e: any) => e.skills ?? []))
+          .catch(() => []);
         const t = await rpc.request('thread/start', {
+          config: codexHarnessConfig(
+            input.harness ?? emptyHarness().codex,
+            Object.keys(effective.config?.plugins ?? {}),
+            skills,
+          ),
           cwd: input.cwd,
           model: input.profile.model || undefined,
           approvalPolicy: 'on-request',

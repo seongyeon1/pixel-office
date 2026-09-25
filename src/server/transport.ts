@@ -10,12 +10,14 @@ import {
   answerSchema,
   type Adapter,
   type Provider,
+  type HarnessCatalog,
   type OfficeEvent,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
 import type { Orchestrator } from './orchestrator.js';
 import { inspectProject, collectChanges } from './projects.js';
 import { listModels } from './models.js';
+import { harnessCatalog } from './harness.js';
 import type { ChatService } from './chat.js';
 import type { Observation } from './observation/observer.js';
 import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
@@ -30,6 +32,7 @@ export async function createServer({
   observation,
   chat,
   agentCommands,
+  harnessCatalog: injectedCatalog,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -41,6 +44,7 @@ export async function createServer({
   observation?: Observation;
   chat?: ChatService;
   agentCommands?: AgentCommands;
+  harnessCatalog?: () => Promise<HarnessCatalog>;
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const terminals = createTerminals({ shell: terminalShell });
@@ -188,12 +192,10 @@ export async function createServer({
   app.post<{ Params: { id: string } }>('/api/observed/:id/restore', async (req, reply) =>
     withSession(req.params.id, async () => {
       if (!observation?.get(req.params.id))
-        return reply
-          .code(409)
-          .send({
-            error:
-              '원본 세션 로그를 현재 찾을 수 없습니다. 원래 CLI에서 세션을 열면 다시 감지됩니다.',
-          });
+        return reply.code(409).send({
+          error:
+            '원본 세션 로그를 현재 찾을 수 없습니다. 원래 CLI에서 세션을 열면 다시 감지됩니다.',
+        });
       store.restore(req.params.id);
       return { ok: true };
     }),
@@ -270,6 +272,41 @@ export async function createServer({
       .object({ projectPath: z.string().min(1).optional() })
       .parse(req.query);
     return store.listRuns(projectPath);
+  });
+  // Listing spawns the Codex app server, so a panel reopened within a minute reuses the answer.
+  let catalogCache: { at: number; value: Promise<HarnessCatalog> } | undefined;
+  // Demo mode never reads this machine's plugins unless a catalog is handed in (tests).
+  const loadHarnessCatalog =
+    injectedCatalog ??
+    (demo
+      ? async (): Promise<HarnessCatalog> => ({
+          claude: { plugins: [], skills: [] },
+          codex: { plugins: [], skills: [] },
+        })
+      : harnessCatalog);
+  app.get('/api/harness/catalog', async () => {
+    if (!catalogCache || Date.now() - catalogCache.at > 60000)
+      catalogCache = { at: Date.now(), value: loadHarnessCatalog() };
+    return catalogCache.value;
+  });
+  app.get<{ Querystring: { root?: string } }>('/api/harness', async (req) =>
+    store.getHarness(z.string().min(1).parse(req.query.root)),
+  );
+  app.post('/api/harness', async (req) => {
+    const choice = z
+      .object({
+        plugins: z.array(z.string().max(300)).max(200),
+        skills: z.array(z.string().max(300)).max(500),
+        projectDoc: z.boolean(),
+      })
+      .strict();
+    const body = z
+      .object({ root: z.string(), harness: z.object({ claude: choice, codex: choice }).strict() })
+      .parse(req.body);
+    // Only a real repository gets settings, stored under its canonical root.
+    const project = await inspectProject(body.root);
+    store.setHarness(project.root, body.harness);
+    return store.getHarness(project.root);
   });
   app.get<{ Params: { provider: string } }>('/api/models/:provider', async (req) => {
     const provider = z.enum(['codex', 'claude']).parse(req.params.provider);

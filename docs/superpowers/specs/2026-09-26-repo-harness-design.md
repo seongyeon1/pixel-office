@@ -34,8 +34,12 @@ Codex 앱 작업은 사용자 `config.toml`의 스킬 117개·플러그인·훅�
 - `harness.ts`:
   - 카탈로그: Claude는 `~/.claude/plugins/installed_plugins.json`과 `~/.claude/skills/*/SKILL.md`를 읽고,
     Codex는 app-server의 `config/read`(플러그인 키)와 `skills/list`(`pluginId`가 없는 사용자 스킬)를 쓴다.
-  - Claude 적용: 선택한 플러그인의 설치 경로 + 선택한 사용자 스킬만 모은 레포별 래퍼 플러그인
-    (`<dataDir>/harness/<레포 해시>/claude-skills`, 실행마다 다시 만든다). `settings.disableAllHooks = true`.
+  - Claude 적용: 선택한 플러그인을 **훅을 뺀 미러 폴더**로 넘긴다. `hooks/`·`.mcp.json`·`.lsp.json`은 링크하지 않고
+    `plugin.json`에서 `hooks`·`mcpServers`·`lspServers`를 지우고, 나머지(skills, agents, commands 등)는 원본에 링크한다.
+    이름은 그대로라 `superpowers:brainstorming` 같은 스킬 이름이 유지된다(spike로 확인). 선택한 사용자 스킬은
+    `repo-skills` 래퍼 플러그인으로 넘긴다. 둘 다 `<dataDir>/harness/<레포 해시>/claude/`에 실행마다 다시 만든다.
+    `settings.disableAllHooks`는 쓰지 않는다. 앱의 파일 경계 검사와 Bash 확인이 SDK 훅이라, 그 설정이 이것까지
+    끄는지 모델 호출 없이 검증할 수 없기 때문이다. 훅을 아예 싣지 않는 쪽이 파일로 검증 가능하다.
     프로젝트 문서를 켜면 작업 폴더의 CLAUDE.md(최대 20KB)를 프롬프트 앞에 붙인다. `settingSources: ['project']`는
     권한 규칙까지 함께 불러오기 때문에 쓰지 않는다.
   - Codex 적용: 순수 함수 `codexHarnessConfig(choice, installedPlugins, skills)` →

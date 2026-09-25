@@ -3224,4 +3224,155 @@ nav button.active svg {
   margin-left: auto;
   font-weight: 500;
   color: #8a9282;
+/* Repository harness dialog. */
+.harness-modal {
+  width: min(680px, calc(100vw - 32px));
+}
+.harness-note {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #6d7a66;
+}
+.harness-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e3e9da;
+}
+.harness-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #6d7a66;
+  font-weight: 600;
+}
+.harness-tabs button.active {
+  color: #34482e;
+  border-bottom-color: #55745e;
+}
+.harness-tabs small {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #e8eee0;
+  font-size: 11px;
+}
+.harness-doc,
+.harness-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.harness-search {
+  padding: 7px 10px;
+  border: 1px solid #d8e0cf;
+  border-radius: 7px;
+  background: #fff;
+}
+.harness-search input {
+  flex: 1;
+  border: 0;
+  padding: 0;
+  outline: none;
+  font-size: 14px;
+}
+.harness-lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-height: 46vh;
+  overflow: auto;
+}
+@media (max-width: 640px) {
+  .harness-lists {
+    grid-template-columns: 1fr;
+  }
+}
+.harness-group {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e3e9da;
+  border-radius: 8px;
+}
+.harness-group legend {
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #47613b;
+}
+.harness-group legend small {
+  font-weight: 500;
+  color: #8a9282;
+}
+.harness-group label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 2px;
+  border-bottom: 1px dashed #eef1e8;
+  font-size: 13px;
+}
+.harness-group label span {
+  display: grid;
+  min-width: 0;
+}
+.harness-group label code {
+  font-size: 11px;
+  color: #8a9282;
+  overflow-wrap: anywhere;
+}
+.harness-group label small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7c8775;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.harness-group label.missing strong {
+  color: #9a6408;
+}
+.harness-empty,
+.harness-error {
+  margin: 8px 0;
+  font-size: 13px;
+  color: #7c8775;
+}
+.harness-error {
+  color: #9a4d2f;
+}
+.harness-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: #56614e;
+}
+/* Global labels stack their input on top; the harness rows keep checkbox and text side by side. */
+.harness-modal label {
+  flex-direction: row;
+}
+.harness-modal input[type='checkbox'] {
+  flex-shrink: 0;
+  width: auto;
+  margin: 2px 0 0;
+  padding: 0;
+}
+.harness-modal .harness-doc {
+  align-self: flex-start;
+  color: #47613b;
+  font-weight: 600;
+}
+.harness-modal .harness-search input {
+  width: 100%;
 }

@@ -104,3 +104,39 @@ test('cancelled implementation cannot trigger reviewer even with late success', 
   expect(reviewer).toBe(false);
   store.close();
 });
+test('a run keeps the repository harness it started with and hands each provider its own part', async () => {
+  const { emptyHarness } = await import('../src/shared/contracts.js');
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const both = fake(async (i) => {
+    inputs.push(i);
+    return i.role === 'reviewer'
+      ? { outcome: 'completed', text: 'ok', review: pass }
+      : { outcome: 'completed', text: 'done' };
+  });
+  const dataDir = await mkdtemp(join(tmpdir(), 'pixel-data-'));
+  const o = createOrchestrator({ store, adapters: { codex: both, claude: both }, dataDir });
+  const root = await project();
+  const { realpath } = await import('node:fs/promises');
+  const harness = emptyHarness();
+  harness.codex.plugins = ['linear@curated'];
+  harness.claude.skills = ['bc-ship'];
+  store.setHarness(await realpath(root), harness);
+  const run = await o.start({
+    projectPath: root,
+    prompt: 'task',
+    mode: 'collaborate',
+    implementer: 'codex',
+    team: defaultTeam(),
+  });
+  // Editing the settings mid-run does not change the run.
+  store.setHarness(await realpath(root), emptyHarness());
+  await wait(() => store.getRun(run.id)?.status === 'completed');
+  expect(store.getRun(run.id)!.harness).toEqual(harness);
+  expect(inputs[0].harness).toEqual(harness.codex);
+  expect(inputs[1].harness).toEqual(harness.claude);
+  expect(inputs[0].harnessDir).toBe(inputs[1].harnessDir);
+  expect(inputs[0].harnessDir!.startsWith(join(dataDir, 'harness'))).toBe(true);
+  await o.shutdown();
+  store.close();
+});
