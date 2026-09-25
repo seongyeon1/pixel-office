@@ -2233,7 +2233,7 @@ nav button.active svg {
 }
 .pixel-worker {
   width: 96px;
-  height: 128px;
+  height: 120px;
   image-rendering: pixelated;
   flex-shrink: 0;
 }
@@ -2484,7 +2484,7 @@ nav button.active svg {
 }
 .session-profile-heading > .pixel-worker {
   width: 96px;
-  height: 128px;
+  height: 120px;
   background: #edf0e5;
   border-radius: 10px;
 }

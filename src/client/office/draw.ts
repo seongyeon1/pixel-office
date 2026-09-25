@@ -222,7 +222,7 @@ export function drawOffice(
       r(x - 30, y + 24, 5, 4, '#a4b797');
       r(x + 25, y + 24, 5, 4, '#a4b797');
     }
-    ctx.drawImage(workerImage(id), Math.round(x - 30), Math.round(y - 38 + bob), 60, 80);
+    ctx.drawImage(workerImage(id), Math.round(x - 32), Math.round(y - 38 + bob), 64, 80);
     r(x - 51, y + 45, 102, 24, '#fbfaf2');
     r(x - 51, y + 69, 102, 2, '#c7c7b6');
     txt(id === 'claude' ? 'Claude' : 'Codex', x - 40, y + 61, 12, '#425146');
