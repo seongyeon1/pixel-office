@@ -30,6 +30,7 @@ const project = (root: string, latestRun: Run | null = null): ProjectSummary => 
   latestRun,
   runCount: latestRun ? 1 : 0,
 });
+const at = { now: 60000 };
 const run: Run = {
   id: 'managed',
   projectPath: '/a/app',
@@ -49,6 +50,7 @@ test('combines connected and newly observed projects without merging identical f
   const rooms = projectRooms(
     [project('/a/app'), project('/empty')],
     [session('one', '/a/app'), session('two', '/b/app')],
+    at,
   );
   expect(rooms.map((r) => r.root)).toEqual(['/a/app', '/b/app', '/empty']);
   expect(rooms[0].workers.map((w) => w.session?.id)).toEqual(['one']);
@@ -62,7 +64,7 @@ test('counts active, idle and stale observations separately and keeps project po
     session('c', '/b', 'stale'),
     session('d', '/a'),
   ];
-  const rooms = projectRooms([], rows);
+  const rooms = projectRooms([], rows, at);
   expect(rooms.map((r) => r.root)).toEqual(['/a', '/b']);
   expect(rooms[1]).toMatchObject({
     observedCount: 3,
@@ -72,25 +74,33 @@ test('counts active, idle and stale observations separately and keeps project po
   });
   expect(rooms[1].workers.map((w) => w.caption)).toEqual([
     '코드 작성',
-    '응답 완료 · 대기',
+    '보고할 게 있어요',
     '상태 확인 필요',
   ]);
   expect(
     projectRooms(
       [],
       rows.map((s) => ({ ...s, status: 'idle' as const })),
+      at,
     ).map((r) => r.root),
   ).toEqual(['/a', '/b']);
 });
 test('shows only the current managed participant, prioritizes waiting, and removes completed runs', () => {
-  const [room] = projectRooms([project('/a/app', run)], [session('external', '/a/app')]);
+  const [room] = projectRooms([project('/a/app', run)], [session('external', '/a/app')], at);
   expect(room.workers[0]).toMatchObject({
     id: 'run:managed',
     provider: 'claude',
     waiting: true,
     caption: '승인 필요',
+    mark: 'approval',
   });
-  expect(room.activeCount).toBe(2);
+  // During review the implementer stands beside the reviewer.
+  expect(room.workers.find((w) => w.visiting)).toMatchObject({
+    id: 'run:managed:implementer',
+    provider: 'codex',
+    visiting: 'run:managed',
+  });
+  expect(room.activeCount).toBe(3);
   expect(room.waitingCount).toBe(1);
   expect(
     projectRooms([project('/a/app', { ...run, status: 'completed', phase: 'done' })], [])[0]
@@ -111,4 +121,61 @@ test('short paths retain enough parent folders to disambiguate matching project 
     '…/alpha/clients/team/app',
     '…/beta/clients/team/app',
   ]);
+});
+
+test('coworkers leave after their terminal closes or half an hour of silence, unless waiting on a person', () => {
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  const ago = (min: number) => new Date(now - min * 60000).toISOString();
+  const rows: ObservedSession[] = [
+    { ...session('fresh', '/r', 'idle'), updatedAt: ago(5) },
+    { ...session('gone', '/r', 'idle'), updatedAt: ago(45) },
+    { ...session('closed', '/r', 'active'), updatedAt: ago(1), processAlive: false },
+    {
+      ...session('asking', '/r', 'active'),
+      updatedAt: ago(90),
+      attention: { kind: 'question', certain: true, since: ago(90) },
+    },
+    { ...session('helper', '/r', 'idle'), updatedAt: ago(3), parentId: 'fresh' },
+  ];
+  const [room] = projectRooms([], rows, { now });
+  expect(room.workers.map((w) => w.session!.id).sort()).toEqual(['asking', 'fresh']);
+  expect(room.offDuty.map((w) => w.session!.id)).toEqual(['closed', 'helper', 'gone']);
+});
+
+test('question and approval raise a hand, a finished turn is a report until it is seen', () => {
+  const rows: ObservedSession[] = [
+    { ...session('q', '/r'), attention: { kind: 'question', certain: true, since: '' } },
+    { ...session('p', '/r'), attention: { kind: 'approval', certain: false, since: '' } },
+    { ...session('done', '/r', 'idle'), updatedAt: new Date(50000).toISOString() },
+    { ...session('sub', '/r', 'idle'), updatedAt: new Date(50000).toISOString(), parentId: 'q' },
+  ];
+  const marks = (seen = {}) =>
+    Object.fromEntries(
+      projectRooms([], rows, { ...at, seen })[0].workers.map((w) => [w.session!.id, w.mark]),
+    );
+  expect(marks()).toEqual({ q: 'question', p: 'approval', done: 'report', sub: null });
+  const [room] = projectRooms([], rows, at);
+  expect(room.workers.find((w) => w.id === 'observed:p')).toMatchObject({
+    certain: false,
+    caption: '승인 대기 중일 수 있어요',
+  });
+  expect(room).toMatchObject({ waitingCount: 2, reportCount: 1 });
+  expect(marks({ done: new Date(50000).toISOString() }).done).toBeNull();
+});
+
+test('desks are grouped by worktree with the main checkout first and subagents beside their lead', () => {
+  const tree = (path: string, branch: string, main = false) => ({ path, branch, main });
+  const rows: ObservedSession[] = [
+    { ...session('z-feature', '/r'), cwd: '/r/.wt/x', worktree: tree('/r/.wt/x', 'feat/x') },
+    { ...session('b-main', '/r'), worktree: tree('/r', 'main', true) },
+    { ...session('a-main', '/r'), worktree: tree('/r', 'main', true) },
+    { ...session('a-sub', '/r'), worktree: tree('/r', 'main', true), parentId: 'b-main' },
+  ];
+  const [room] = projectRooms([], rows, at);
+  expect(room.lanes.map((l) => [l.branch, l.main])).toEqual([
+    ['main', true],
+    ['feat/x', false],
+  ]);
+  expect(room.lanes[0].workers.map((w) => w.session!.id)).toEqual(['a-main', 'b-main', 'a-sub']);
+  expect(room.lanes[0].workers[2].parentId).toBe('observed:b-main');
 });

@@ -32,7 +32,7 @@ export function RetiredSessions({
   );
   return (
     <details className="retired-sessions">
-      <summary>퇴근한 동료 {sessions.length}명</summary>
+      <summary>직접 퇴근시킨 동료 {sessions.length}명</summary>
       <p>맵에서 숨긴 동료입니다. 다시 출근하면 캐릭터를 선택해 이어서 작업할 수 있어요.</p>
       <input
         aria-label="퇴근한 동료 검색"

@@ -1,102 +1,30 @@
-import { useMemo, useState, type CSSProperties } from 'react';
-import { ArrowUpRight, FolderPlus, Map, Search } from 'lucide-react';
-import {
-  type ObservationSnapshot,
-  type ProjectSummary,
-  statusLabels,
-} from '../../shared/contracts';
-import { PixelWorker } from '../office/PixelWorker';
+import { useEffect, useMemo, useState } from 'react';
+import { FolderPlus, Map, Search } from 'lucide-react';
+import type { ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
-import { projectRooms, type ProjectWorker, type ProjectRoom } from './projects';
+import { projectRooms, type ProjectWorker } from './projects';
 import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
-const providerName = (worker: ProjectWorker) => (worker.provider === 'codex' ? 'Codex' : 'Claude');
-function Room({
-  room,
-  onOpen,
-}: {
-  room: ProjectRoom;
-  onOpen: (root: string, worker?: ProjectWorker) => void;
-}) {
-  const shown = room.workers.slice(0, 4);
-  return (
-    <article
-      className={`project-map-room ${room.activeCount ? 'has-activity' : ''}`}
-      aria-label={`프로젝트 공간 ${room.root}`}
-    >
-      <header>
-        <button
-          className="project-room-door"
-          aria-label={`프로젝트 열기 ${room.root}`}
-          onClick={() => onOpen(room.root)}
-        >
-          <strong>{repositoryName(room.root)}</strong>
-          <ArrowUpRight size={17} />
-        </button>
-        <span className={`room-presence ${room.waitingCount ? 'waiting' : ''}`}>
-          {room.waitingCount
-            ? `응답 필요 ${room.waitingCount}`
-            : room.activeCount
-              ? `활동 ${room.activeCount}명`
-              : '대기 중'}
-        </span>
-        <p title={room.root} aria-label={room.root}>
-          {room.pathLabel}
-        </p>
-      </header>
-      <div className="project-mini-office" aria-label={`${repositoryName(room.root)}의 동료`}>
-        <div className="project-room-wall" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
-        {[0, 1, 2, 3].map((index) => (
-          <div
-            key={index}
-            className="project-mini-station"
-            style={{ '--seat': index } as CSSProperties}
-            aria-hidden="true"
-          >
-            <i className="project-monitor" />
-            <i className="project-desk" />
-            <i className="project-sofa" />
-          </div>
-        ))}
-        {shown.map((worker, index) => (
-          <button
-            key={worker.id}
-            className={`project-map-worker ${worker.active ? 'working' : 'resting'} ${worker.waiting ? 'waiting' : ''}`}
-            data-status={worker.stale ? 'stale' : worker.active ? 'active' : 'idle'}
-            style={{ '--seat': index } as CSSProperties}
-            aria-label={`전체 맵 동료 ${room.root} ${worker.session?.sessionId ?? worker.run?.id}`}
-            title={`${providerName(worker)} · ${worker.label} · ${worker.caption}${worker.prompt ? `\n${worker.prompt.slice(0, 240)}` : ''}`}
-            onClick={() => onOpen(room.root, worker)}
-          >
-            <span className="project-worker-caption">{worker.caption}</span>
-            <PixelWorker provider={worker.provider} identity={worker.identity} />
-            <strong>{providerName(worker)}</strong>
-            <small>{worker.label}</small>
-          </button>
-        ))}
-        {!shown.length && <div className="project-room-empty">지금 감지된 동료가 없어요.</div>}
-      </div>
-      <footer>
-        <span>
-          외부 {room.observedCount}명
-          {room.latestRun && <small>앱 작업 · {statusLabels[room.latestRun.status]}</small>}
-          {room.staleCount > 0 && <small>상태 확인 필요 {room.staleCount}명</small>}
-        </span>
-        <button
-          onClick={() => onOpen(room.root)}
-          aria-label={`프로젝트 동료 모두 보기 ${room.root}`}
-        >
-          {room.workers.length > 4 ? `+${room.workers.length - 4}명 더 보기` : '오피스 들어가기'}
-          <ArrowUpRight size={14} />
-        </button>
-      </footer>
-    </article>
-  );
+import { FloorMap } from '../floor/FloorMap';
+import { markSeen, useSeenReports } from '../floor/seen';
+// Choreography and duty rosters move on this clock; polling alone would freeze idle offices.
+const TICK = 5000;
+function useClock() {
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), TICK);
+    return () => clearInterval(timer);
+  }, []);
+  return clock;
 }
+const since = (iso: string, now: number) => {
+  const min = Math.max(1, Math.round((now - Date.parse(iso)) / 60000));
+  return min < 60
+    ? `${min}분 전`
+    : min < 1440
+      ? `${Math.round(min / 60)}시간 전`
+      : `${Math.round(min / 1440)}일 전`;
+};
 export function ProjectMap({
   projects,
   observation,
@@ -112,17 +40,33 @@ export function ProjectMap({
 }) {
   const [query, setQuery] = useState('');
   const [onlyActive, setOnlyActive] = useState(false);
+  const clock = useClock();
+  const seen = useSeenReports();
   const rooms = useMemo(
-    () => projectRooms(projects, observation.sessions),
-    [projects, observation.sessions],
+    () => projectRooms(projects, observation.sessions, { now: clock, seen }),
+    [projects, observation.sessions, clock, seen],
   );
-  const visible = rooms.filter(
-    (room) =>
-      (!onlyActive || room.activeCount > 0) &&
-      room.root.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  const needle = query.trim().toLocaleLowerCase();
+  const visible = useMemo(
+    () =>
+      rooms.filter(
+        (room) =>
+          (!onlyActive || room.activeCount > 0) && room.root.toLocaleLowerCase().includes(needle),
+      ),
+    [rooms, onlyActive, needle],
   );
-  const activeProjects = rooms.filter((room) => room.activeCount > 0).length;
-  const activeWorkers = rooms.reduce((sum, room) => sum + room.activeCount, 0);
+  const roster = useMemo(() => rooms.flatMap((r) => r.workers.map((w) => w.id)), [rooms]);
+  const onDuty = roster.length;
+  const waiting = rooms.reduce((sum, room) => sum + room.waitingCount, 0);
+  const reports = rooms.reduce((sum, room) => sum + room.reportCount, 0);
+  const departed = visible
+    .flatMap((room) => room.offDuty)
+    .filter((w) => w.session && clock - Date.parse(w.updatedAt) < 86400000)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const open = (root: string, worker?: ProjectWorker) => {
+    if (worker?.session) markSeen(worker.session);
+    onOpen(root, worker);
+  };
   return (
     <main className="project-map-page">
       <div className="project-map-heading">
@@ -140,10 +84,13 @@ export function ProjectMap({
           프로젝트 <strong>{rooms.length}</strong>
         </span>
         <span>
-          활동 중인 프로젝트 <strong>{activeProjects}</strong>
+          근무 중 <strong>{onDuty}</strong>
         </span>
-        <span>
-          진행 중인 동료 <strong>{activeWorkers}</strong>
+        <span className={waiting ? 'summary-waiting' : ''}>
+          응답 필요 <strong>{waiting}</strong>
+        </span>
+        <span className={reports ? 'summary-report' : ''}>
+          보고 <strong>{reports}</strong>
         </span>
         <small>
           {observation.scanning
@@ -182,11 +129,14 @@ export function ProjectMap({
         </details>
       )}
       {visible.length ? (
-        <section className="project-campus" aria-label="프로젝트 통합 맵">
-          {visible.map((room) => (
-            <Room key={room.root} room={room} onOpen={onOpen} />
-          ))}
-        </section>
+        <FloorMap
+          rooms={visible}
+          roster={roster}
+          ready={!!observation.scannedAt}
+          clock={clock}
+          onOpen={open}
+          onOpenRoom={(root) => onOpen(root)}
+        />
       ) : (
         <section className="project-map-empty">
           <Map size={32} />
@@ -201,11 +151,37 @@ export function ProjectMap({
           {!rooms.length && <button onClick={onConnect}>프로젝트 연결</button>}
         </section>
       )}
-      <RetiredSessions sessions={observation.retired ?? []} onRestore={onRestore} />
-      <p className="project-map-note">
-        캐릭터를 누르면 해당 동료의 작업을 엽니다. 각 공간에는 응답이 필요한 동료와 활동 중인
-        동료부터 최대 4명을 표시합니다.
+      <p className="project-map-legend">
+        <span className="legend-mark question">?</span> 질문이나 승인을 기다려요
+        <span className="legend-mark guess">?</span> 승인 대기로 보여요
+        <span className="legend-mark report">!</span> 작업을 끝내고 보고가 있어요 · 캐릭터를 누르면
+        해당 동료의 작업을 엽니다.
       </p>
+      {departed.length > 0 && (
+        <details className="departed-list">
+          <summary>최근 퇴근 {departed.length}명</summary>
+          <p>
+            30분 넘게 활동이 없거나 터미널이 닫힌 동료예요. 다시 일을 시작하면 자동으로 출근해요.
+          </p>
+          <ul>
+            {departed.slice(0, 12).map((w) => (
+              <li key={w.id}>
+                <button
+                  aria-label={`퇴근한 동료 ${w.root} ${w.session!.sessionId}`}
+                  onClick={() => open(w.root, w)}
+                >
+                  <strong>
+                    {w.provider === 'codex' ? 'Codex' : 'Claude'} · {w.label}
+                  </strong>
+                  <span>{repositoryName(w.root)}</span>
+                  <small>{since(w.updatedAt, clock)}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <RetiredSessions sessions={observation.retired ?? []} onRestore={onRestore} />
     </main>
   );
 }

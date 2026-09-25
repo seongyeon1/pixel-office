@@ -1,0 +1,406 @@
+/* One office floor. Coordinates come from layout.ts; this file only paints them. */
+.floor-viewport {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.floor {
+  position: relative;
+  margin: 0 auto;
+  border: 3px solid #7f8f78;
+  border-radius: 10px;
+  background-color: #e8e2d2;
+  background-image:
+    linear-gradient(#ddd5c1 1px, transparent 1px),
+    linear-gradient(90deg, #ddd5c1 1px, transparent 1px);
+  background-size: 24px 24px;
+  box-sizing: content-box;
+  overflow: hidden;
+}
+.floor-spine {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: #d9d0ba;
+  box-shadow: inset -3px 0 #c8bea6;
+}
+.floor-corridor {
+  position: absolute;
+  right: 0;
+  height: 56px;
+  background: #d9d0ba;
+  box-shadow:
+    inset 0 3px #c8bea6,
+    inset 0 -3px #c8bea6;
+}
+.floor-corridor::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 27px;
+  border-top: 2px dashed #c8bea6;
+}
+.floor-entrance {
+  position: absolute;
+  left: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #47613b;
+  background: #c7dab9;
+  border-top: 3px solid #8fae80;
+  border-bottom: 3px solid #8fae80;
+}
+.floor-cell {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px solid #8b9884;
+  border-radius: 4px;
+  background-color: #f6f0e2;
+  background-image: linear-gradient(90deg, #efe7d4 1px, transparent 1px);
+  background-size: 32px 100%;
+  box-shadow: inset 0 26px #e9e2d0;
+}
+.floor-cell > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px;
+  min-width: 0;
+  color: #4b5c43;
+}
+.floor-meeting > header strong,
+.floor-lounge > header strong {
+  font-size: 13px;
+}
+.floor-door {
+  position: absolute;
+  left: calc(50% - 22px);
+  width: 44px;
+  height: 7px;
+  background: #d9d0ba;
+}
+.floor-cell.upper .floor-door {
+  bottom: -5px;
+}
+.floor-cell.lower .floor-door {
+  top: -5px;
+}
+.floor-room-name {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #34482e;
+}
+.floor-room-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+.floor-room-name:hover,
+.floor-room-name:focus-visible {
+  background: #e3ebda;
+}
+.floor-presence {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #6b7563;
+  background: #ece7da;
+}
+.floor-room.busy .floor-presence {
+  color: #2f5a34;
+  background: #dcebd2;
+}
+.floor-presence.waiting {
+  color: #7a4e07;
+  background: #ffe7a6;
+}
+.floor-presence.report {
+  color: #2d5a45;
+  background: #cfeadf;
+}
+.floor-cell > header small {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #8a9282;
+}
+.floor-room-empty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: #8d957f;
+}
+.floor-room-more {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 1;
+  padding: 2px 8px;
+  border: 1px solid #c5d1ba;
+  border-radius: 10px;
+  background: #fbfaf5;
+  font-size: 11px;
+  color: #47613b;
+}
+/* Desk rows: monitor behind, desk surface in front of the chair. */
+.floor-desks {
+  position: absolute;
+  display: flex;
+  height: 92px;
+  pointer-events: none;
+}
+.floor-desks > i {
+  position: relative;
+  width: 66px;
+  height: 92px;
+}
+.floor-desks > i::before {
+  content: '';
+  position: absolute;
+  left: 21px;
+  top: 16px;
+  width: 24px;
+  height: 15px;
+  background: #b9d3d6;
+  border: 3px solid #5e6f68;
+  border-radius: 2px;
+}
+.floor-desks > i::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 36px;
+  width: 56px;
+  height: 12px;
+  background: #caa77a;
+  border-bottom: 4px solid #a3845c;
+  border-radius: 2px;
+}
+.floor-lane-tag {
+  position: absolute;
+  left: 4px;
+  top: -14px;
+  z-index: 1;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px dashed #9aa98f;
+  border-radius: 3px;
+  background: #fbf8ef;
+  font-size: 10px;
+  color: #5b6a52;
+}
+.floor-lane-tag.main {
+  border-style: solid;
+}
+.floor-furniture {
+  position: absolute;
+  display: block;
+}
+.floor-meeting .floor-furniture.a {
+  left: 22%;
+  right: 22%;
+  top: 52%;
+  height: 26px;
+  background: #b89468;
+  border: 3px solid #8e6f48;
+  border-radius: 13px;
+}
+.floor-meeting .floor-furniture.b {
+  left: 30%;
+  right: 30%;
+  top: 30px;
+  height: 14px;
+  background: #fbfbf7;
+  border: 3px solid #93a08c;
+}
+.floor-lounge .floor-furniture.a {
+  left: 10%;
+  right: 10%;
+  top: 30px;
+  height: 18px;
+  background: #b6c9b0;
+  border-bottom: 5px solid #8ea787;
+}
+.floor-lounge .floor-furniture.a::after {
+  content: '';
+  position: absolute;
+  right: 8%;
+  top: -14px;
+  width: 16px;
+  height: 20px;
+  background: #5f6b62;
+  border-radius: 2px 2px 0 0;
+}
+.floor-lounge .floor-furniture.b {
+  left: 16%;
+  right: 16%;
+  bottom: 12px;
+  height: 22px;
+  background: #d9a38b;
+  border: 3px solid #b27c65;
+  border-radius: 8px 8px 3px 3px;
+}
+/* Workers: the translate target is the point between their feet. */
+.floor-worker {
+  position: absolute;
+  left: -28px;
+  top: -58px;
+  width: 56px;
+  height: 70px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #48533f;
+  transition-property: transform;
+  transition-timing-function: linear;
+}
+.floor-worker:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+.floor-sprite {
+  display: block;
+  width: 36px;
+  height: 45px;
+}
+.floor-sprite .pixel-worker {
+  width: 100%;
+  height: 100%;
+}
+.floor-sprite.faces-left {
+  transform: scaleX(-1);
+}
+.floor-worker.walking .floor-sprite .pixel-worker {
+  animation: floor-step 0.36s steps(2) infinite;
+}
+.floor-worker.working:not(.walking)[data-place='desk'] .floor-sprite .pixel-worker {
+  animation: floor-type 0.8s steps(2) infinite;
+}
+.floor-name {
+  max-width: 62px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #fbfaf5d9;
+  font-size: 9px;
+  line-height: 13px;
+  color: #56614e;
+}
+.floor-caption {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  display: none;
+  padding: 3px 6px;
+  border: 2px solid #6d7a62;
+  border-radius: 3px;
+  background: #fff;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  color: #4d5c45;
+}
+.floor-worker:hover .floor-caption,
+.floor-worker:focus-visible .floor-caption {
+  display: block;
+}
+.floor-worker:focus-visible {
+  outline: 2px solid #5b8a5c;
+  outline-offset: 2px;
+}
+.floor-worker:hover .floor-mark,
+.floor-worker:focus-visible .floor-mark {
+  display: none;
+}
+/* ? waits on a person, ! has something to report. */
+.floor-mark {
+  position: absolute;
+  bottom: calc(100% - 4px);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #b98a14;
+  border-radius: 4px;
+  background: #ffd75e;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  color: #5a3f00;
+  box-shadow: 2px 2px 0 #0000001f;
+  animation: floor-hop 1.2s ease-in-out infinite;
+}
+.floor-worker.report .floor-mark {
+  border-color: #3f8a64;
+  background: #bfe8cf;
+  color: #1f5236;
+  animation-duration: 2s;
+}
+.floor-worker.guess .floor-mark {
+  border-style: dashed;
+  background: #fff1c4;
+}
+@keyframes floor-step {
+  50% {
+    transform: translateY(-2px);
+  }
+}
+@keyframes floor-type {
+  50% {
+    transform: translateY(-1px);
+  }
+}
+@keyframes floor-hop {
+  50% {
+    transform: translateY(-3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .floor-worker {
+    transition: none;
+  }
+  .floor-worker .pixel-worker,
+  .floor-mark {
+    animation: none !important;
+  }
+}
+@media (max-width: 760px) {
+  .floor-room-name strong {
+    font-size: 14px;
+  }
+}
+/* The repository name wins over the path when the header is tight. */
+.floor-room-name {
+  flex-shrink: 0;
+  max-width: 62%;
+}
