@@ -165,7 +165,8 @@
   font-size: 11px;
   color: #47613b;
 }
-/* Desk rows: monitor behind, desk surface in front of the chair. */
+/* Desk rows, seen from the front: the chair is behind the coworker, the monitor's back and the
+   desk are in front, so only the head shows over the screen. Row y: head 4-24, body to 49. */
 .floor-desks {
   position: absolute;
   display: flex;
@@ -177,27 +178,48 @@
   width: 66px;
   height: 92px;
 }
-.floor-desks > i::before {
+.floor-desks.back > i::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 12px;
+  width: 30px;
+  height: 30px;
+  background: #6f7b74;
+  border: 2px solid #56615b;
+  border-radius: 8px 8px 3px 3px;
+}
+.floor-desks.front > i::before {
   content: '';
   position: absolute;
   left: 21px;
-  top: 16px;
+  top: 29px;
   width: 24px;
-  height: 15px;
-  background: #b9d3d6;
-  border: 3px solid #5e6f68;
-  border-radius: 2px;
+  height: 13px;
+  background: #4f5d57;
+  border: 2px solid #3d4843;
+  border-radius: 3px 3px 1px 1px;
+  box-sizing: border-box;
 }
-.floor-desks > i::after {
+.floor-desks.front > i::after {
   content: '';
   position: absolute;
-  left: 5px;
-  top: 36px;
-  width: 56px;
-  height: 12px;
-  background: #caa77a;
-  border-bottom: 4px solid #a3845c;
+  left: 4px;
+  top: 38px;
+  width: 58px;
+  height: 10px;
+  background: linear-gradient(#d8b98c 0 4px, #b8946a 4px);
+  border-bottom: 2px solid #8e6f48;
   border-radius: 2px;
+}
+/* A screen in use lights the face above it; the monitor's power light shows who is at work. */
+.floor-desks.front > i[data-seat='working']::before {
+  box-shadow:
+    0 -2px 2px #cdeeff,
+    inset -4px -3px 0 -2px #7ee08a;
+}
+.floor-desks.front > i[data-seat='idle']::before {
+  box-shadow: inset -4px -3px 0 -2px #e6c35a;
 }
 .floor-lane-tag {
   position: absolute;

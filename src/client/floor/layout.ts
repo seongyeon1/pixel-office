@@ -56,12 +56,12 @@ const ROW_H = 92;
 const PAD_B = 22;
 const CORRIDOR_H = 56;
 const BAND_GAP = 18;
-const SEAT_W = 66;
+export const SEAT_W = 66;
 const SEAT_PAD = 26;
 const MAX_ROWS = 3;
 const LOBBY_H = 96;
 // Feet sit a little above the desk front so the desk hides the chair, not the character.
-const FEET = 62;
+export const FEET = 62;
 export interface FloorOptions {
   // Desk rows shown per room before the rest is counted as overflow.
   maxRows?: number;

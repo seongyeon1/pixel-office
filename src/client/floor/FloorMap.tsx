@@ -4,7 +4,7 @@ import { repositoryName } from '../components/RepositoryList';
 import type { ProjectRoom, ProjectWorker } from '../overview/projects';
 import { FloorWorker } from './FloorWorker';
 import { hash, placements } from './choreography';
-import { floorLayout, type Cell, type Loc } from './layout';
+import { FEET, SEAT_W, floorLayout, type Cell, type Loc } from './layout';
 import './floor.css';
 interface Departure {
   worker: ProjectWorker;
@@ -154,6 +154,16 @@ export function FloorMap({
     if (Object.keys(leaving).length) setDepartures((d) => ({ ...d, ...leaving }));
   }, [visible.map((w) => w.id).join(), places]);
   const byRoot = new Map(rooms.map((r) => [r.root, r]));
+  // Who is sitting at each desk right now: a working screen lights up, an empty chair stays dark.
+  const seated = new Map<string, ProjectWorker>();
+  for (const w of visible) {
+    const place = places.get(w.id)!;
+    if (place.kind === 'desk') seated.set(`${place.x}:${place.y}`, w);
+  }
+  const seatState = (x: number, y: number, s: number) => {
+    const w = seated.get(`${x + s * SEAT_W + SEAT_W / 2}:${y + FEET}`);
+    return !w ? 'empty' : w.active ? 'working' : 'idle';
+  };
   return (
     <div className="floor-viewport" ref={box}>
       <section
@@ -206,9 +216,22 @@ export function FloorMap({
         )}
         {layout.rows.map((row, i) => (
           <div
-            key={`${row.cell}-${i}`}
-            className="floor-desks"
-            style={{ left: row.x, top: row.y, '--seats': row.seats } as CSSProperties}
+            key={`back-${row.cell}-${i}`}
+            className="floor-desks back"
+            style={{ left: row.x, top: row.y }}
+            aria-hidden="true"
+          >
+            {Array.from({ length: row.seats }, (_, s) => (
+              <i key={s} data-seat={seatState(row.x, row.y, s)} />
+            ))}
+          </div>
+        ))}
+        {layout.rows.map((row, i) => (
+          <div
+            key={`front-${row.cell}-${i}`}
+            className="floor-desks front"
+            // In front of whoever sits in this row, behind anyone walking below it.
+            style={{ left: row.x, top: row.y, zIndex: Math.round(row.y + FEET) + 1 }}
             aria-hidden="true"
           >
             {row.tag && (
@@ -217,7 +240,7 @@ export function FloorMap({
               </span>
             )}
             {Array.from({ length: row.seats }, (_, s) => (
-              <i key={s} />
+              <i key={s} data-seat={seatState(row.x, row.y, s)} />
             ))}
           </div>
         ))}
