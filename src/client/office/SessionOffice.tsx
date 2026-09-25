@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { WalkingWorker } from './WalkingWorker';
-import { sessionPositions, sessionLayout, zoneLabels, type OfficeZone } from './movement';
+import {
+  officeStations,
+  sessionPositions,
+  sessionLayout,
+  zoneLabels,
+  type OfficeZone,
+} from './movement';
 import { ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
 import { type ChatMessage, type ObservedSession } from '../../shared/contracts';
 const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude');
@@ -28,6 +34,8 @@ export function SessionOffice({
   const shown = sessions.slice(safePage * 8, safePage * 8 + 8);
   const positions = sessionPositions(shown);
   const layout = sessionLayout(shown);
+  const stations = officeStations(shown);
+  const seated = new Set([...positions.values()].map((p) => `${p.zone}:${p.x}:${p.y}`));
   const selectedX = selected ? positions.get(selected.id)?.x : undefined;
   useEffect(() => {
     const viewport = mapScroll.current;
@@ -84,13 +92,22 @@ export function SessionOffice({
             {(['desk', 'library', 'test', 'lounge'] as OfficeZone[]).map((zone) => (
               <div key={zone} className={`map-zone ${zone}`} aria-hidden="true">
                 <span>{zoneLabels[zone]}</span>
-                <div className="map-furniture">
+              </div>
+            ))}
+            {stations.map((st) =>
+              (['back', 'front'] as const).map((part) => (
+                <div
+                  key={`${st.zone}-${st.slot}-${part}`}
+                  className={`station-${part} ${st.zone} ${seated.has(`${st.zone}:${st.x}:${st.y}`) ? 'occupied' : ''}`}
+                  style={{ left: st.x, top: st.y }}
+                  aria-hidden="true"
+                >
                   <i />
                   <i />
                   <i />
                 </div>
-              </div>
-            ))}
+              )),
+            )}
             <div className="map-hallway" aria-hidden="true">
               PIXEL OFFICE
             </div>

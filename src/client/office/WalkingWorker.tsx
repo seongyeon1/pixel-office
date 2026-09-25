@@ -42,15 +42,17 @@ export function WalkingWorker({
       title={`${name} · ${s.label || s.sessionId} · ${activity} · ${zoneLabels[target.zone]}`}
       onClick={onSelect}
     >
-      <span className={`worker-station ${target.zone}`} aria-hidden="true" />
-      <span className="desk-activity">{activity}</span>
-      <span className={`map-worker-art ${walking && left ? 'faces-left' : ''}`}>
-        <PixelWorker provider={s.provider} identity={s.sessionId} />
+      <span className={`worker-bubble ${s.status}`} aria-hidden="true">
+        {activity}
+        {s.status === 'active' && <i className="bubble-dots" />}
       </span>
-      <strong>
+      <strong className="worker-name">
         {name}
         <small>{s.label || s.sessionId.slice(0, 8)}</small>
       </strong>
+      <span className={`map-worker-art ${walking && left ? 'faces-left' : ''}`}>
+        <PixelWorker provider={s.provider} identity={s.sessionId} />
+      </span>
     </button>
   );
 }

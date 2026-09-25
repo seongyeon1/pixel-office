@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { sessionPositions } from '../src/client/office/movement.js';
+import { officeStations, sessionPositions } from '../src/client/office/movement.js';
 import type { ObservedSession } from '../src/shared/contracts.js';
 const session = (
   id: string,
@@ -18,4 +18,14 @@ test('eight coworkers in one room have distinct slots and polling order does not
   const positions = sessionPositions(sessions);
   expect(new Set([...positions.values()].map((p) => `${p.x}:${p.y}`)).size).toBe(8);
   expect(sessionPositions([...sessions].reverse())).toEqual(positions);
+});
+test('every zone keeps a full row of stations and each worker sits on one', () => {
+  const sessions = Array.from({ length: 5 }, (_, i) => session(`s-${i}`, 'editing'));
+  const stations = officeStations(sessions);
+  const desks = stations.filter((s) => s.zone === 'desk');
+  expect(desks).toHaveLength(8);
+  expect(stations.filter((s) => s.zone === 'library')).toHaveLength(8);
+  expect(stations.filter((s) => s.zone === 'lounge')).toHaveLength(4);
+  const seats = new Set(desks.map((d) => `${d.x}:${d.y}`));
+  for (const p of sessionPositions(sessions).values()) expect(seats.has(`${p.x}:${p.y}`)).toBe(true);
 });
