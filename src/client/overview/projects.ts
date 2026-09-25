@@ -42,6 +42,8 @@ export interface ProjectLane {
 export interface ProjectRoom {
   root: string;
   pathLabel: string;
+  // Repository name behind origin when it differs from the folder name.
+  repoName: string;
   workers: ProjectWorker[];
   lanes: ProjectLane[];
   offDuty: ProjectWorker[];
@@ -101,6 +103,7 @@ export function projectRooms(
       room = {
         root,
         pathLabel: root,
+        repoName: '',
         workers: [],
         lanes: [],
         offDuty: [],
@@ -118,16 +121,16 @@ export function projectRooms(
   };
   for (const project of projects) get(project.root).latestRun = project.latestRun;
   for (const s of sessions) {
+    if (s.automated) continue;
     const room = get(s.projectPath);
-    // Automated sessions never take a desk; only running ones show up, in the records room.
-    if (s.automated) {
-      if (s.status === 'active' && s.processAlive !== false)
-        room.automations.push(observedWorker(s, seen));
-      continue;
-    }
     if (onDuty(s, now)) room.workers.push(observedWorker(s, seen));
     else room.offDuty.push(observedWorker(s, seen));
   }
+  // Automated sessions never take a desk or open a room of their own (e.g. smoke-test repos);
+  // running ones are listed with a room that people or a connection already opened.
+  for (const s of sessions)
+    if (s.automated && s.status === 'active' && s.processAlive !== false)
+      rooms.get(s.projectPath)?.automations.push(observedWorker(s, seen));
   for (const room of rooms.values()) {
     const parts = room.root.split(/[\\/]/).filter(Boolean);
     let length = Math.min(3, parts.length);
@@ -197,6 +200,8 @@ export function projectRooms(
         });
     }
     room.lanes = lanes(room);
+    const named = room.workers.find((w) => w.session?.repoName)?.session?.repoName ?? '';
+    room.repoName = named && named !== parts.at(-1) ? named : '';
     room.observedCount = room.workers.filter((w) => w.session).length;
     room.reportCount = room.workers.filter((w) => w.mark === 'report').length;
     room.offDuty.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

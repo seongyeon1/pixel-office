@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowUpRight, Coffee, DoorOpen, ScrollText, Users } from 'lucide-react';
+import { ArrowUpRight, Coffee, DoorOpen, Merge, ScrollText, Users, X } from 'lucide-react';
 import { repositoryName } from '../components/RepositoryList';
 import type { ProjectRoom, ProjectWorker } from '../overview/projects';
 import { FloorWorker } from './FloorWorker';
@@ -29,16 +29,96 @@ function useWidth() {
   }, []);
   return [ref, width] as const;
 }
+export interface RoomMerging {
+  // Every room a folder could be merged into, and which folders were merged into which room.
+  roots: string[];
+  aliases: { source: string; target: string }[];
+  onMerge: (source: string, target: string) => Promise<void>;
+  onSplit: (source: string) => Promise<void>;
+}
+function MergeControls({ room, merging }: { room: ProjectRoom; merging: RoomMerging }) {
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState('');
+  const [error, setError] = useState('');
+  const merged = merging.aliases.filter((a) => a.target === room.root).map((a) => a.source);
+  const targets = merging.roots.filter((r) => r !== room.root);
+  const run = async (action: () => Promise<void>) => {
+    setError('');
+    try {
+      await action();
+      setOpen(false);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <div className="floor-room-merge">
+      {merged.map((source) => (
+        <span key={source} className="floor-merged" title={source}>
+          + {repositoryName(source)}
+          <button
+            aria-label={`방 분리 ${source}`}
+            title="원래 방으로 분리"
+            onClick={() => void run(() => merging.onSplit(source))}
+          >
+            <X size={10} />
+          </button>
+        </span>
+      ))}
+      {targets.length > 0 && (
+        <button
+          className="floor-merge-open"
+          aria-label={`방 합치기 ${room.root}`}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <Merge size={11} />
+          합치기
+        </button>
+      )}
+      {open && (
+        <div
+          className="floor-merge-popover"
+          role="group"
+          aria-label={`${repositoryName(room.root)} 합칠 방`}
+        >
+          <p>이 방의 동료를 다른 방으로 옮겨 한 방처럼 보여요. 파일과 작업 폴더는 그대로예요.</p>
+          <select
+            aria-label="합칠 대상 방"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+          >
+            <option value="">방 선택</option>
+            {targets.map((r) => (
+              <option key={r} value={r}>
+                {repositoryName(r)} — {r}
+              </option>
+            ))}
+          </select>
+          <button
+            disabled={!target}
+            onClick={() => void run(() => merging.onMerge(room.root, target))}
+          >
+            합치기
+          </button>
+          {error && <small role="alert">{error}</small>}
+        </div>
+      )}
+    </div>
+  );
+}
 function RoomCell({
   cell,
   room,
   hidden,
   onOpenRoom,
+  merging,
 }: {
   cell: Cell;
   room: ProjectRoom;
   hidden: number;
   onOpenRoom?: (root: string) => void;
+  merging?: RoomMerging;
 }) {
   return (
     <article
@@ -55,6 +135,7 @@ function RoomCell({
             onClick={() => onOpenRoom(room.root)}
           >
             <strong>{repositoryName(room.root)}</strong>
+            {room.repoName && <em className="floor-repo-name">{room.repoName}</em>}
             <ArrowUpRight size={14} />
           </button>
         ) : (
@@ -85,6 +166,7 @@ function RoomCell({
           +{hidden}명 더 보기
         </button>
       )}
+      {merging && <MergeControls room={room} merging={merging} />}
       <span className="floor-door" aria-hidden="true" />
     </article>
   );
@@ -108,6 +190,7 @@ export function FloorMap({
   onOpen,
   onOpenRoom,
   office = false,
+  merging,
   selectedId,
   label = '프로젝트 통합 맵',
   nameOf = mapName,
@@ -122,6 +205,7 @@ export function FloorMap({
   onOpenRoom?: (root: string) => void;
   // One repository's office: every desk row shown, the room first, captions always on.
   office?: boolean;
+  merging?: RoomMerging;
   selectedId?: string;
   label?: string;
   nameOf?: (w: ProjectWorker) => string;
@@ -221,6 +305,7 @@ export function FloorMap({
               room={byRoot.get(cell.key)!}
               hidden={layout.hidden.get(cell.key) ?? 0}
               onOpenRoom={onOpenRoom}
+              merging={merging}
             />
           ) : (
             <div

@@ -281,7 +281,57 @@ export function createObservation(options: Options = {}) {
   const cursors = new Map<string, Cursor>();
   // Remembered past cursor eviction, so a known hook log never takes a person's slot again.
   const automatedFiles = new Set<string>();
-  type Location = { canonical: string; root: string; worktree?: ObservedWorktree };
+  type Location = {
+    canonical: string;
+    root: string;
+    worktree?: ObservedWorktree;
+    repoName?: string;
+  };
+  // Main checkouts seen so far; their worktree records can place a session whose folder is gone.
+  const knownRepos = new Set<string>();
+  const repoNames = new Map<string, string>();
+  const repoName = async (root: string) => {
+    if (!repoNames.has(root)) {
+      const url = await exec('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeout: 2000 })
+        .then((r) => r.stdout.trim())
+        .catch(() => '');
+      repoNames.set(
+        root,
+        url
+          .replace(/\/+$/, '')
+          .split(/[/:]/)
+          .pop()
+          ?.replace(/\.git$/, '') ?? '',
+      );
+    }
+    return repoNames.get(root) || undefined;
+  };
+  // A removed worktree: git still lists it under <repo>/.git/worktrees until it is pruned.
+  // Candidates are known repositories and repositories right next to the surviving folder.
+  const fromWorktreeRecords = async (canonical: string, surviving: string) => {
+    const nearby = await readdir(surviving, { withFileTypes: true }).catch(() => []);
+    const candidates = new Set(knownRepos);
+    for (const ent of nearby)
+      if (ent.isDirectory() && (await stat(join(surviving, ent.name, '.git')).catch(() => null)))
+        candidates.add(join(surviving, ent.name));
+    for (const repo of candidates) {
+      const records = join(repo, '.git', 'worktrees');
+      for (const name of await readdir(records).catch(() => [] as string[])) {
+        const gitdir = await readFile(join(records, name, 'gitdir'), 'utf8').catch(() => '');
+        const path = gitdir.trim() ? dirname(gitdir.trim()) : '';
+        if (!path || !within(path, canonical)) continue;
+        const head = await readFile(join(records, name, 'HEAD'), 'utf8').catch(() => '');
+        const root = await realpath(repo).catch(() => repo);
+        return {
+          canonical,
+          root,
+          worktree: { path, branch: head.trim().replace(/^ref: refs\/heads\//, ''), main: false },
+          repoName: await repoName(root),
+        } satisfies Location;
+      }
+    }
+    return undefined;
+  };
   const roots = new Map<string, Location & { checked: number }>();
   let warnings: string[] = [],
     scannedAt: string | null = null,
@@ -326,6 +376,7 @@ export function createObservation(options: Options = {}) {
       const own = list
         .filter((w) => within(w.path, canonical))
         .sort((a, b) => b.path.length - a.path.length)[0];
+      knownRepos.add(list[0].path);
       found = {
         canonical,
         root: list[0].path,
@@ -333,9 +384,11 @@ export function createObservation(options: Options = {}) {
           own && !(missing && own === list[0])
             ? { path: own.path, branch: own.branch, main: own === list[0] }
             : { path: canonical, branch: '', main: false },
+        repoName: await repoName(list[0].path),
       };
     } catch {
-      /* Non-Git folders retain their observed working directory. */
+      /* Non-Git folders retain their observed working directory, unless a repository remembers it. */
+      if (missing) found = (await fromWorktreeRecords(canonical, real)) ?? found;
     }
     roots.set(cwd, { ...found, checked: now() });
     return found;
@@ -570,6 +623,7 @@ export function createObservation(options: Options = {}) {
         c.info.cwd = location.canonical;
         c.info.projectPath = location.root;
         c.info.worktree = location.worktree;
+        c.info.repoName = location.repoName;
       }
     }
     if (c.subagent && !c.parentKey) c.parentKey = c.info.sessionId;
@@ -651,6 +705,17 @@ export function createObservation(options: Options = {}) {
   };
   const list = (): ObservationSnapshot => {
     const visible = [...cursors.values()].filter((c) => !c.ignored && c.info.projectPath);
+    // A folder outside git that sits inside another observed non-git folder joins it; the home
+    // folder and above never absorb anything, and scripts do not define rooms.
+    const home = homedir();
+    const loose = [
+      ...new Set(
+        visible.filter((c) => !c.info.worktree && !c.info.automated).map((c) => c.info.projectPath),
+      ),
+    ].filter((p) => !within(p, home));
+    const outer = (path: string) =>
+      loose.filter((p) => p !== path && within(p, path)).sort((a, b) => a.length - b.length)[0] ??
+      path;
     const leads = new Map(
       visible
         .filter((c) => !c.subagent)
@@ -661,7 +726,8 @@ export function createObservation(options: Options = {}) {
         .map((c) => {
           const { events, ...summary } = c.info;
           const parentId = c.subagent ? leads.get(`${c.provider}:${c.parentKey}`) : undefined;
-          return parentId ? { ...summary, parentId } : summary;
+          const projectPath = summary.worktree ? summary.projectPath : outer(summary.projectPath);
+          return { ...summary, projectPath, ...(parentId ? { parentId } : {}) };
         })
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
       scannedAt,

@@ -68,6 +68,14 @@ export async function createServer({
     const retired = new Set(store.listRetired().map((s) => s.id));
     return (observation?.list().sessions ?? []).filter((s) => !retired.has(s.id));
   };
+  // Rooms merged by hand: what the map and office show. File access keeps the real roots.
+  const roomSessions = () => {
+    const aliases = store.roomAliases();
+    return visibleSessions().map((s) => {
+      const room = store.resolveRoom(s.projectPath, aliases);
+      return room === s.projectPath ? s : { ...s, projectPath: room };
+    });
+  };
   const workspace = createWorkspaceReader(() => [
     ...store.listProjects().map((p) => p.root),
     ...(observation?.list().sessions ?? []).map((s) => s.projectPath),
@@ -220,7 +228,7 @@ export async function createServer({
     const live = new Map(snapshot.sessions.map((s) => [s.id, s]));
     return {
       ...snapshot,
-      sessions: visibleSessions(),
+      sessions: roomSessions(),
       retired: store
         .listRetired()
         .map((s) => ({ ...s, ...live.get(s.id), available: live.has(s.id) })),
@@ -254,8 +262,14 @@ export async function createServer({
     return { ok: true };
   });
   app.get('/api/projects', async () => {
-    const projects = new Map(store.listProjects().map((p) => [p.root, p]));
-    for (const session of visibleSessions()) {
+    const aliases = store.roomAliases();
+    const projects = new Map(
+      store
+        .listProjects()
+        .filter((p) => !aliases.has(p.root))
+        .map((p) => [p.root, p]),
+    );
+    for (const session of roomSessions()) {
       const p = projects.get(session.projectPath) ?? {
         root: session.projectPath,
         runCount: 0,
@@ -307,6 +321,25 @@ export async function createServer({
     const project = await inspectProject(body.root);
     store.setHarness(project.root, body.harness);
     return store.getHarness(project.root);
+  });
+  app.get('/api/rooms/aliases', async () =>
+    [...store.roomAliases()].map(([source, target]) => ({ source, target })),
+  );
+  app.post('/api/rooms/merge', async (req) => {
+    const { source, target } = z
+      .object({ source: z.string().min(1).max(4096), target: z.string().min(1).max(4096) })
+      .strict()
+      .parse(req.body);
+    store.mergeRoom(source, target);
+    return { source, target };
+  });
+  app.post('/api/rooms/split', async (req) => {
+    const { source } = z
+      .object({ source: z.string().min(1).max(4096) })
+      .strict()
+      .parse(req.body);
+    store.splitRoom(source);
+    return { source };
   });
   app.get<{ Params: { provider: string } }>('/api/models/:provider', async (req) => {
     const provider = z.enum(['codex', 'claude']).parse(req.params.provider);
