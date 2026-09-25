@@ -176,7 +176,7 @@ test('repository switching isolates live activity and history and survives reloa
 test('existing sessions are discovered by repo and show live tools without execution controls', async ({
   page,
 }, info) => {
-  test.setTimeout(60000);
+  test.setTimeout(120000);
   const { writeFile, appendFile, rm } = await import('node:fs/promises');
   const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
   const timestamp = new Date().toISOString();
@@ -222,8 +222,19 @@ test('existing sessions are discovered by repo and show live tools without execu
       name: '캐릭터 Codex external-codex',
       exact: true,
     });
-    await expect(movingAgent).toHaveAttribute('data-zone', 'test');
-    const beforeMove = await movingAgent.getAttribute('style');
+    // Coworkers keep their desk; only meetings and breaks take them away for a while.
+    const deskBox = async () => {
+      await expect(movingAgent).toHaveAttribute('data-place', 'desk', { timeout: 40000 });
+      await expect(movingAgent).not.toHaveClass(/walking/, { timeout: 30000 });
+      const [me, floor] = await Promise.all([
+        movingAgent.boundingBox(),
+        page.getByLabel('에이전트 이동 맵', { exact: true }).boundingBox(),
+      ]);
+      return { x: Math.round(me!.x - floor!.x), y: Math.round(me!.y - floor!.y) };
+    };
+    await expect(movingAgent).toHaveAttribute('data-activity', 'executing');
+    const desk = await deskBox();
+    await expect(movingAgent.locator('.floor-caption')).toHaveText('명령 실행');
     await page.getByRole('tab', { name: '작업 내역', exact: true }).click();
     await expect(page.locator('.observed-inspector')).toContainText('npm test');
     await expect(page.locator('.observed-inspector')).toContainText('기록 · 이어가기');
@@ -239,9 +250,10 @@ test('existing sessions are discovered by repo and show live tools without execu
     await expect(page.locator('.observed-inspector')).toContainText('외부 세션 작업 완료', {
       timeout: 10000,
     });
-    await expect(movingAgent).toHaveAttribute('data-zone', 'lounge');
-    await expect(movingAgent).toHaveAttribute('data-moving', 'true');
-    await expect(movingAgent).not.toHaveAttribute('style', beforeMove!);
+    // Finishing a turn changes what the bubble says, not where the desk is.
+    await expect(movingAgent).toHaveAttribute('data-status', 'idle');
+    expect(await deskBox()).toEqual(desk);
+    await expect(movingAgent.locator('.floor-caption')).toHaveText('응답 완료 · 대기');
     await movingAgent.click();
     await expect(movingAgent).toHaveAttribute('aria-pressed', 'true');
     await page.emulateMedia({ reducedMotion: 'reduce' });

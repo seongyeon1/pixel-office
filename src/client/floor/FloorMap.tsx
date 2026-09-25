@@ -32,7 +32,7 @@ function RoomCell({
   cell: Cell;
   room: ProjectRoom;
   hidden: number;
-  onOpenRoom: (root: string) => void;
+  onOpenRoom?: (root: string) => void;
 }) {
   return (
     <article
@@ -41,15 +41,21 @@ function RoomCell({
       aria-label={`프로젝트 공간 ${room.root}`}
     >
       <header>
-        <button
-          className="floor-room-name"
-          aria-label={`프로젝트 열기 ${room.root}`}
-          title={room.root}
-          onClick={() => onOpenRoom(room.root)}
-        >
-          <strong>{repositoryName(room.root)}</strong>
-          <ArrowUpRight size={14} />
-        </button>
+        {onOpenRoom ? (
+          <button
+            className="floor-room-name"
+            aria-label={`프로젝트 열기 ${room.root}`}
+            title={room.root}
+            onClick={() => onOpenRoom(room.root)}
+          >
+            <strong>{repositoryName(room.root)}</strong>
+            <ArrowUpRight size={14} />
+          </button>
+        ) : (
+          <span className="floor-room-name" title={room.root}>
+            <strong>{repositoryName(room.root)}</strong>
+          </span>
+        )}
         <span
           className={`floor-presence ${room.waitingCount ? 'waiting' : room.reportCount ? 'report' : ''}`}
         >
@@ -64,7 +70,7 @@ function RoomCell({
         <small>{room.pathLabel}</small>
       </header>
       {!room.workers.length && <p className="floor-room-empty">지금 근무 중인 동료가 없어요.</p>}
-      {hidden > 0 && (
+      {hidden > 0 && onOpenRoom && (
         <button
           className="floor-room-more"
           aria-label={`프로젝트 동료 모두 보기 ${room.root}`}
@@ -77,6 +83,10 @@ function RoomCell({
     </article>
   );
 }
+// The repository takes half the floor, the meeting room and lounge sit beside it.
+const OFFICE = { maxRows: Infinity, roomsFirst: true, minCell: 160, roomSpan: 2, facilityRows: 1 };
+const mapName = (w: ProjectWorker) =>
+  `전체 맵 동료 ${w.root} ${w.visiting ? `${w.run!.id} 구현` : (w.session?.sessionId ?? w.run!.id)}`;
 export function FloorMap({
   rooms,
   roster,
@@ -84,6 +94,10 @@ export function FloorMap({
   clock,
   onOpen,
   onOpenRoom,
+  office = false,
+  selectedId,
+  label = '프로젝트 통합 맵',
+  nameOf = mapName,
 }: {
   rooms: ProjectRoom[];
   // Everyone on duty, including rooms the search hides: arriving means joining this list.
@@ -92,11 +106,19 @@ export function FloorMap({
   ready: boolean;
   clock: number;
   onOpen: (root: string, worker: ProjectWorker) => void;
-  onOpenRoom: (root: string) => void;
+  onOpenRoom?: (root: string) => void;
+  // One repository's office: every desk row shown, the room first, captions always on.
+  office?: boolean;
+  selectedId?: string;
+  label?: string;
+  nameOf?: (w: ProjectWorker) => string;
 }) {
   const [box, width] = useWidth();
   // The floor border sits outside the layout.
-  const layout = useMemo(() => floorLayout(rooms, width - 6), [rooms, width]);
+  const layout = useMemo(
+    () => floorLayout(rooms, width - 6, office ? OFFICE : undefined),
+    [rooms, width, office],
+  );
   const workers = useMemo(() => rooms.flatMap((r) => r.lanes.flatMap((l) => l.workers)), [rooms]);
   const places = useMemo(() => placements(workers, layout, clock), [workers, layout, clock]);
   const visible = workers.filter((w) => places.has(w.id));
@@ -135,8 +157,8 @@ export function FloorMap({
   return (
     <div className="floor-viewport" ref={box}>
       <section
-        className="floor"
-        aria-label="프로젝트 통합 맵"
+        className={`floor ${office ? 'office' : ''}`}
+        aria-label={label}
         style={{ width: layout.width, height: layout.height }}
       >
         <div className="floor-spine" style={{ width: layout.spineX * 2 }} aria-hidden="true" />
@@ -210,6 +232,8 @@ export function FloorMap({
               start={arrivals.current.get(w.id)}
               delay={arrivals.current.get(w.id) ? hash(w.id) % 1600 : 0}
               layout={layout}
+              name={nameOf(w)}
+              selected={selectedId === undefined ? undefined : selectedId === w.id}
               onOpen={() => onOpen(w.root, w)}
             />
           );
@@ -222,6 +246,7 @@ export function FloorMap({
             kind="desk"
             start={d.from}
             layout={layout}
+            name={`${nameOf(d.worker)} 퇴근 중`}
             leaving
             onArrive={() => setDepartures(({ [id]: _gone, ...rest }) => rest)}
             onOpen={() => undefined}

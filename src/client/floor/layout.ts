@@ -62,30 +62,72 @@ const MAX_ROWS = 3;
 const LOBBY_H = 96;
 // Feet sit a little above the desk front so the desk hides the chair, not the character.
 const FEET = 62;
-export function floorLayout(rooms: FloorInput[], width: number): FloorLayout {
-  const usable = Math.max(ROOM_MIN_W, width - SPINE_W);
-  const cols = Math.max(1, Math.floor((usable + GAP) / (ROOM_MIN_W + GAP)));
+export interface FloorOptions {
+  // Desk rows shown per room before the rest is counted as overflow.
+  maxRows?: number;
+  // A single repository office puts its room before the meeting room and lounge.
+  roomsFirst?: boolean;
+  // Narrowest cell; a smaller value fits more cells side by side.
+  minCell?: number;
+  // Columns a repository room spans when the floor is wide enough.
+  roomSpan?: number;
+  // Height of the meeting room and lounge, in desk rows.
+  facilityRows?: number;
+}
+export function floorLayout(
+  rooms: FloorInput[],
+  width: number,
+  {
+    maxRows = MAX_ROWS,
+    roomsFirst = false,
+    minCell = ROOM_MIN_W,
+    roomSpan = 1,
+    facilityRows = 2,
+  }: FloorOptions = {},
+): FloorLayout {
+  const usable = Math.max(minCell, width - SPINE_W);
+  const cols = Math.max(1, Math.floor((usable + GAP) / (minCell + GAP)));
   const cellW = Math.floor((usable - (cols - 1) * GAP) / cols);
-  const perRow = Math.max(2, Math.min(6, Math.floor((cellW - 2 * SEAT_PAD) / SEAT_W)));
-  const entries: { key: string; kind: CellKind; rows: number; room?: FloorInput }[] = [
-    { key: MEETING, kind: 'meeting', rows: 2 },
-    { key: LOUNGE, kind: 'lounge', rows: 2 },
-    ...rooms.map((room) => ({
+  const widthOf = (span: number) => span * cellW + (span - 1) * GAP;
+  const seatsIn = (w: number) => Math.max(2, Math.min(8, Math.floor((w - 2 * SEAT_PAD) / SEAT_W)));
+  const facilities = [
+    { key: MEETING, kind: 'meeting' as const, rows: facilityRows, span: 1, perRow: 0 },
+    { key: LOUNGE, kind: 'lounge' as const, rows: facilityRows, span: 1, perRow: 0 },
+  ];
+  const projectCells = rooms.map((room) => {
+    const span = Math.min(cols, roomSpan);
+    const perRow = seatsIn(widthOf(span));
+    const needed = room.lanes.reduce(
+      (n, l) => n + Math.max(1, Math.ceil(l.workers.length / perRow)),
+      0,
+    );
+    return {
       key: room.root,
       kind: 'room' as const,
       room,
-      rows: Math.min(
-        MAX_ROWS,
-        Math.max(
-          1,
-          room.lanes.reduce((n, l) => n + Math.max(1, Math.ceil(l.workers.length / perRow)), 0),
-        ),
-      ),
-    })),
-  ];
-  const gridRows = Math.ceil(entries.length / cols);
+      span,
+      perRow,
+      rows: Math.min(maxRows, Math.max(1, needed)),
+    };
+  });
+  type Entry = (typeof facilities)[number] | (typeof projectCells)[number];
+  const entries: Entry[] = roomsFirst
+    ? [...projectCells, ...facilities]
+    : [...facilities, ...projectCells];
+  // Row-major packing; a cell that does not fit the rest of a row starts the next one.
+  const grid: { entry: Entry; col: number }[][] = [];
+  let col = cols;
+  for (const entry of entries) {
+    if (col + entry.span > cols) {
+      grid.push([]);
+      col = 0;
+    }
+    grid[grid.length - 1].push({ entry, col });
+    col += entry.span;
+  }
+  const gridRows = grid.length;
   const heightOf = (r: number) =>
-    HEAD + Math.max(...entries.slice(r * cols, r * cols + cols).map((e) => e.rows)) * ROW_H + PAD_B;
+    HEAD + Math.max(...grid[r].map((g) => g.entry.rows)) * ROW_H + PAD_B;
   const cells: Cell[] = [];
   const corridors: FloorLayout['corridors'] = [];
   let y = 0;
@@ -98,20 +140,21 @@ export function floorLayout(rooms: FloorInput[], width: number): FloorLayout {
       }
       if (r >= gridRows) continue;
       const h = heightOf(r);
-      entries.slice(r * cols, r * cols + cols).forEach((e, c) => {
+      for (const { entry: e, col: c } of grid[r]) {
         const x = SPINE_W + c * (cellW + GAP);
+        const w = widthOf(e.span);
         cells.push({
           key: e.key,
           kind: e.kind,
           x,
           y,
-          w: cellW,
+          w,
           h,
           band,
           upper,
-          door: { x: x + cellW / 2, y: upper ? y + h : y },
+          door: { x: x + w / 2, y: upper ? y + h : y },
         });
-      });
+      }
       y += h;
     }
     y += BAND_GAP;
@@ -121,7 +164,8 @@ export function floorLayout(rooms: FloorInput[], width: number): FloorLayout {
   const seats: FloorLayout['seats'] = new Map();
   const hidden = new Map<string, number>();
   for (const e of entries) {
-    if (!e.room) continue;
+    if (!('room' in e)) continue;
+    const perRow = e.perRow;
     const cell = cells.find((c) => c.key === e.key)!;
     const rowX = cell.x + (cell.w - perRow * SEAT_W) / 2;
     const tagged = e.room.lanes.length > 1 || e.room.lanes.some((l) => !l.main);
@@ -131,7 +175,7 @@ export function floorLayout(rooms: FloorInput[], width: number): FloorLayout {
       const needed = Math.max(1, Math.ceil(lane.workers.length / perRow));
       for (let i = 0; i < needed; i++, row++) {
         const members = lane.workers.slice(i * perRow, i * perRow + perRow);
-        if (row >= MAX_ROWS) {
+        if (row >= maxRows) {
           lost += members.length;
           continue;
         }

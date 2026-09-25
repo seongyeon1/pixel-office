@@ -21,6 +21,8 @@ export function FloorWorker({
   delay = 0,
   layout,
   leaving = false,
+  name,
+  selected,
   onArrive,
   onOpen,
 }: {
@@ -33,6 +35,10 @@ export function FloorWorker({
   delay?: number;
   layout: FloorLayout;
   leaving?: boolean;
+  // Accessible name; each screen keeps its own naming scheme.
+  name: string;
+  // Defined only where coworkers can be selected.
+  selected?: boolean;
   onArrive?: () => void;
   onOpen: () => void;
 }) {
@@ -88,12 +94,11 @@ export function FloorWorker({
       if (timer) clearTimeout(timer);
     };
   }, [target.x, target.y, target.cell, size, leaving]);
-  const name = w.provider === 'codex' ? 'Codex' : 'Claude';
-  const id = w.visiting ? `${w.run!.id} 구현` : (w.session?.sessionId ?? w.run!.id);
+  const provider = w.provider === 'codex' ? 'Codex' : 'Claude';
   const doing = leaving ? '퇴근 중' : placeLabel[kind] || w.caption;
   return (
     <button
-      className={`floor-worker ${w.active ? 'working' : 'resting'} ${walking ? 'walking' : ''} ${w.mark ? `marked ${w.mark}` : ''} ${w.certain ? '' : 'guess'}`}
+      className={`floor-worker ${w.active ? 'working' : 'resting'} ${walking ? 'walking' : ''} ${w.mark ? `marked ${w.mark}` : ''} ${w.certain ? '' : 'guess'} ${selected ? 'selected' : ''}`}
       style={{
         transform: `translate(${pos.x}px, ${pos.y}px)`,
         transitionDuration: `${duration}ms`,
@@ -102,8 +107,10 @@ export function FloorWorker({
       data-place={leaving ? 'leaving' : kind}
       data-status={w.stale ? 'stale' : w.active ? 'active' : 'idle'}
       data-mark={w.mark ?? undefined}
-      aria-label={`전체 맵 동료 ${w.root} ${id}`}
-      title={`${name} · ${w.label} · ${doing}${w.lane !== w.root ? `\n${w.lane}` : ''}${w.prompt ? `\n${w.prompt.slice(0, 240)}` : ''}`}
+      data-activity={w.session?.status === 'active' ? w.session.activity : undefined}
+      aria-label={name}
+      aria-pressed={selected}
+      title={`${provider} · ${w.label} · ${doing}${w.lane !== w.root ? `\n${w.lane}` : ''}${w.prompt ? `\n${w.prompt.slice(0, 240)}` : ''}`}
       disabled={leaving}
       onClick={onOpen}
     >

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FolderPlus, Map, Search } from 'lucide-react';
 import type { ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
@@ -7,16 +7,7 @@ import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
 import { FloorMap } from '../floor/FloorMap';
 import { markSeen, useSeenReports } from '../floor/seen';
-// Choreography and duty rosters move on this clock; polling alone would freeze idle offices.
-const TICK = 5000;
-function useClock() {
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setClock(Date.now()), TICK);
-    return () => clearInterval(timer);
-  }, []);
-  return clock;
-}
+import { useClock } from '../floor/clock';
 const since = (iso: string, now: number) => {
   const min = Math.max(1, Math.round((now - Date.parse(iso)) / 60000));
   return min < 60

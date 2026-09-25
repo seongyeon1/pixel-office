@@ -1,50 +1,40 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { WalkingWorker } from './WalkingWorker';
-import {
-  officeStations,
-  sessionPositions,
-  sessionLayout,
-  zoneLabels,
-  type OfficeZone,
-} from './movement';
-import { ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
+import { useMemo } from 'react';
+import { MessageCircle } from 'lucide-react';
 import { type ChatMessage, type ObservedSession } from '../../shared/contracts';
-import { hasReport } from '../floor/roster';
+import { FloorMap } from '../floor/FloorMap';
+import { useClock } from '../floor/clock';
 import { useSeenReports } from '../floor/seen';
+import { projectRooms } from '../overview/projects';
 const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude');
+// One repository as one room of the same floor the whole map uses: people keep their desks and
+// only move for meetings, breaks and going home, not for every tool call.
 export function SessionOffice({
+  root,
   sessions,
   selected,
   onSelect,
   reply,
   onChat,
 }: {
+  root: string;
   sessions: ObservedSession[];
   selected?: ObservedSession;
   onSelect: (s: ObservedSession) => void;
   reply?: ChatMessage;
   onChat: () => void;
 }) {
-  const mapScroll = useRef<HTMLDivElement>(null);
   const seen = useSeenReports();
-  const [page, setPage] = useState(0);
-  const index = sessions.findIndex((s) => s.id === selected?.id);
-  useEffect(() => {
-    if (index >= 0) setPage(Math.floor(index / 8));
-  }, [selected?.id]);
-  const pages = Math.max(1, Math.ceil(sessions.length / 8));
-  const safePage = Math.min(page, pages - 1);
-  const shown = sessions.slice(safePage * 8, safePage * 8 + 8);
-  const positions = sessionPositions(shown);
-  const layout = sessionLayout(shown);
-  const stations = officeStations(shown);
-  const seated = new Set([...positions.values()].map((p) => `${p.zone}:${p.x}:${p.y}`));
-  const selectedX = selected ? positions.get(selected.id)?.x : undefined;
-  useEffect(() => {
-    const viewport = mapScroll.current;
-    if (viewport && selectedX !== undefined)
-      viewport.scrollTo({ left: Math.max(0, selectedX - viewport.clientWidth / 2 + 38) });
-  }, [selected?.id, selectedX]);
+  const clock = useClock();
+  const rooms = useMemo(
+    () =>
+      projectRooms(root ? [{ root, latestRun: null, runCount: 0 }] : [], sessions, {
+        now: clock,
+        seen,
+      }).filter((r) => r.root === root),
+    [root, sessions, clock, seen],
+  );
+  const roster = useMemo(() => rooms.flatMap((r) => r.workers.map((w) => w.id)), [rooms]);
+  const offDuty = rooms.reduce((n, r) => n + r.offDuty.length, 0);
   const speech =
     reply &&
     reply.sessionId === selected?.id &&
@@ -68,91 +58,24 @@ export function SessionOffice({
           <MessageCircle size={16} />
         </button>
       )}
-      <div className="session-room">
-        <div className="room-windows" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-          <span>PIXEL OFFICE</span>
-        </div>
-        <div
-          ref={mapScroll}
-          className="session-map-scroll"
-          tabIndex={0}
-          aria-label="에이전트 이동 맵. 좁은 화면에서는 좌우로 스크롤하세요."
-        >
-          <div
-            className="session-map"
-            style={
-              {
-                height: layout.height,
-                '--map-top-height': `${layout.topHeight}px`,
-                '--map-bottom-height': `${layout.bottomHeight}px`,
-                '--map-lower-top': `${layout.lowerTop}px`,
-              } as CSSProperties
-            }
-          >
-            {(['desk', 'library', 'test', 'lounge'] as OfficeZone[]).map((zone) => (
-              <div key={zone} className={`map-zone ${zone}`} aria-hidden="true">
-                <span>{zoneLabels[zone]}</span>
-              </div>
-            ))}
-            {stations.map((st) =>
-              (['back', 'front'] as const).map((part) => (
-                <div
-                  key={`${st.zone}-${st.slot}-${part}`}
-                  className={`station-${part} ${st.zone} ${seated.has(`${st.zone}:${st.x}:${st.y}`) ? 'occupied' : ''}`}
-                  style={{ left: st.x, top: st.y }}
-                  aria-hidden="true"
-                >
-                  <i />
-                  <i />
-                  <i />
-                </div>
-              )),
-            )}
-            <div className="map-hallway" aria-hidden="true">
-              PIXEL OFFICE
-            </div>
-            {shown.map((s) => (
-              <WalkingWorker
-                key={s.id}
-                session={s}
-                target={positions.get(s.id)!}
-                selected={s.id === selected?.id}
-                mark={s.attention?.kind ?? (hasReport(s, seen) ? 'report' : null)}
-                onSelect={() => onSelect(s)}
-              />
-            ))}
-            {!shown.length && (
-              <p className="map-empty">이 레포에서 발견한 동료가 이곳에 나타납니다.</p>
-            )}
-          </div>
-        </div>
-      </div>
+      {rooms.length > 0 && (
+        <FloorMap
+          rooms={rooms}
+          roster={roster}
+          ready
+          clock={clock}
+          office
+          label="에이전트 이동 맵"
+          selectedId={selected && `observed:${selected.id}`}
+          nameOf={(w) => `캐릭터 ${providerName(w.session!)} ${w.session!.sessionId}`}
+          onOpen={(_root, w) => w.session && onSelect(w.session)}
+        />
+      )}
       <div className="session-office-bottom">
-        <span>관측된 활동에 따라 이동해요. 동료를 눌러 대화하세요.</span>
-        {pages > 1 && (
-          <nav aria-label="오피스 페이지">
-            <button
-              aria-label="이전 동료"
-              disabled={safePage === 0}
-              onClick={() => setPage(safePage - 1)}
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <span>
-              {safePage + 1} / {pages}
-            </span>
-            <button
-              aria-label="다음 동료"
-              disabled={safePage === pages - 1}
-              onClick={() => setPage(safePage + 1)}
-            >
-              <ChevronRight size={16} />
-            </button>
-          </nav>
-        )}
+        <span>
+          각자 자기 책상에서 일해요. 회의·휴식·출퇴근 때만 움직이고, 동료를 누르면 대화할 수 있어요.
+        </span>
+        {offDuty > 0 && <span>퇴근 {offDuty}명은 아래 목록에서 볼 수 있어요.</span>}
       </div>
     </section>
   );
