@@ -179,3 +179,22 @@ test('desks are grouped by worktree with the main checkout first and subagents b
   expect(room.lanes[0].workers.map((w) => w.session!.id)).toEqual(['a-main', 'b-main', 'a-sub']);
   expect(room.lanes[0].workers[2].parentId).toBe('observed:b-main');
 });
+
+test('coworkers carry their model family, and the family filter keeps only matching rooms', async () => {
+  const { withFamily } = await import('../src/client/overview/projects.js');
+  const rows: ObservedSession[] = [
+    { ...session('opus', '/a'), provider: 'claude', model: 'claude-opus-5-5' },
+    { ...session('astra', '/a'), model: 'gpt-6-astra' },
+    { ...session('luna', '/b'), model: 'gpt-6-luna' },
+  ];
+  const rooms = projectRooms([project('/a', run)], rows, at);
+  const a = rooms.find((r) => r.root === '/a')!;
+  expect(a.workers.find((w) => w.id === 'observed:opus')!.family.label).toBe('Opus');
+  expect(a.workers.find((w) => w.id === 'run:managed')!.family.key).toBe('claude:default');
+  const astra = withFamily(rooms, 'codex:astra');
+  expect(astra.map((r) => r.root)).toEqual(['/a']);
+  expect(astra[0].workers.map((w) => w.id)).toEqual(['observed:astra']);
+  expect(astra[0].lanes.flatMap((l) => l.workers).map((w) => w.id)).toEqual(['observed:astra']);
+  expect(astra[0]).toMatchObject({ activeCount: 1, waitingCount: 0 });
+  expect(withFamily(rooms, '')).toBe(rooms);
+});

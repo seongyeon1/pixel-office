@@ -464,3 +464,27 @@
   max-width: none;
   z-index: 1;
 }
+/* Model family badge under the name: Claude families warm, Codex families teal. */
+.floor-family {
+  margin-top: 1px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 11px;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: #c0764f;
+}
+.floor-family.codex {
+  background: #3f8a86;
+}
+.floor-family[data-family$=':unknown'],
+.floor-family[data-family$=':default'] {
+  color: #56614e;
+  background: #e3e6dc;
+}
+/* Sprite, name and family badge keep their size; the button is taller than its 70px box. */
+.floor-worker > * {
+  flex-shrink: 0;
+}

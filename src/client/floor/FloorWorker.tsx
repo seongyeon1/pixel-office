@@ -21,6 +21,7 @@ export function FloorWorker({
   delay = 0,
   layout,
   leaving = false,
+  modelNote = '',
   name,
   selected,
   onArrive,
@@ -35,6 +36,8 @@ export function FloorWorker({
   delay?: number;
   layout: FloorLayout;
   leaving?: boolean;
+  // The provider's catalog description of this coworker's model.
+  modelNote?: string;
   // Accessible name; each screen keeps its own naming scheme.
   name: string;
   // Defined only where coworkers can be selected.
@@ -99,6 +102,7 @@ export function FloorWorker({
     };
   }, [target.x, target.y, target.cell, size, leaving]);
   const provider = w.provider === 'codex' ? 'Codex' : 'Claude';
+  const model = [w.family.label, w.family.version].filter(Boolean).join(' ');
   const doing = leaving ? '퇴근 중' : placeLabel[kind] || w.caption;
   return (
     <button
@@ -115,7 +119,7 @@ export function FloorWorker({
       data-activity={w.session?.status === 'active' ? w.session.activity : undefined}
       aria-label={name}
       aria-pressed={selected}
-      title={`${provider} · ${w.label} · ${doing}${w.lane !== w.root ? `\n${w.lane}` : ''}${w.prompt ? `\n${w.prompt.slice(0, 240)}` : ''}`}
+      title={`${provider} ${model}${modelNote ? ` — ${modelNote}` : ''}\n${w.label} · ${doing}${w.lane !== w.root ? `\n${w.lane}` : ''}${w.prompt ? `\n${w.prompt.slice(0, 240)}` : ''}`}
       disabled={leaving}
       onClick={onOpen}
     >
@@ -131,6 +135,9 @@ export function FloorWorker({
         <PixelWorker provider={w.provider} identity={w.identity} />
       </span>
       <small className="floor-name">{w.label}</small>
+      <b className={`floor-family ${w.provider}`} data-family={w.family.key}>
+        {w.family.label}
+      </b>
     </button>
   );
 }

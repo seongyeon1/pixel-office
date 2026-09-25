@@ -29,7 +29,12 @@ test('office fits the viewport and supports model/persona selection', async ({ p
   await page.getByRole('button', { name: '설정 완료' }).click();
   await page.getByRole('button', { name: 'Codex 선택' }).click();
   await expect(page.getByRole('heading', { name: 'Codex 신입' })).toBeVisible();
-  await expect(page.getByText('custom-model', { exact: true })).toBeVisible();
+  await expect(page.locator('.inspector').getByText('custom-model', { exact: true })).toBeVisible();
+  // The sidebar lists the model family behind each provider; phones collapse the sidebar.
+  if (info.project.name === 'desktop')
+    await expect(
+      page.locator('.colleague-families i.codex', { hasText: 'custom-model' }),
+    ).toBeVisible();
 });
 test('approval survives reload, question is answered, handoff yields a file diff', async ({
   page,
@@ -214,6 +219,10 @@ test('existing sessions are discovered by repo and show live tools without execu
     await expect(page.getByRole('button', { name: /외부 세션 2/ })).toBeVisible({ timeout: 20000 });
     await page.getByRole('button', { name: /외부 세션 2/ }).click();
     await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+    // The list is grouped by model family; an unrecognised model id keeps its own group.
+    await expect(
+      page.locator('.family-heading', { hasText: 'Claude · claude-external' }),
+    ).toBeVisible();
     await page.getByRole('button', { name: '세션 선택 Codex external-codex' }).click();
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex external-codex', exact: true }),

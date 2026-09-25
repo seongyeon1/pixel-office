@@ -49,6 +49,7 @@ import { Office } from './office/Office';
 import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
+import { compareFamilies, modelFamily, type ModelFamily } from './models/family';
 import type { ProjectWorker } from './overview/projects';
 import { ResumeDock } from './components/SessionResume';
 import { ObservedOffice } from './components/ObservedOffice';
@@ -112,6 +113,19 @@ export function App() {
     (p) => p.root !== project?.root && p.latestRun && !terminal(p.latestRun.status),
   );
   const observedSessions = observation.sessions.filter((s) => s.projectPath === project?.root);
+  // Model families behind each provider: observed sessions of this repository, or the team setting.
+  const familiesOf = (id: Provider) => {
+    const list = observing
+      ? observedSessions.filter((s) => s.provider === id).map((s) => modelFamily(id, s.model))
+      : [modelFamily(id, actualTeam[id].model || 'default')];
+    const counted = new globalThis.Map<string, { family: ModelFamily; count: number }>();
+    for (const family of list) {
+      const hit = counted.get(family.key) ?? { family, count: 0 };
+      hit.count++;
+      counted.set(family.key, hit);
+    }
+    return [...counted.values()].sort((a, b) => compareFamilies(a.family, b.family));
+  };
   const retiredSessions = (observation.retired ?? []).filter(
     (s) => s.projectPath === project?.root,
   );
@@ -526,6 +540,14 @@ export function App() {
                       ? '응답 대기'
                       : activityLabels[state.agents[id].activity]}
                 </small>
+                <span className="colleague-families">
+                  {familiesOf(id).map(({ family, count }) => (
+                    <i key={family.key} className={id} title={family.version}>
+                      {family.label}
+                      {count > 1 && <em>{count}</em>}
+                    </i>
+                  ))}
+                </span>
               </span>
               <span className={`presence ${health?.providers[id].authenticated ? 'online' : ''}`} />
             </button>

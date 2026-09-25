@@ -8,6 +8,7 @@ import {
   type Run,
 } from '../../shared/contracts';
 import { hasReport, onDuty, type Seen } from '../floor/roster';
+import { modelFamily, type ModelFamily } from '../models/family';
 export type WorkerMark = 'question' | 'approval' | 'report' | null;
 export interface ProjectWorker {
   id: string;
@@ -28,6 +29,7 @@ export interface ProjectWorker {
   // Standing beside another worker, e.g. an implementer waiting on a review.
   visiting?: string;
   updatedAt: string;
+  family: ModelFamily;
   session?: ObservedSession;
   run?: Run;
 }
@@ -81,6 +83,7 @@ function observedWorker(s: ObservedSession, seen: Seen): ProjectWorker {
     certain: s.attention?.certain ?? true,
     parentId: s.parentId && `observed:${s.parentId}`,
     updatedAt: s.updatedAt,
+    family: modelFamily(s.provider, s.model),
     session: s,
   };
 }
@@ -156,6 +159,7 @@ export function projectRooms(
         id: `run:${run.id}`,
         identity: provider,
         provider,
+        family: modelFamily(provider, run.team[provider].model || 'default'),
         caption:
           waiting || run.status === 'queued'
             ? statusLabels[run.status]
@@ -175,6 +179,7 @@ export function projectRooms(
           id: `run:${run.id}:implementer`,
           identity: run.implementer,
           provider: run.implementer,
+          family: modelFamily(run.implementer, run.team[run.implementer].model || 'default'),
           caption: '리뷰 받는 중',
           active: true,
           waiting: false,
@@ -236,4 +241,27 @@ function lanes(room: ProjectRoom): ProjectLane[] {
       a.branch.localeCompare(b.branch) ||
       a.key.localeCompare(b.key),
   );
+}
+
+// Keeps only one model family on the floor; rooms without such a coworker disappear.
+export function withFamily(rooms: ProjectRoom[], family: string): ProjectRoom[] {
+  if (!family) return rooms;
+  const keep = (w: ProjectWorker) => w.family.key === family;
+  return rooms
+    .map((room) => {
+      const workers = room.workers.filter(keep);
+      const lanes = room.lanes
+        .map((lane) => ({ ...lane, workers: lane.workers.filter(keep) }))
+        .filter((lane) => lane.workers.length);
+      return {
+        ...room,
+        workers,
+        lanes,
+        activeCount: workers.filter((w) => w.active).length,
+        waitingCount: workers.filter((w) => w.waiting).length,
+        reportCount: workers.filter((w) => w.mark === 'report').length,
+        staleCount: workers.filter((w) => w.stale).length,
+      };
+    })
+    .filter((room) => room.workers.length);
 }

@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { FolderPlus, Map, Search } from 'lucide-react';
 import type { ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
-import { projectRooms, type ProjectWorker } from './projects';
+import { projectRooms, withFamily, type ProjectWorker } from './projects';
+import { compareFamilies, type ModelFamily } from '../models/family';
 import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
 import { FloorMap } from '../floor/FloorMap';
@@ -31,6 +32,7 @@ export function ProjectMap({
 }) {
   const [query, setQuery] = useState('');
   const [onlyActive, setOnlyActive] = useState(false);
+  const [family, setFamily] = useState('');
   const clock = useClock();
   const seen = useSeenReports();
   const rooms = useMemo(
@@ -38,13 +40,24 @@ export function ProjectMap({
     [projects, observation.sessions, clock, seen],
   );
   const needle = query.trim().toLocaleLowerCase();
+  const families = useMemo(() => {
+    const seen = new globalThis.Map<string, { family: ModelFamily; count: number }>();
+    for (const w of rooms.flatMap((r) => r.workers)) {
+      const hit = seen.get(w.family.key) ?? { family: w.family, count: 0 };
+      hit.count++;
+      seen.set(w.family.key, hit);
+    }
+    return [...seen.values()].sort((a, b) => compareFamilies(a.family, b.family));
+  }, [rooms]);
+  // A family whose last coworker went home stops filtering instead of emptying the floor.
+  const activeFamily = families.some((f) => f.family.key === family) ? family : '';
   const visible = useMemo(
     () =>
-      rooms.filter(
+      withFamily(rooms, activeFamily).filter(
         (room) =>
           (!onlyActive || room.activeCount > 0) && room.root.toLocaleLowerCase().includes(needle),
       ),
-    [rooms, onlyActive, needle],
+    [rooms, activeFamily, onlyActive, needle],
   );
   const roster = useMemo(() => rooms.flatMap((r) => r.workers.map((w) => w.id)), [rooms]);
   const onDuty = roster.length;
@@ -109,6 +122,19 @@ export function ProjectMap({
           />
           활동 있는 프로젝트만
         </label>
+        <select
+          className="project-map-model"
+          aria-label="모델로 동료 거르기"
+          value={activeFamily}
+          onChange={(e) => setFamily(e.target.value)}
+        >
+          <option value="">모든 모델</option>
+          {families.map(({ family: f, count }) => (
+            <option key={f.key} value={f.key}>
+              {f.provider === 'codex' ? 'Codex' : 'Claude'} · {f.label} ({count})
+            </option>
+          ))}
+        </select>
         <span>{visible.length}개 공간</span>
       </div>
       {observation.warnings.length > 0 && (

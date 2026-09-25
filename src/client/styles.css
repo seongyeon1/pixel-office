@@ -3176,3 +3176,52 @@ nav button.active svg {
     min-height: 32px;
   }
 }
+/* Model families behind a provider in the sidebar. */
+.colleague-families {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+.colleague-families i {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 14px;
+  color: #fff;
+  background: #c0764f;
+}
+.colleague-families i.codex {
+  background: #3f8a86;
+}
+.colleague-families em {
+  font-style: normal;
+  font-weight: 500;
+  opacity: 0.85;
+}
+.family-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 2px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9a5a3a;
+}
+.family-heading[data-provider='codex'] {
+  color: #2f6d6a;
+}
+.family-heading span {
+  font-weight: 500;
+  color: #8a9282;
+}
+.family-heading small {
+  margin-left: auto;
+  font-weight: 500;
+  color: #8a9282;
+}
