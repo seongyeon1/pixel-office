@@ -1,0 +1,17 @@
+import {expect,test} from 'vitest';
+import {mkdtemp,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {createStore} from '../src/server/store.js';
+import {createOrchestrator,nextAfterReview} from '../src/server/orchestrator.js';
+import {defaultTeam,type Adapter,type PhaseInput,type Review} from '../src/shared/contracts.js';
+import {personaInstructions} from '../src/server/personas.js';
+async function project(){const p=await mkdtemp(join(tmpdir(),'pixel-orch-'));execFileSync('git',['init'],{cwd:p,stdio:'pipe'});await writeFile(join(p,'a.txt'),'a');for(const args of [['add','.'],['-c','user.name=Pixel','-c','user.email=pixel@example.test','commit','-m','seed']])execFileSync('git',args,{cwd:p,stdio:'pipe'});return p;}
+const review:Review={verdict:'changes_requested',summary:'fix',findings:[]};
+const pass:Review={verdict:'pass',summary:'ok',findings:[]};
+const fake=(fn:Adapter['execute']):Adapter=>({probe:async()=>({installed:true,authenticated:true,detail:'fixture'}),execute:fn,close:async()=>{}});
+const wait=async(predicate:()=>boolean)=>{for(let i=0;i<300&&!predicate();i++)await new Promise(r=>setTimeout(r,10));expect(predicate()).toBe(true);};
+test('revision cap and malformed review never report success',()=>{expect(nextAfterReview(review,0)).toBe('revise');expect(nextAfterReview(review,2)).toBe('needs_attention');expect(nextAfterReview({...pass,verdict:'inconclusive'},0)).toBe('needs_attention');});
+test('hands results between providers and carries persona into actual input',async()=>{const store=createStore(':memory:');const inputs:PhaseInput[]=[];let reviews=0;const codex=fake(async i=>{inputs.push(i);return {outcome:'completed',text:'changed a file'};});const claude=fake(async i=>{inputs.push(i);return {outcome:'completed',text:'review',review:reviews++===0?review:pass};});const o=createOrchestrator({store,adapters:{codex,claude},dataDir:await mkdtemp(join(tmpdir(),'pixel-data-'))});const team=defaultTeam();team.codex.seniority='intern';const run=await o.start({projectPath:await project(),prompt:'task',mode:'collaborate',implementer:'codex',team});await wait(()=>store.getRun(run.id)?.status==='completed');expect(inputs.map(i=>i.role)).toEqual(['implementer','reviewer','implementer','reviewer']);expect(inputs[1].prompt).toContain('changed a file');expect(inputs[0].prompt).toContain(personaInstructions(team.codex));expect(store.getRun(run.id)?.revision).toBe(1);await o.shutdown();store.close();});
+test('cancelled implementation cannot trigger reviewer even with late success',async()=>{const store=createStore(':memory:');let reviewer=false;const codex=fake(async i=>{await new Promise<void>(r=>i.signal.addEventListener('abort',()=>r(),{once:true}));return {outcome:'completed',text:'late'};});const claude=fake(async()=>{reviewer=true;return {outcome:'completed',text:'bad',review:pass};});const o=createOrchestrator({store,adapters:{codex,claude},dataDir:await mkdtemp(join(tmpdir(),'pixel-data-'))});const input={projectPath:await project(),prompt:'task',mode:'collaborate' as const,implementer:'codex' as const,team:defaultTeam()};const run=await o.start(input);await new Promise(r=>setTimeout(r,15));await expect(o.start(input)).rejects.toThrow('진행 중');await o.cancel(run.id);expect(store.getRun(run.id)?.status).toBe('cancelled');expect(reviewer).toBe(false);store.close();});

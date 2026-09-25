@@ -14,6 +14,7 @@ export interface Interaction { id: string; runId: string; agentId: Provider; kin
 export type Answer = { decision: 'approve' | 'deny' } | { answers: Record<string, string[]> };
 export const reviewSchema = z.object({ verdict: z.enum(['pass', 'changes_requested', 'inconclusive']), summary: z.string(), findings: z.array(z.object({ path: z.string(), message: z.string(), severity: z.enum(['error', 'warning']) })) });
 export type Review = z.infer<typeof reviewSchema>;
+export const reviewJsonSchema = () => z.toJSONSchema(reviewSchema, {target:"draft-7"});
 export interface PhaseInput { runId: string; cwd: string; prompt: string; role: 'implementer' | 'reviewer'; profile: AgentProfile; signal: AbortSignal }
 export interface PhaseResult { outcome: 'completed' | 'failed' | 'cancelled'; text: string; review?: Review; error?: string }
 export interface Connection { installed: boolean; authenticated: boolean | null; detail: string }

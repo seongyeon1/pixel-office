@@ -1,0 +1,20 @@
+import {mkdtemp,writeFile,readFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {createStore} from '../src/server/store.js';
+import {createOrchestrator} from '../src/server/orchestrator.js';
+import {createCodexAdapter} from '../src/server/adapters/codex.js';
+import {createClaudeAdapter} from '../src/server/adapters/claude.js';
+import {defaultTeam,terminal,type Mode,type Interaction} from '../src/shared/contracts.js';
+const dir=await mkdtemp(join(tmpdir(),'pixel-smoke-'));const project=join(dir,'project');await import('node:fs/promises').then(m=>m.mkdir(project));
+const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'});
+git('init');await writeFile(join(project,'package.json'),JSON.stringify({type:'module',scripts:{test:'node --test'}}));await writeFile(join(project,'add.js'),'export function add(a,b) { return 0; }\n');await writeFile(join(project,'add.test.js'),"import {test} from 'node:test';import assert from 'node:assert/strict';import {add} from './add.js';test('adds numbers',()=>{assert.equal(add(2,3),5);assert.equal(add(-2,1),-1);});\n");git('add','.');git('-c','user.name=Pixel','-c','user.email=pixel@example.test','commit','-m','fixture');
+const store=createStore(join(dir,'test.sqlite'));const adapters={codex:createCodexAdapter(),claude:createClaudeAdapter()};const o=createOrchestrator({store,adapters,dataDir:dir});
+store.bus.on('event',e=>{if(['phase.started','phase.completed','handoff','agent.session','run.updated'].includes(e.type))console.log(e.type,JSON.stringify(e.payload).slice(0,800));if(e.type==='interaction.requested'){const req=e.payload.interaction as Interaction;console.log('interaction',JSON.stringify(req).slice(0,1200));const command=String(req.details.command??'');const shellAllowed=command.replace(/2>&1/g,'').split(/&&|\|/).every(part=>/^(node --test|git status --short|git diff [a-f0-9]{40}|cat add\.js add\.test\.js|ls -a|tail -[0-9]+)$/.test(part.trim()));const fileAllowed=(req.details.tool==='Edit'||req.details.tool==='Write')&&String(req.details.file_path??'').startsWith(dir);const allow=shellAllowed||fileAllowed||(!command&&Array.isArray(req.details.changes));setTimeout(()=>void o.answer(req.id,req.kind==='question'?{answers:{}}:{decision:allow?'approve':'deny'}).catch(e=>console.error(e.message)),0);}});
+const mode:Mode=process.argv.includes('--collaborate')?'collaborate':process.argv.includes('claude')?'claude':'codex';
+const run=await o.start({projectPath:project,prompt:'add.js의 add(a,b)가 두 수의 합을 반환하도록 수정하세요. add.test.js를 수정하지 말고 node --test로 검증하세요. 이 작은 작업에 필요한 파일 확인과 수정, 테스트만 수행하세요. 새 파일 생성이나 commit, 네트워크 접근은 필요 없습니다.',mode,implementer:'codex',team:defaultTeam()});
+const timeout=setTimeout(()=>{console.error('SMOKE TIMEOUT');void o.cancel(run.id);},180000);
+while(!terminal(store.getRun(run.id)!.status))await new Promise(r=>setTimeout(r,250));clearTimeout(timeout);const result=store.getRun(run.id)!;console.log('RESULT',JSON.stringify(result));
+let ok=result.status==='completed';try{console.log(execFileSync('node',['--test'],{cwd:result.worktreePath,encoding:'utf8'}));if((await readFile(join(project,'add.js'),'utf8'))!=='export function add(a,b) { return 0; }\n')ok=false;}catch{ok=false;}
+await o.shutdown();store.close();console.log('SMOKE_DIRECTORY',dir);process.exitCode=ok?0:1;
