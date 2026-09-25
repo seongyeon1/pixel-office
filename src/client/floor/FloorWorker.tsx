@@ -48,6 +48,8 @@ export function FloorWorker({
   const [duration, setDuration] = useState(0);
   // Someone waiting at the entrance to walk in is already on their way.
   const [walking, setWalking] = useState(!!start && (start.x !== target.x || start.y !== target.y));
+  // True until someone walking in from the entrance first reaches their place.
+  const [arriving, setArriving] = useState(walking);
   const [left, setLeft] = useState(false);
   const arrive = useRef(onArrive);
   arrive.current = onArrive;
@@ -62,6 +64,7 @@ export function FloorWorker({
       setDuration(0);
       setPos(target);
       setWalking(false);
+      setArriving(false);
       if (leaving) arrive.current?.();
       return;
     }
@@ -71,6 +74,7 @@ export function FloorWorker({
     const next = () => {
       if (step >= path.length) {
         setWalking(false);
+        setArriving(false);
         arrive.current?.();
         return;
       }
@@ -105,6 +109,7 @@ export function FloorWorker({
         zIndex: Math.round(pos.y),
       }}
       data-place={leaving ? 'leaving' : kind}
+      data-arriving={arriving || undefined}
       data-status={w.stale ? 'stale' : w.active ? 'active' : 'idle'}
       data-mark={w.mark ?? undefined}
       data-activity={w.session?.status === 'active' ? w.session.activity : undefined}
