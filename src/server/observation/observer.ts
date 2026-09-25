@@ -1,5 +1,5 @@
 import { readdir, stat, open, readFile, realpath } from 'node:fs/promises';
-import { join, resolve, basename, relative, isAbsolute } from 'node:path';
+import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -10,6 +10,8 @@ import type {
   ObservedEvent,
   ObservedDetail,
   ObservationSnapshot,
+  ObservedAttention,
+  ObservedWorktree,
 } from '../../shared/contracts.js';
 const exec = promisify(execFile);
 type RecordValue = Record<string, any>;
@@ -21,7 +23,25 @@ type Parsed = {
   prompt?: string;
   event?: Omit<ObservedEvent, 'id'>;
   events?: Omit<ObservedEvent, 'id'>[];
+  parentSessionId?: string;
+  toolStarts?: { id: string; name: string }[];
+  toolEnds?: string[];
 };
+// Tools that block on a person by definition.
+const QUESTION_TOOLS = new Set([
+  'AskUserQuestion',
+  'request_user_input',
+  'request_user_input_async',
+]);
+const APPROVAL_TOOLS = new Set(['ExitPlanMode']);
+// Tools that legitimately stay open for a long time; never guessed to be permission prompts.
+const LONG_TOOLS =
+  /^(Agent|Task|TaskOutput|Monitor|Workflow|wait|wait_agent|sleep|spawn_agent|send_message|followup_task)$/;
+const SILENT_TOOL_MS = 60000;
+// How long a waiting agent keeps its hand raised: a guess expires with the working session,
+// a real question lasts one working day.
+const GUESSED_WAIT_MS = 30 * 60000;
+const CERTAIN_WAIT_MS = 8 * 3600000;
 const text = (v: unknown, max = 2000): string =>
   typeof v === 'string'
     ? v
@@ -87,6 +107,7 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
         sessionId: text(p.id ?? p.session_id, 150),
         cwd: text(p.cwd, 4096),
         label: text(p.agent_nickname ?? p.agent_path, 150),
+        parentSessionId: text(p.parent_thread_id, 150) || undefined,
       };
     if (row.type === 'turn_context') return { model: text(p.model, 100), cwd: text(p.cwd, 4096) };
     if (row.type === 'event_msg') {
@@ -112,6 +133,7 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
     if (row.type === 'response_item') {
       if (['function_call', 'custom_tool_call'].includes(p.type))
         return {
+          toolStarts: p.call_id ? [{ id: String(p.call_id), name: text(p.name, 100) }] : [],
           event: event(
             'tool',
             text(p.name, 100),
@@ -121,6 +143,7 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
         };
       if (['function_call_output', 'custom_tool_call_output'].includes(p.type))
         return {
+          toolEnds: p.call_id ? [String(p.call_id)] : [],
           event: event(
             'result',
             '도구 결과 수신',
@@ -171,8 +194,12 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
   }
   if (Array.isArray(m.content)) {
     const events: Omit<ObservedEvent, 'id'>[] = [];
+    const starts: { id: string; name: string }[] = [];
+    const ends: string[] = [];
     for (const c of m.content) {
       if (!c || typeof c !== 'object') continue;
+      if (c.type === 'tool_use' && c.id) starts.push({ id: String(c.id), name: text(c.name, 100) });
+      if (c.type === 'tool_result' && c.tool_use_id) ends.push(String(c.tool_use_id));
       if (c.type === 'tool_use')
         events.push(
           event('tool', text(c.name, 100), toolDetail(c.input), activity(String(c.name))),
@@ -204,6 +231,8 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
       parsed.events = events;
       parsed.event = events.at(-1);
     }
+    if (starts.length) parsed.toolStarts = starts;
+    if (ends.length) parsed.toolEnds = ends;
   }
   return parsed;
 }
@@ -218,6 +247,10 @@ interface Cursor {
   lastActivity: number;
   cwd: string;
   ignored: boolean;
+  // Tool calls without a result yet, by call id.
+  pending: Map<string, { name: string; since: number; timestamp: string }>;
+  subagent: boolean;
+  parentKey: string;
 }
 interface Options {
   codexHome?: string;
@@ -241,7 +274,8 @@ export function createObservation(options: Options = {}) {
   );
   const maxSessions = options.maxSessions ?? 200;
   const cursors = new Map<string, Cursor>();
-  const roots = new Map<string, { root: string; checked: number }>();
+  type Location = { canonical: string; root: string; worktree?: ObservedWorktree };
+  const roots = new Map<string, Location & { checked: number }>();
   let warnings: string[] = [],
     scannedAt: string | null = null,
     flight: Promise<void> | null = null,
@@ -249,22 +283,55 @@ export function createObservation(options: Options = {}) {
     closed = false,
     lastDiscovery = 0;
   let candidates: { file: string; provider: Provider; mtime: number; priority: number }[] = [];
-  const projectRoot = async (cwd: string) => {
-    const known = roots.get(cwd);
-    if (known && now() - known.checked < 60000) return known.root;
-    let root = await realpath(cwd).catch(() => resolve(cwd));
-    try {
-      const { stdout } = await exec('git', ['-C', cwd, 'worktree', 'list', '--porcelain', '-z'], {
-        timeout: 2000,
-        maxBuffer: 256 * 1024,
-      });
-      const first = stdout.split('\0').find((l) => l.startsWith('worktree '));
-      if (first) root = await realpath(first.slice(9)).catch(() => resolve(first.slice(9)));
-    } catch {
-      /* Non-Git or removed folders retain their observed working directory. */
+  const worktrees = async (dir: string) => {
+    const { stdout } = await exec('git', ['-C', dir, 'worktree', 'list', '--porcelain', '-z'], {
+      timeout: 2000,
+      maxBuffer: 256 * 1024,
+    });
+    const list: { path: string; branch: string }[] = [];
+    for (const field of stdout.split('\0')) {
+      if (field.startsWith('worktree ')) {
+        const path = field.slice(9);
+        list.push({ path: await realpath(path).catch(() => resolve(path)), branch: '' });
+      } else if (field.startsWith('branch ') && list.length)
+        list[list.length - 1].branch = field.slice(7).replace(/^refs\/heads\//, '');
+      else if (field === 'detached' && list.length) list[list.length - 1].branch = 'detached';
     }
-    roots.set(cwd, { root, checked: now() });
-    return root;
+    if (!list.length) throw new Error('no worktrees');
+    return list;
+  };
+  const locate = async (cwd: string): Promise<Location> => {
+    const known = roots.get(cwd);
+    if (known && now() - known.checked < 60000) return known;
+    // Resolve through the nearest surviving folder so removed worktrees keep their repository.
+    let base = resolve(cwd);
+    while (base !== dirname(base) && !(await stat(base).catch(() => null))) base = dirname(base);
+    const real = await realpath(base).catch(() => base);
+    const canonical = join(real, relative(base, resolve(cwd)));
+    const missing = base !== resolve(cwd);
+    if (missing && known) {
+      roots.set(cwd, { ...known, checked: now() });
+      return known;
+    }
+    let found: Location = { canonical, root: canonical };
+    try {
+      const list = await worktrees(real);
+      const own = list
+        .filter((w) => within(w.path, canonical))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+      found = {
+        canonical,
+        root: list[0].path,
+        worktree:
+          own && !(missing && own === list[0])
+            ? { path: own.path, branch: own.branch, main: own === list[0] }
+            : { path: canonical, branch: '', main: false },
+      };
+    } catch {
+      /* Non-Git folders retain their observed working directory. */
+    }
+    roots.set(cwd, { ...found, checked: now() });
+    return found;
   };
   const discover = async () => {
     const found: typeof candidates = [];
@@ -325,6 +392,9 @@ export function createObservation(options: Options = {}) {
     openTurn: false,
     lastActivity: 0,
     ignored: false,
+    pending: new Map(),
+    subagent: provider === 'claude' && file.includes(`${sep}subagents${sep}`),
+    parentKey: '',
     info: {
       id:
         'observed-' +
@@ -364,6 +434,26 @@ export function createObservation(options: Options = {}) {
         if (parsed.model) cursor.info.model = parsed.model;
         if (parsed.label) cursor.info.label = parsed.label;
         if (parsed.prompt) cursor.info.prompt = parsed.prompt;
+        if (parsed.parentSessionId) {
+          cursor.subagent = true;
+          cursor.parentKey = parsed.parentSessionId;
+        }
+        const stamp = Date.parse(parsed.event?.timestamp ?? '');
+        // A finished or newly requested turn abandons whatever the previous turn was waiting on.
+        if (
+          (parsed.events ?? (parsed.event ? [parsed.event] : [])).some(
+            (e) => e.kind === 'complete' || e.kind === 'request',
+          )
+        )
+          cursor.pending.clear();
+        for (const id of parsed.toolEnds ?? []) cursor.pending.delete(id);
+        if (Number.isFinite(stamp))
+          for (const t of parsed.toolStarts ?? [])
+            cursor.pending.set(t.id, {
+              name: t.name,
+              since: stamp,
+              timestamp: parsed.event!.timestamp,
+            });
         for (const item of parsed.events ?? (parsed.event ? [parsed.event] : [])) {
           if (!item.timestamp) continue;
           const stamp = Date.parse(item.timestamp);
@@ -392,6 +482,24 @@ export function createObservation(options: Options = {}) {
       cursor.carry = Buffer.alloc(0);
       cursor.info.truncated = true;
     }
+  };
+  const attentionOf = (c: Cursor): ObservedAttention | null => {
+    const pending = [...c.pending.values()];
+    const certain = (kind: ObservedAttention['kind'], names: Set<string>) => {
+      const hit = pending.find((p) => names.has(p.name));
+      return hit ? { kind, certain: true, since: hit.timestamp } : null;
+    };
+    const silent = pending.find(
+      (p) =>
+        !LONG_TOOLS.test(p.name) &&
+        now() - p.since >= SILENT_TOOL_MS &&
+        now() - c.lastActivity >= SILENT_TOOL_MS,
+    );
+    return (
+      certain('question', QUESTION_TOOLS) ??
+      certain('approval', APPROVAL_TOOLS) ??
+      (silent ? { kind: 'approval', certain: false, since: silent.timestamp } : null)
+    );
   };
   const readCursor = async (file: string, provider: Provider) => {
     const st = await stat(file);
@@ -440,15 +548,25 @@ export function createObservation(options: Options = {}) {
       await handle.close();
     }
     if (c.cwd) {
-      const canonical = await realpath(c.cwd).catch(() => resolve(c.cwd));
-      c.ignored = (await excluded).some((r) => within(r, canonical));
+      const location = await locate(c.cwd);
+      c.ignored = (await excluded).some((r) => within(r, location.canonical));
       if (!c.ignored) {
-        c.info.cwd = canonical;
-        c.info.projectPath = await projectRoot(canonical);
+        c.info.cwd = location.canonical;
+        c.info.projectPath = location.root;
+        c.info.worktree = location.worktree;
       }
     }
+    if (c.subagent && !c.parentKey) c.parentKey = c.info.sessionId;
+  };
+  // Runs after the process registry so a closed terminal cannot keep asking.
+  const settle = (c: Cursor) => {
+    let attention = c.openTurn && c.info.processAlive !== false ? attentionOf(c) : null;
+    const quiet = now() - c.lastActivity;
+    if (attention && quiet > (attention.certain ? CERTAIN_WAIT_MS : GUESSED_WAIT_MS))
+      attention = null;
+    c.info.attention = attention;
     c.info.status = c.openTurn
-      ? now() - c.lastActivity < 120000
+      ? quiet < 120000 || attention?.certain
         ? 'active'
         : 'stale'
       : c.lastActivity
@@ -481,8 +599,10 @@ export function createObservation(options: Options = {}) {
   };
   const updateProcesses = async () => {
     const alive = await processRegistry();
-    for (const c of cursors.values())
+    for (const c of cursors.values()) {
       c.info.processAlive = c.provider === 'claude' ? (alive.get(c.info.sessionId) ?? null) : null;
+      settle(c);
+    }
   };
   const scan = () => {
     if (closed) return Promise.resolve();
@@ -513,18 +633,26 @@ export function createObservation(options: Options = {}) {
     });
     return flight;
   };
-  const list = (): ObservationSnapshot => ({
-    sessions: [...cursors.values()]
-      .filter((c) => !c.ignored && c.info.projectPath)
-      .map((c) => {
-        const { events, ...summary } = c.info;
-        return summary;
-      })
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    scannedAt,
-    scanning: !!flight,
-    warnings: [...warnings],
-  });
+  const list = (): ObservationSnapshot => {
+    const visible = [...cursors.values()].filter((c) => !c.ignored && c.info.projectPath);
+    const leads = new Map(
+      visible
+        .filter((c) => !c.subagent)
+        .map((c) => [`${c.provider}:${c.info.sessionId}`, c.info.id]),
+    );
+    return {
+      sessions: visible
+        .map((c) => {
+          const { events, ...summary } = c.info;
+          const parentId = c.subagent ? leads.get(`${c.provider}:${c.parentKey}`) : undefined;
+          return parentId ? { ...summary, parentId } : summary;
+        })
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      scannedAt,
+      scanning: !!flight,
+      warnings: [...warnings],
+    };
+  };
   return {
     scan,
     list,

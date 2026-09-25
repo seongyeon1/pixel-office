@@ -155,6 +155,17 @@ export const activityLabels: Record<Activity, string> = {
 };
 
 export type ObservedStatus = 'active' | 'idle' | 'stale';
+export interface ObservedWorktree {
+  path: string;
+  branch: string;
+  main: boolean;
+}
+export interface ObservedAttention {
+  kind: 'question' | 'approval';
+  // false: inferred from a tool that has waited too long, e.g. an unlogged permission prompt.
+  certain: boolean;
+  since: string;
+}
 export interface ObservedEvent {
   id: string;
   timestamp: string;
@@ -177,6 +188,9 @@ export interface ObservedSession {
   updatedAt: string;
   processAlive: boolean | null;
   truncated: boolean;
+  worktree?: ObservedWorktree;
+  parentId?: string;
+  attention?: ObservedAttention | null;
 }
 export interface ObservationSnapshot {
   sessions: ObservedSession[];
