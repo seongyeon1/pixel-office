@@ -175,7 +175,8 @@ test('repository switching isolates live activity and history and survives reloa
 
 test('existing sessions are discovered by repo and show live tools without execution controls', async ({
   page,
-}) => {
+}, info) => {
+  test.setTimeout(60000);
   const { writeFile, appendFile, rm } = await import('node:fs/promises');
   const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
   const timestamp = new Date().toISOString();
@@ -214,6 +215,10 @@ test('existing sessions are discovered by repo and show live tools without execu
     await page.getByRole('button', { name: /외부 세션 2/ }).click();
     await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
     await page.getByRole('button', { name: '세션 선택 Codex external-codex' }).click();
+    await expect(
+      page.getByRole('button', { name: '캐릭터 Codex external-codex', exact: true }),
+    ).toBeVisible();
+    await page.getByRole('tab', { name: '작업 내역', exact: true }).click();
     await expect(page.locator('.observed-inspector')).toContainText('npm test');
     await expect(page.locator('.observed-inspector')).toContainText('관측 전용');
     await expect(page.getByRole('button', { name: '작업 중단', exact: true })).toHaveCount(0);
@@ -231,14 +236,111 @@ test('existing sessions are discovered by repo and show live tools without execu
     await page.getByRole('button', { name: '세션 선택 Claude external-claude' }).click();
     await expect(page.locator('.observed-inspector')).toContainText('README.md');
     await expect(page.locator('.observed-inspector')).not.toContainText('npm test');
+    await page.getByRole('tab', { name: '대화', exact: true }).click();
+    await page.getByLabel('에이전트에게 질문').fill('어떤 파일을 봤어?');
+    await page.getByRole('button', { name: '질문 보내기', exact: true }).click();
+    await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
+    await expect(page.locator('.agent-speech')).toContainText('README.md를 확인했어요.');
+    await page.getByRole('button', { name: '세션 선택 Codex external-codex', exact: true }).click();
+    await expect(page.locator('.session-chat')).not.toContainText('README.md를 확인했어요.');
+    await expect(page.locator('.session-chat')).toContainText('작업 기록 기반 답변');
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
+    await page
+      .getByRole('button', { name: '세션 선택 Claude external-claude', exact: true })
+      .click();
+    await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
     await page.reload();
     await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+    await page
+      .getByRole('button', { name: '세션 선택 Claude external-claude', exact: true })
+      .click();
+    await page.getByRole('tab', { name: '대화', exact: true }).click();
+    await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
+    await expect(page.locator('.session-chat').getByRole('status')).toHaveCount(0);
+    await expect(page.locator('.agent-speech')).toContainText('README.md를 확인했어요.');
+    await page.screenshot({
+      path: `docs/images/session-chat-${info.project.name}.png`,
+      fullPage: true,
+    });
   } finally {
     await rm(f.codex, { force: true });
     await rm(f.claude, { force: true });
+    await expect
+      .poll(
+        async () => {
+          const r = await page.request.get('/api/observed');
+          return r.ok() ? (await r.json()).sessions.length : -1;
+        },
+        { timeout: 10000 },
+      )
+      .toBe(0);
+  }
+});
+
+test('separate Codex characters keep independent chats and expose failure and cancellation', async ({
+  page,
+}, info) => {
+  test.setTimeout(60000);
+  const { writeFile, rm } = await import('node:fs/promises');
+  const { dirname, join } = await import('node:path');
+  const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  const files = ['a', 'b'].map((id) =>
+    join(dirname(f.codex), `chat-${info.project.name}-${id}.jsonl`),
+  );
+  const timestamp = new Date().toISOString();
+  try {
+    for (const [i, file] of files.entries())
+      await writeFile(
+        file,
+        [
+          { timestamp, type: 'session_meta', payload: { id: `chat-codex-${i}`, cwd: f.project } },
+          {
+            timestamp,
+            type: 'event_msg',
+            payload: { type: 'user_message', message: `독립 작업 ${i}` },
+          },
+          { timestamp, type: 'event_msg', payload: { type: 'task_started' } },
+        ]
+          .map((row) => JSON.stringify(row))
+          .join('\n') + '\n',
+      );
+    await page.goto('/#token=e2e-token');
+    await expect(page.getByRole('button', { name: /외부 세션 2/ })).toBeVisible({ timeout: 20000 });
+    await page.getByRole('button', { name: /외부 세션 2/ }).click();
+    await expect(
+      page.getByRole('button', { name: '캐릭터 Codex chat-codex-0', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: '캐릭터 Codex chat-codex-1', exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: '세션 선택 Codex chat-codex-0', exact: true }).click();
+    await page.getByRole('tab', { name: '대화', exact: true }).click();
+    await page.getByLabel('에이전트에게 질문').fill('느린 답변 테스트');
+    await page.getByRole('button', { name: '질문 보내기', exact: true }).click();
+    await expect(page.locator('.session-chat').getByRole('status')).toContainText('답변 작성 중');
+    await page.getByRole('button', { name: '세션 선택 Codex chat-codex-1', exact: true }).click();
+    await expect(page.locator('.session-chat')).toContainText('이 동료의 작업이 궁금한가요?');
+    await expect(page.locator('.session-chat')).not.toContainText('느린 답변 테스트');
+    await page.getByRole('button', { name: '세션 선택 Codex chat-codex-0', exact: true }).click();
+    await page.getByRole('button', { name: '답변 중단', exact: true }).click();
+    await expect(page.locator('.session-chat')).toContainText('답변 생성을 중단했어요.');
+    await page.getByLabel('에이전트에게 질문').fill('오류 테스트');
+    await page.getByRole('button', { name: '질문 보내기', exact: true }).click();
+    await expect(page.locator('.session-chat').getByRole('alert')).toContainText(
+      '샘플 공급자 연결 실패',
+    );
+    await expect(page.locator('.agent-speech')).toHaveCount(0);
+    await page.getByLabel('세션 검색').fill('독립 작업 1');
+    await expect(page.getByRole('region', { name: '감지된 세션' }).getByRole('button')).toHaveCount(
+      1,
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  } finally {
+    for (const file of files) await rm(file, { force: true });
     await expect
       .poll(
         async () => {

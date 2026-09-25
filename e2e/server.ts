@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import staticPlugin from '@fastify/static';
 import { createObservation } from '../src/server/observation/observer.js';
+import { createChatService } from '../src/server/chat.js';
 import { createStore } from '../src/server/store.js';
 import { createOrchestrator } from '../src/server/orchestrator.js';
 import { createServer } from '../src/server/transport.js';
@@ -104,6 +105,30 @@ await writeFile(
   }),
 );
 observation.start();
+const chat = createChatService({
+  store,
+  getSession: observation.get,
+  respond: async (input, update) => {
+    if (input.prompt.endsWith(JSON.stringify('오류 테스트')))
+      throw new Error('샘플 공급자 연결 실패');
+    if (input.prompt.endsWith(JSON.stringify('느린 답변 테스트'))) {
+      update('긴 답변을 준비 중이에요.', 'fixture-model');
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener('abort', () => resolve(), { once: true }),
+      );
+      return;
+    }
+    update('기록을 확인하고 있어요.', 'fixture-model');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (!input.signal.aborted)
+      update(
+        input.prompt.includes('README.md')
+          ? 'README.md를 확인했어요.'
+          : 'npm test 명령을 실행한 기록이 있어요.',
+        'fixture-model',
+      );
+  },
+});
 const { app } = await createServer({
   store,
   adapters,
@@ -112,6 +137,7 @@ const { app } = await createServer({
   port: 4318,
   demo: true,
   observation,
+  chat,
 });
 await app.register(staticPlugin, { root: resolve('dist/client') });
 await app.listen({ port: 4318, host: '127.0.0.1' });

@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import {
   terminal,
   type Run,
+  type ChatMessage,
   type ProjectSummary,
   type RunStatus,
   type EventInput,
@@ -18,6 +19,8 @@ export function createStore(path: string) {
   );
   db.exec(`CREATE TABLE IF NOT EXISTS projects(root TEXT PRIMARY KEY);
     CREATE INDEX IF NOT EXISTS runs_project ON runs(json_extract(data, '$.projectPath'));`);
+  db.exec(`CREATE TABLE IF NOT EXISTS chat_messages(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS chat_session ON chat_messages(session_id);`);
   const getRun = (id: string) => {
     const row = db.prepare('SELECT data FROM runs WHERE id=?').get(id) as
       { data: string } | undefined;
@@ -74,6 +77,27 @@ export function createStore(path: string) {
     getRun,
     listRuns,
     listProjects,
+    saveChat(message: ChatMessage) {
+      db.prepare(
+        'INSERT INTO chat_messages(id,session_id,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
+      ).run(message.id, message.sessionId, JSON.stringify(message));
+    },
+    listChat(sessionId: string): ChatMessage[] {
+      return (
+        db
+          .prepare(
+            'SELECT data FROM chat_messages WHERE session_id=? ORDER BY rowid DESC LIMIT 100',
+          )
+          .all(sessionId) as { data: string }[]
+      )
+        .reverse()
+        .map((row) => JSON.parse(row.data));
+    },
+    interruptChat() {
+      db.prepare(
+        `UPDATE chat_messages SET data=json_set(data, '$.status', 'failed', '$.error', '서버가 재시작되어 답변이 중단되었습니다. 다시 질문해주세요.') WHERE json_extract(data, '$.status')='pending'`,
+      ).run();
+    },
     rememberProject(root: string) {
       db.prepare('INSERT OR IGNORE INTO projects(root) VALUES(?)').run(root);
     },

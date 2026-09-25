@@ -187,3 +187,20 @@ export interface ObservationSnapshot {
 export interface ObservedDetail extends ObservedSession {
   events: ObservedEvent[];
 }
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  createdAt: string;
+  error?: string;
+  contextAt?: string;
+  model?: string;
+}
+export interface SessionConversation {
+  mode: 'records';
+  directAvailable: false;
+  messages: ChatMessage[];
+}

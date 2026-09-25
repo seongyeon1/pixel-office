@@ -1,6 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { createChatService } from './chat.js';
+import { createNativeChatResponder } from './adapters/chat.js';
 import { createStore } from './store.js';
 import { createCodexAdapter } from './adapters/codex.js';
 import { createClaudeAdapter } from './adapters/claude.js';
@@ -15,8 +17,15 @@ const store = createStore(resolve(dataDir, 'office.sqlite'));
 store.interruptActive();
 const adapters = { codex: createCodexAdapter(), claude: createClaudeAdapter() };
 const orchestrator = createOrchestrator({ store, adapters, dataDir });
-const observation = createObservation({ excludeRoots: [resolve(dataDir, 'workspaces')] });
+const observation = createObservation({
+  excludeRoots: [resolve(dataDir, 'workspaces'), resolve(dataDir, 'chat')],
+});
 observation.start();
+const chat = createChatService({
+  store,
+  getSession: observation.get,
+  respond: createNativeChatResponder(resolve(dataDir, 'chat')),
+});
 const { app, origin } = await createServer({
   store,
   adapters,
@@ -24,6 +33,7 @@ const { app, origin } = await createServer({
   token,
   port,
   observation,
+  chat,
 });
 const production = process.argv[1]?.endsWith('.js');
 if (production) {

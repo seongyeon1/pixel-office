@@ -14,6 +14,7 @@ import type { Store } from './store.js';
 import type { Orchestrator } from './orchestrator.js';
 import { inspectProject, collectChanges } from './projects.js';
 import { listModels } from './models.js';
+import type { ChatService } from './chat.js';
 import type { Observation } from './observation/observer.js';
 export async function createServer({
   store,
@@ -23,6 +24,7 @@ export async function createServer({
   port,
   demo = false,
   observation,
+  chat,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -31,6 +33,7 @@ export async function createServer({
   port: number;
   demo?: boolean;
   observation?: Observation;
+  chat?: ChatService;
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const session = randomBytes(32).toString('hex');
@@ -88,6 +91,31 @@ export async function createServer({
   app.get<{ Params: { id: string } }>('/api/observed/:id', async (req, reply) => {
     const session = observation?.get(req.params.id);
     return session ?? reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+  });
+  app.get<{ Params: { id: string } }>('/api/observed/:id/chat', async (req, reply) => {
+    if (!chat) return reply.code(503).send({ error: '채팅 서비스를 사용할 수 없습니다.' });
+    return { mode: 'records', directAvailable: false, messages: chat.list(req.params.id) };
+  });
+  app.post<{ Params: { id: string } }>('/api/observed/:id/chat', async (req, reply) => {
+    if (!chat) return reply.code(503).send({ error: '채팅 서비스를 사용할 수 없습니다.' });
+    const { question } = z.object({ question: z.string().trim().min(1).max(4000) }).parse(req.body);
+    if (!observation?.get(req.params.id))
+      return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+    try {
+      return reply
+        .code(202)
+        .send({
+          mode: 'records',
+          directAvailable: false,
+          messages: chat.ask(req.params.id, question),
+        });
+    } catch (e) {
+      return reply.code(409).send({ error: (e as Error).message });
+    }
+  });
+  app.post<{ Params: { id: string } }>('/api/observed/:id/chat/cancel', async (req) => {
+    chat?.cancel(req.params.id);
+    return { ok: true };
   });
   app.get('/api/projects', async () => {
     const projects = new Map(store.listProjects().map((p) => [p.root, p]));
@@ -203,6 +231,7 @@ export async function createServer({
     });
   });
   app.addHook('onClose', async () => {
+    await chat?.close();
     for (const client of wss.clients) client.terminate();
     wss.close();
   });
