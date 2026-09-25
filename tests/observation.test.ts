@@ -399,3 +399,78 @@ test('a guess never revives an abandoned turn and a closed terminal cannot keep 
   expect(by('left').attention).toBeNull();
   observer.close();
 });
+
+test('sessions started by scripts and hooks are marked automated', async () => {
+  const f = await fixture();
+  const dir = join(f.claudeHome, 'projects');
+  const user = (sessionId: string, entrypoint: string, text: string) =>
+    line({
+      timestamp,
+      type: 'user',
+      sessionId,
+      cwd: f.repo,
+      entrypoint,
+      message: { content: text },
+    });
+  await writeFile(join(dir, 'person.jsonl'), user('person', 'cli', '맵 고쳐줘'));
+  await writeFile(
+    join(dir, 'journal.jsonl'),
+    user(
+      'journal',
+      'sdk-cli',
+      '다음 에이전트 세션 transcript을 한국어 업무일지 형식으로 요약해주세요.',
+    ),
+  );
+  const meta = (id: string, extra: object) =>
+    line({ timestamp, type: 'session_meta', payload: { id, cwd: f.repo, ...extra } }) +
+    line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } });
+  await writeFile(
+    join(f.codexHome, 'sessions', 'rollout-tui.jsonl'),
+    meta('tui', { originator: 'codex-tui', source: 'cli' }),
+  );
+  await writeFile(
+    join(f.codexHome, 'sessions', 'rollout-exec.jsonl'),
+    meta('exec', { originator: 'codex_exec', source: 'exec' }),
+  );
+  const observer = createObservation(f);
+  await observer.scan();
+  const by = (id: string) => observer.list().sessions.find((s) => s.sessionId === id)!;
+  expect(by('person').automated).toBeFalsy();
+  expect(by('journal').automated).toBe(true);
+  expect(by('tui').automated).toBeFalsy();
+  expect(by('exec').automated).toBe(true);
+  observer.close();
+});
+
+test('once known, automated logs give way to people when the discovery cap is reached', async () => {
+  const f = await fixture();
+  const dir = join(f.claudeHome, 'projects');
+  const { utimes } = await import('node:fs/promises');
+  const write = async (name: string, entrypoint: string, age: number) => {
+    const path = join(dir, `${name}.jsonl`);
+    await writeFile(
+      path,
+      line({
+        timestamp,
+        type: 'user',
+        sessionId: name,
+        cwd: f.repo,
+        entrypoint,
+        message: { content: name },
+      }),
+    );
+    const t = new Date(Date.now() - age);
+    await utimes(path, t, t);
+  };
+  await write('older-person', 'cli', 60000);
+  await write('newer-summary', 'sdk-cli', 1000);
+  let now = Date.now();
+  const observer = createObservation({ ...f, maxSessions: 1, now: () => now });
+  await observer.scan();
+  // First pass cannot know yet: the newest file wins the only slot.
+  expect(observer.list().sessions.map((s) => s.sessionId)).toEqual(['newer-summary']);
+  now += 11000;
+  await observer.scan();
+  expect(observer.list().sessions.map((s) => s.sessionId)).toEqual(['older-person']);
+  observer.close();
+});

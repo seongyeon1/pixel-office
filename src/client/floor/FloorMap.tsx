@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowUpRight, Coffee, DoorOpen, Users } from 'lucide-react';
+import { ArrowUpRight, Coffee, DoorOpen, ScrollText, Users } from 'lucide-react';
 import { repositoryName } from '../components/RepositoryList';
 import type { ProjectRoom, ProjectWorker } from '../overview/projects';
 import { FloorWorker } from './FloorWorker';
@@ -7,6 +7,11 @@ import { hash, placements } from './choreography';
 import { describeModel, useModelCatalog } from '../models/catalog';
 import { FEET, SEAT_W, floorLayout, type Cell, type Loc } from './layout';
 import './floor.css';
+const facilityName: Record<string, string> = {
+  meeting: '회의실',
+  lounge: '탕비실',
+  records: '기록실',
+};
 interface Departure {
   worker: ProjectWorker;
   from: Loc;
@@ -85,7 +90,14 @@ function RoomCell({
   );
 }
 // The repository takes half the floor, the meeting room and lounge sit beside it.
-const OFFICE = { maxRows: Infinity, roomsFirst: true, minCell: 160, roomSpan: 2, facilityRows: 1 };
+const OFFICE = {
+  maxRows: Infinity,
+  roomsFirst: true,
+  minCell: 160,
+  roomSpan: 2,
+  facilityRows: 1,
+  records: false,
+};
 const mapName = (w: ProjectWorker) =>
   `전체 맵 동료 ${w.root} ${w.visiting ? `${w.run!.id} 구현` : (w.session?.sessionId ?? w.run!.id)}`;
 export function FloorMap({
@@ -121,7 +133,15 @@ export function FloorMap({
     () => floorLayout(rooms, width - 6, office ? OFFICE : undefined),
     [rooms, width, office],
   );
-  const workers = useMemo(() => rooms.flatMap((r) => r.lanes.flatMap((l) => l.workers)), [rooms]);
+  const workers = useMemo(
+    () =>
+      rooms.flatMap((r) => [
+        ...r.lanes.flatMap((l) => l.workers),
+        ...(office ? [] : r.automations),
+      ]),
+    [rooms, office],
+  );
+  const writing = office ? 0 : rooms.reduce((n, r) => n + r.automations.length, 0);
   const places = useMemo(() => placements(workers, layout, clock), [workers, layout, clock]);
   const visible = workers.filter((w) => places.has(w.id));
   // People who join the duty roster after the first observation walk in through the entrance.
@@ -131,7 +151,10 @@ export function FloorMap({
     if (!arrivals.current.has(w.id))
       arrivals.current.set(
         w.id,
-        onDuty.current && !onDuty.current.has(w.id) ? layout.entrance : undefined,
+        // Automated work pops into the records room instead of walking in every few minutes.
+        onDuty.current && !onDuty.current.has(w.id) && !w.session?.automated
+          ? layout.entrance
+          : undefined,
       );
   useLayoutEffect(() => {
     if (ready) onDuty.current = new Set(roster);
@@ -149,7 +172,7 @@ export function FloorMap({
         last.current.delete(id);
         arrivals.current.delete(id);
         // Filtering a room away or overflowing a room is not going home.
-        if (!inRooms.has(id) && shownRooms.has(seen.worker.root))
+        if (!inRooms.has(id) && shownRooms.has(seen.worker.root) && !seen.worker.session?.automated)
           leaving[id] = { worker: seen.worker, from: seen.at };
       }
     for (const w of visible) last.current.set(w.id, { worker: w, at: places.get(w.id)! });
@@ -204,11 +227,22 @@ export function FloorMap({
               key={cell.key}
               className={`floor-cell floor-${cell.kind} ${cell.upper ? 'upper' : 'lower'}`}
               style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
-              aria-label={cell.kind === 'meeting' ? '회의실' : '탕비실'}
+              aria-label={facilityName[cell.kind]}
             >
               <header>
-                {cell.kind === 'meeting' ? <Users size={14} /> : <Coffee size={14} />}
-                <strong>{cell.kind === 'meeting' ? '회의실' : '탕비실'}</strong>
+                {cell.kind === 'meeting' ? (
+                  <Users size={14} />
+                ) : cell.kind === 'records' ? (
+                  <ScrollText size={14} />
+                ) : (
+                  <Coffee size={14} />
+                )}
+                <strong>{facilityName[cell.kind]}</strong>
+                {cell.kind === 'records' && (
+                  <span className="floor-presence">
+                    {writing ? `작성 중 ${writing}` : '조용함'}
+                  </span>
+                )}
               </header>
               <i className="floor-furniture a" aria-hidden="true" />
               <i className="floor-furniture b" aria-hidden="true" />

@@ -217,6 +217,8 @@ export interface ObservedSession {
   worktree?: ObservedWorktree;
   parentId?: string;
   attention?: ObservedAttention | null;
+  // Started by a script or hook (e.g. a work-log summary), not by a person.
+  automated?: boolean;
 }
 export interface ObservationSnapshot {
   sessions: ObservedSession[];

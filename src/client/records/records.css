@@ -1,0 +1,197 @@
+.records-page {
+  padding: 32px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.records-heading h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+.records-heading p {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #727f6b;
+}
+.records-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid #dce2d4;
+  border-bottom: 1px solid #dce2d4;
+}
+.records-search {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 280px;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid #d8e0cf;
+  border-radius: 7px;
+  background: #fff;
+}
+.records-search input {
+  flex: 1;
+  padding: 0;
+  border: 0;
+  outline: none;
+}
+.records-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.records-kinds button {
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid #d8e0cf;
+  border-radius: 14px;
+  background: #fbfaf5;
+  font-size: 13px;
+  color: #56614e;
+}
+.records-kinds button.active {
+  border-color: #55745e;
+  background: #e3ecdc;
+  color: #2f4a2c;
+  font-weight: 600;
+}
+.records-kinds small {
+  color: #8a9282;
+}
+.records-day h2 {
+  margin: 22px 0 8px;
+  font-size: 15px;
+  color: #47613b;
+}
+.records-day h2 small {
+  font-weight: 500;
+  color: #8a9282;
+}
+.records-day ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.record {
+  border: 1px solid #e3e9da;
+  border-radius: 8px;
+  background: #fff;
+}
+.record > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+}
+.record > button strong {
+  font-size: 14px;
+}
+.record > button small {
+  margin-left: auto;
+  font-size: 12px;
+  color: #8a9282;
+  white-space: nowrap;
+}
+.record-kind {
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: #ece7da;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b5a3a;
+}
+.record[data-kind='journal'] .record-kind {
+  background: #f3e0cf;
+  color: #8a4b22;
+}
+.record[data-kind='summary'] .record-kind,
+.record[data-kind='digest'] .record-kind {
+  background: #dfeadb;
+  color: #3f6537;
+}
+.record[data-kind='knowledge'] .record-kind,
+.record[data-kind='memory'] .record-kind {
+  background: #dce8ee;
+  color: #2f5b6e;
+}
+.record-body {
+  padding: 0 14px 14px 36px;
+}
+.record-body pre {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f7f6f0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.record-body details {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #7c8775;
+}
+.record-body details pre {
+  max-height: 200px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.records-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: #728167;
+}
+@media (max-width: 760px) {
+  .records-page {
+    padding: 22px 14px;
+  }
+  .record > button {
+    flex-wrap: wrap;
+  }
+  .record > button small {
+    margin-left: 25px;
+    width: 100%;
+  }
+  .record-body {
+    padding-left: 14px;
+  }
+}
+/* Records room furniture on the floor: archive shelves and a writing desk. */
+.floor-records .floor-furniture.a {
+  left: 10%;
+  right: 10%;
+  top: 30px;
+  height: 22px;
+  background: repeating-linear-gradient(
+    90deg,
+    #b8946a 0 10px,
+    #d8b98c 10px 12px,
+    #9fb8c6 12px 20px
+  );
+  border-bottom: 4px solid #8e6f48;
+}
+.floor-records .floor-furniture.b {
+  left: 14%;
+  right: 14%;
+  bottom: 14px;
+  height: 14px;
+  background: #caa77a;
+  border-bottom: 3px solid #a3845c;
+  border-radius: 2px;
+}

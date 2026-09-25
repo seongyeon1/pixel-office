@@ -12,6 +12,7 @@ const placeLabel: Record<PlaceKind, string> = {
   meeting: '회의 중',
   lounge: '커피 타임',
   visit: '리뷰 받는 중',
+  records: '',
 };
 export function FloorWorker({
   worker: w,

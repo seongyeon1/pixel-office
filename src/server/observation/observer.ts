@@ -24,6 +24,8 @@ type Parsed = {
   event?: Omit<ObservedEvent, 'id'>;
   events?: Omit<ObservedEvent, 'id'>[];
   parentSessionId?: string;
+  // Started by a script or hook (claude -p / SDK, codex exec) rather than by a person.
+  automated?: boolean;
   toolStarts?: { id: string; name: string }[];
   toolEnds?: string[];
 };
@@ -108,6 +110,7 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
         cwd: text(p.cwd, 4096),
         label: text(p.agent_nickname ?? p.agent_path, 150),
         parentSessionId: text(p.parent_thread_id, 150) || undefined,
+        automated: p.source === 'exec' || /exec/.test(String(p.originator ?? '')),
       };
     if (row.type === 'turn_context') return { model: text(p.model, 100), cwd: text(p.cwd, 4096) };
     if (row.type === 'event_msg') {
@@ -186,6 +189,7 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
   if (row.sessionId) parsed.sessionId = text(row.sessionId, 150);
   if (m.model) parsed.model = text(m.model, 100);
   if (row.agentId) parsed.label = text(row.agentId, 100);
+  if (typeof row.entrypoint === 'string') parsed.automated = row.entrypoint === 'sdk-cli';
   if (row.type === 'system' && row.subtype === 'turn_duration')
     parsed.event = event('complete', '응답 완료', '', 'idle');
   if (row.type === 'user' && !row.isMeta && typeof m.content === 'string') {
@@ -274,6 +278,8 @@ export function createObservation(options: Options = {}) {
   );
   const maxSessions = options.maxSessions ?? 200;
   const cursors = new Map<string, Cursor>();
+  // Remembered past cursor eviction, so a known hook log never takes a person's slot again.
+  const automatedFiles = new Set<string>();
   type Location = { canonical: string; root: string; worktree?: ObservedWorktree };
   const roots = new Map<string, Location & { checked: number }>();
   let warnings: string[] = [],
@@ -363,7 +369,12 @@ export function createObservation(options: Options = {}) {
                   ? 1
                   : 0;
             if (st && (priority || st.mtimeMs > now() - 7 * 86400000))
-              found.push({ file, provider, mtime: st.mtimeMs, priority });
+              found.push({
+                file,
+                provider,
+                mtime: st.mtimeMs,
+                priority: automatedFiles.has(file) ? -1 : priority,
+              });
           }
         }
       };
@@ -434,6 +445,10 @@ export function createObservation(options: Options = {}) {
         if (parsed.model) cursor.info.model = parsed.model;
         if (parsed.label) cursor.info.label = parsed.label;
         if (parsed.prompt) cursor.info.prompt = parsed.prompt;
+        if (parsed.automated !== undefined) {
+          cursor.info.automated = parsed.automated;
+          if (parsed.automated) automatedFiles.add(cursor.file);
+        }
         if (parsed.parentSessionId) {
           cursor.subagent = true;
           cursor.parentKey = parsed.parentSessionId;

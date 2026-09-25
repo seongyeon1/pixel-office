@@ -45,6 +45,8 @@ export interface ProjectRoom {
   workers: ProjectWorker[];
   lanes: ProjectLane[];
   offDuty: ProjectWorker[];
+  // Script- or hook-started sessions (work logs, summaries) that are running right now.
+  automations: ProjectWorker[];
   activeCount: number;
   observedCount: number;
   waitingCount: number;
@@ -102,6 +104,7 @@ export function projectRooms(
         workers: [],
         lanes: [],
         offDuty: [],
+        automations: [],
         activeCount: 0,
         observedCount: 0,
         waitingCount: 0,
@@ -116,6 +119,12 @@ export function projectRooms(
   for (const project of projects) get(project.root).latestRun = project.latestRun;
   for (const s of sessions) {
     const room = get(s.projectPath);
+    // Automated sessions never take a desk; only running ones show up, in the records room.
+    if (s.automated) {
+      if (s.status === 'active' && s.processAlive !== false)
+        room.automations.push(observedWorker(s, seen));
+      continue;
+    }
     if (onDuty(s, now)) room.workers.push(observedWorker(s, seen));
     else room.offDuty.push(observedWorker(s, seen));
   }
