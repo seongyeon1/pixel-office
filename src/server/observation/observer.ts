@@ -189,7 +189,8 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
   if (row.sessionId) parsed.sessionId = text(row.sessionId, 150);
   if (m.model) parsed.model = text(m.model, 100);
   if (row.agentId) parsed.label = text(row.agentId, 100);
-  if (typeof row.entrypoint === 'string') parsed.automated = row.entrypoint === 'sdk-cli';
+  // Interactive sessions record cli; claude -p and every SDK (sdk-cli, sdk-ts, sdk-py) record sdk-*.
+  if (typeof row.entrypoint === 'string') parsed.automated = row.entrypoint.startsWith('sdk-');
   if (row.type === 'system' && row.subtype === 'turn_duration')
     parsed.event = event('complete', '응답 완료', '', 'idle');
   if (row.type === 'user' && !row.isMeta && typeof m.content === 'string') {

@@ -414,6 +414,10 @@ test('sessions started by scripts and hooks are marked automated', async () => {
     });
   await writeFile(join(dir, 'person.jsonl'), user('person', 'cli', '맵 고쳐줘'));
   await writeFile(
+    join(dir, 'smoke.jsonl'),
+    user('smoke', 'sdk-ts', '당신은 Pixel Office의 개발 에이전트입니다.'),
+  );
+  await writeFile(
     join(dir, 'journal.jsonl'),
     user(
       'journal',
@@ -437,6 +441,7 @@ test('sessions started by scripts and hooks are marked automated', async () => {
   const by = (id: string) => observer.list().sessions.find((s) => s.sessionId === id)!;
   expect(by('person').automated).toBeFalsy();
   expect(by('journal').automated).toBe(true);
+  expect(by('smoke').automated).toBe(true);
   expect(by('tui').automated).toBeFalsy();
   expect(by('exec').automated).toBe(true);
   observer.close();
