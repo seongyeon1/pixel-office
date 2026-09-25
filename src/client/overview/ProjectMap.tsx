@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FolderPlus, Map, Search } from 'lucide-react';
 import type { ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
@@ -7,6 +7,7 @@ import { compareFamilies, type ModelFamily } from '../models/family';
 import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
 import { FloorMap } from '../floor/FloorMap';
+import { api } from '../api';
 import { markSeen, useSeenReports } from '../floor/seen';
 import { useClock } from '../floor/clock';
 const since = (iso: string, now: number) => {
@@ -23,17 +24,43 @@ export function ProjectMap({
   onOpen,
   onConnect,
   onRestore,
+  onRoomsChanged,
 }: {
   projects: ProjectSummary[];
   observation: ObservationSnapshot;
   onOpen: (root: string, worker?: ProjectWorker) => void;
   onConnect: () => void;
   onRestore: (id: string) => Promise<void>;
+  // Asks the app to fetch observation and projects again after rooms were merged or split.
+  onRoomsChanged: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [onlyActive, setOnlyActive] = useState(false);
   const [family, setFamily] = useState('');
   const clock = useClock();
+  const [aliases, setAliases] = useState<{ source: string; target: string }[]>([]);
+  const loadAliases = () =>
+    api<{ source: string; target: string }[]>('/rooms/aliases')
+      .then(setAliases)
+      .catch(() => {});
+  useEffect(() => {
+    void loadAliases();
+  }, []);
+  // The next observation poll moves the sessions; the alias list updates the chips right away.
+  const merging = {
+    roots: [] as string[],
+    aliases,
+    onMerge: async (source: string, target: string) => {
+      await api('/rooms/merge', { source, target });
+      await loadAliases();
+      onRoomsChanged();
+    },
+    onSplit: async (source: string) => {
+      await api('/rooms/split', { source });
+      await loadAliases();
+      onRoomsChanged();
+    },
+  };
   const seen = useSeenReports();
   const rooms = useMemo(
     () => projectRooms(projects, observation.sessions, { now: clock, seen }),
@@ -148,6 +175,7 @@ export function ProjectMap({
       {visible.length ? (
         <FloorMap
           rooms={visible}
+          merging={{ ...merging, roots: rooms.map((r) => r.root) }}
           roster={roster}
           ready={!!observation.scannedAt}
           clock={clock}

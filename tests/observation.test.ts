@@ -479,3 +479,66 @@ test('once known, automated logs give way to people when the discovery cap is re
   expect(observer.list().sessions.map((s) => s.sessionId)).toEqual(['older-person']);
   observer.close();
 });
+
+test('a removed worktree next to its repository returns to that repository with its branch', async () => {
+  const f = await fixture();
+  const { realpath, rm, mkdir: mk } = await import('node:fs/promises');
+  // skt/c-agent/c-agent is the repository; its worktree lived at skt/c-agent/wt-eval.
+  const group = join(f.dir, 'skt', 'c-agent');
+  await mk(group, { recursive: true });
+  execFileSync('git', ['clone', '-q', f.repo, join(group, 'c-agent')], { stdio: 'pipe' });
+  execFileSync('git', ['remote', 'set-url', 'origin', 'git@gitlab.example:team/c-agent.git'], {
+    cwd: join(group, 'c-agent'),
+  });
+  const wt = join(group, 'wt-eval');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'eval-console', wt], {
+    cwd: join(group, 'c-agent'),
+    stdio: 'pipe',
+  });
+  const wtReal = await realpath(wt);
+  await rm(wt, { recursive: true, force: true }); // deleted without `git worktree prune`
+  await writeFile(
+    join(f.codexHome, 'sessions', 'rollout-wt.jsonl'),
+    line({
+      timestamp,
+      type: 'session_meta',
+      payload: { id: 'wt', cwd: join(wtReal, 'apps', 'web') },
+    }) + line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } }),
+  );
+  const observer = createObservation(f);
+  await observer.scan();
+  const s = observer.list().sessions.find((x) => x.sessionId === 'wt')!;
+  expect(s.projectPath).toBe(await realpath(join(group, 'c-agent')));
+  expect(s.worktree).toMatchObject({ path: wtReal, branch: 'eval-console', main: false });
+  expect(s.repoName).toBe('c-agent');
+  observer.close();
+});
+
+test('folders outside git join the observed folder around them, but never the home folder', async () => {
+  const f = await fixture();
+  const { realpath, mkdir: mk } = await import('node:fs/promises');
+  const ws = await realpath(f.dir);
+  await mk(join(ws, 'notes', 'docs'), { recursive: true });
+  const codex = (id: string, cwd: string) =>
+    writeFile(
+      join(f.codexHome, 'sessions', `rollout-${id}.jsonl`),
+      line({ timestamp, type: 'session_meta', payload: { id, cwd } }) +
+        line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } }),
+    );
+  await codex('outer', join(ws, 'notes'));
+  await codex('inner', join(ws, 'notes', 'docs'));
+  const observer = createObservation(f);
+  await observer.scan();
+  const by = (id: string) => observer.list().sessions.find((s) => s.sessionId === id)!;
+  expect(by('inner').projectPath).toBe(join(ws, 'notes'));
+  expect(by('inner').cwd).toBe(join(ws, 'notes', 'docs'));
+  // When the outer folder is the home folder it absorbs nothing.
+  const home = process.env.HOME;
+  process.env.HOME = join(ws, 'notes');
+  try {
+    expect(by('inner').projectPath).toBe(join(ws, 'notes', 'docs'));
+  } finally {
+    process.env.HOME = home;
+  }
+  observer.close();
+});

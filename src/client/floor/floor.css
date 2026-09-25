@@ -488,3 +488,90 @@
 .floor-worker > * {
   flex-shrink: 0;
 }
+/* Repository name behind origin, and hand merging at the bottom-left of a room. */
+.floor-repo-name {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #e8eee0;
+  color: #5b6a52;
+  white-space: nowrap;
+}
+.floor-room-merge {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  z-index: 2000;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 110px);
+}
+.floor-merged {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 6px;
+  border: 1px solid #c5d1ba;
+  border-radius: 10px;
+  background: #f3f6ee;
+  font-size: 10px;
+  color: #47613b;
+}
+.floor-merged button {
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: #7c8775;
+}
+.floor-merge-open {
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px dashed #c5d1ba;
+  border-radius: 10px;
+  background: #fbfaf5;
+  font-size: 10px;
+  color: #6b7563;
+}
+.floor-merge-popover {
+  position: absolute;
+  left: 0;
+  bottom: 22px;
+  width: 250px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #c5d1ba;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px #1e2d2426;
+}
+.floor-merge-popover p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6d7a66;
+}
+.floor-merge-popover select {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.floor-merge-popover > button {
+  justify-content: center;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: #55745e;
+  color: #fff;
+  font-size: 12px;
+}
+.floor-merge-popover > button:disabled {
+  opacity: 0.5;
+}
+.floor-merge-popover small {
+  font-size: 11px;
+  color: #9a4d2f;
+}

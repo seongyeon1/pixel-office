@@ -215,3 +215,14 @@ test('automated sessions stay out of rooms, reports and counts; only running one
   expect(room.automations.map((w) => w.id)).toEqual(['observed:summary']);
   expect(room).toMatchObject({ observedCount: 1, reportCount: 0, activeCount: 1 });
 });
+
+test('a path with only automated sessions opens no room; a repository shows its origin name', () => {
+  const rows: ObservedSession[] = [
+    { ...session('smoke', '/tmp/pixel-smoke/project'), automated: true },
+    { ...session('person', '/work/repo-access-request'), repoName: 'langconnect-enterprise' },
+    { ...session('same', '/work/pixel'), repoName: 'pixel' },
+  ];
+  const rooms = projectRooms([], rows, at);
+  expect(rooms.map((r) => r.root)).toEqual(['/work/pixel', '/work/repo-access-request']);
+  expect(rooms.map((r) => r.repoName)).toEqual(['', 'langconnect-enterprise']);
+});

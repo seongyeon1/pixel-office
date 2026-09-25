@@ -397,3 +397,90 @@ test('harness routes need a session, validate settings and store them per real r
   await app.close();
   store.close();
 });
+
+test('rooms merged by hand move their sessions to the target room and can be split again', async () => {
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-rooms-transport' });
+  const session = (id: string, projectPath: string) =>
+    ({
+      id,
+      sessionId: id,
+      provider: 'codex',
+      projectPath,
+      cwd: projectPath,
+      label: '',
+      prompt: '',
+      model: '',
+      status: 'active',
+      activity: 'editing',
+      updatedAt: new Date().toISOString(),
+      processAlive: null,
+      truncated: false,
+    }) as import('../src/shared/contracts.js').ObservedSession;
+  const observation = {
+    list: () => ({
+      sessions: [session('one', '/work/langconnect'), session('two', '/work/langconnect/repo')],
+      scannedAt: null,
+      scanning: false,
+      warnings: [],
+    }),
+    get: () => undefined,
+  } as unknown as import('../src/server/observation/observer.js').Observation;
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: o,
+    token: 't',
+    port: 4317,
+    observation,
+  });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 't' },
+    })
+  ).headers['set-cookie'] as string;
+  const post = (url: string, payload: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url, headers: { host, origin, cookie }, payload });
+  const rooms = async () =>
+    (await app.inject({ url: '/api/observed', headers: { host, cookie } }))
+      .json()
+      .sessions.map((s: { projectPath: string }) => s.projectPath);
+  expect(
+    (
+      await post('/api/rooms/merge', {
+        source: '/work/langconnect',
+        target: '/work/langconnect/repo',
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(await rooms()).toEqual(['/work/langconnect/repo', '/work/langconnect/repo']);
+  const projects = (await app.inject({ url: '/api/projects', headers: { host, cookie } })).json();
+  expect(projects.map((p: { root: string }) => p.root)).toEqual(['/work/langconnect/repo']);
+  // Merging back would loop.
+  expect(
+    (
+      await post('/api/rooms/merge', {
+        source: '/work/langconnect/repo',
+        target: '/work/langconnect',
+      })
+    ).statusCode,
+  ).toBe(400);
+  expect(
+    (await app.inject({ url: '/api/rooms/aliases', headers: { host, cookie } })).json(),
+  ).toEqual([{ source: '/work/langconnect', target: '/work/langconnect/repo' }]);
+  await post('/api/rooms/split', { source: '/work/langconnect' });
+  expect(await rooms()).toEqual(['/work/langconnect', '/work/langconnect/repo']);
+  await app.close();
+  store.close();
+});

@@ -741,6 +741,7 @@ export function App() {
               await refreshRuns();
             }}
             onOpen={(root, worker) => void switchProject(root, undefined, { worker })}
+            onRoomsChanged={() => void refreshRuns()}
           />
         ) : view === 'records' ? (
           <RecordsPage sessions={observation.sessions} />

@@ -27,6 +27,22 @@ export function createStore(path: string) {
     CREATE INDEX IF NOT EXISTS chat_session ON chat_messages(session_id);`);
   db.exec('CREATE TABLE IF NOT EXISTS retired_sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS repo_harness(root TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS room_aliases(source TEXT PRIMARY KEY, target TEXT NOT NULL)');
+  const aliases = () =>
+    new Map(
+      (
+        db.prepare('SELECT source, target FROM room_aliases').all() as {
+          source: string;
+          target: string;
+        }[]
+      ).map((r) => [r.source, r.target]),
+    );
+  // Follows merges to the end of the chain; a chain can never loop because mergeRoom refuses it.
+  const resolveRoom = (root: string, map = aliases()) => {
+    let at = root;
+    for (let i = 0; i < 50 && map.has(at); i++) at = map.get(at)!;
+    return at;
+  };
   const getRun = (id: string) => {
     const row = db.prepare('SELECT data FROM runs WHERE id=?').get(id) as
       { data: string } | undefined;
@@ -83,6 +99,19 @@ export function createStore(path: string) {
     getRun,
     listRuns,
     listProjects,
+    roomAliases: aliases,
+    resolveRoom,
+    mergeRoom(source: string, target: string) {
+      if (resolveRoom(target) === source || source === target)
+        throw new Error('같은 방이나 이미 이 방으로 합쳐진 방에는 합칠 수 없어요.');
+      db.prepare('INSERT OR REPLACE INTO room_aliases(source,target) VALUES(?,?)').run(
+        source,
+        target,
+      );
+    },
+    splitRoom(source: string) {
+      db.prepare('DELETE FROM room_aliases WHERE source=?').run(source);
+    },
     getHarness(root: string): RepoHarness {
       const row = db.prepare('SELECT data FROM repo_harness WHERE root=?').get(root) as
         { data: string } | undefined;

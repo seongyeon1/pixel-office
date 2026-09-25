@@ -219,6 +219,8 @@ export interface ObservedSession {
   attention?: ObservedAttention | null;
   // Started by a script or hook (e.g. a work-log summary), not by a person.
   automated?: boolean;
+  // Name of the repository behind origin, e.g. langconnect-enterprise.
+  repoName?: string;
 }
 export interface ObservationSnapshot {
   sessions: ObservedSession[];
