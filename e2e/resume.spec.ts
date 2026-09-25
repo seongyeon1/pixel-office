@@ -94,7 +94,7 @@ for (const provider of ['claude', 'codex'] as const) {
         page.getByRole('button', { name: `전체 맵 동료 ${projectRoot} ${sessionId}`, exact: true }),
       ).toHaveCount(0);
       await page.reload();
-      await page.getByText('퇴근한 동료 1명', { exact: true }).click();
+      await page.getByText('직접 퇴근시킨 동료 1명', { exact: true }).click();
       await page.getByRole('button', { name: `다시 출근 ${sessionId}`, exact: true }).click();
       await expect(
         page.getByRole('button', { name: `전체 맵 동료 ${projectRoot} ${sessionId}`, exact: true }),

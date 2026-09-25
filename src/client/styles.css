@@ -3778,3 +3778,29 @@ nav button.active svg {
     animation: none;
   }
 }
+/* Hand raised over a worker: ? waits on a person, ! has a report. */
+.worker-mark {
+  position: absolute;
+  top: -14px;
+  right: 2px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 3px solid #b98a14;
+  border-radius: 4px;
+  background: #ffd75e;
+  font-size: 12px;
+  font-weight: 800;
+  color: #5a3f00;
+}
+.worker-mark.report {
+  border-color: #3f8a64;
+  background: #bfe8cf;
+  color: #1f5236;
+}
+.worker-mark.guess {
+  border-style: dashed;
+  background: #fff1c4;
+}

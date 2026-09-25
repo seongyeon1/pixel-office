@@ -19,6 +19,7 @@ import {
 } from '../../shared/contracts';
 import { api } from '../api';
 import { SessionOffice } from '../office/SessionOffice';
+import { markSeen } from '../floor/seen';
 import { PixelWorker } from '../office/PixelWorker';
 import { SessionChat } from './SessionChat';
 import { RetiredSessions } from './RetiredSessions';
@@ -98,6 +99,11 @@ export function ObservedOffice({
     sessions[0];
   const selected =
     sessions.find((s) => s.id === selectedId && s.provider === selectedProvider) ?? preferred;
+  // Only a coworker the person picked counts as read; the automatic fallback does not.
+  const picked = selected?.id === selectedId ? selected : undefined;
+  useEffect(() => {
+    if (picked) markSeen(picked);
+  }, [picked?.id, picked?.updatedAt]);
   const openChat = () => {
     setTab('chat');
     requestAnimationFrame(() =>

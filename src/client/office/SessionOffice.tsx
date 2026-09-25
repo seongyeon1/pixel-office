@@ -9,6 +9,8 @@ import {
 } from './movement';
 import { ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
 import { type ChatMessage, type ObservedSession } from '../../shared/contracts';
+import { hasReport } from '../floor/roster';
+import { useSeenReports } from '../floor/seen';
 const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude');
 export function SessionOffice({
   sessions,
@@ -24,6 +26,7 @@ export function SessionOffice({
   onChat: () => void;
 }) {
   const mapScroll = useRef<HTMLDivElement>(null);
+  const seen = useSeenReports();
   const [page, setPage] = useState(0);
   const index = sessions.findIndex((s) => s.id === selected?.id);
   useEffect(() => {
@@ -117,6 +120,7 @@ export function SessionOffice({
                 session={s}
                 target={positions.get(s.id)!}
                 selected={s.id === selected?.id}
+                mark={s.attention?.kind ?? (hasReport(s, seen) ? 'report' : null)}
                 onSelect={() => onSelect(s)}
               />
             ))}
