@@ -3224,6 +3224,7 @@ nav button.active svg {
   margin-left: auto;
   font-weight: 500;
   color: #8a9282;
+}
 /* Repository harness dialog. */
 .harness-modal {
   width: min(680px, calc(100vw - 32px));
