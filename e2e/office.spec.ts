@@ -172,3 +172,81 @@ test('repository switching isolates live activity and history and survives reloa
   );
   await expect(page.locator('.current-task')).toContainText('두 번째 레포의 작업');
 });
+
+test('existing sessions are discovered by repo and show live tools without execution controls', async ({
+  page,
+}) => {
+  const { writeFile, appendFile, rm } = await import('node:fs/promises');
+  const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  const timestamp = new Date().toISOString();
+  const line = (o: unknown) => JSON.stringify(o) + '\n';
+  try {
+    await writeFile(
+      f.codex,
+      line({ timestamp, type: 'session_meta', payload: { id: 'external-codex', cwd: f.project } }) +
+        line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } }) +
+        line({
+          timestamp,
+          type: 'response_item',
+          payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"npm test"}' },
+        }),
+    );
+    await writeFile(
+      f.claude,
+      line({
+        timestamp,
+        type: 'user',
+        sessionId: 'external-claude',
+        cwd: f.project,
+        message: { content: '외부 Claude 작업' },
+      }) +
+        line({
+          timestamp,
+          type: 'assistant',
+          message: {
+            model: 'claude-external',
+            content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'README.md' } }],
+          },
+        }),
+    );
+    await page.goto('/#token=e2e-token');
+    await expect(page.getByRole('button', { name: /외부 세션 2/ })).toBeVisible({ timeout: 20000 });
+    await page.getByRole('button', { name: /외부 세션 2/ }).click();
+    await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+    await page.getByRole('button', { name: '세션 선택 Codex external-codex' }).click();
+    await expect(page.locator('.observed-inspector')).toContainText('npm test');
+    await expect(page.locator('.observed-inspector')).toContainText('관측 전용');
+    await expect(page.getByRole('button', { name: '작업 중단', exact: true })).toHaveCount(0);
+    await appendFile(
+      f.codex,
+      line({
+        timestamp: new Date().toISOString(),
+        type: 'event_msg',
+        payload: { type: 'task_complete', last_agent_message: '외부 세션 작업 완료' },
+      }),
+    );
+    await expect(page.locator('.observed-inspector')).toContainText('외부 세션 작업 완료', {
+      timeout: 10000,
+    });
+    await page.getByRole('button', { name: '세션 선택 Claude external-claude' }).click();
+    await expect(page.locator('.observed-inspector')).toContainText('README.md');
+    await expect(page.locator('.observed-inspector')).not.toContainText('npm test');
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+  } finally {
+    await rm(f.codex, { force: true });
+    await rm(f.claude, { force: true });
+    await expect
+      .poll(
+        async () => {
+          const r = await page.request.get('/api/observed');
+          return r.ok() ? (await r.json()).sessions.length : -1;
+        },
+        { timeout: 10000 },
+      )
+      .toBe(0);
+  }
+});

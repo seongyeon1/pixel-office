@@ -1912,3 +1912,176 @@ nav button.active svg {
     max-height: 230px;
   }
 }
+
+.office-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 32px 0;
+  flex-wrap: wrap;
+}
+.office-source > button {
+  padding: 8px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 14px;
+}
+.office-source > button.selected {
+  background: #e9efe5;
+  border-color: #92a386;
+  color: #435c39;
+}
+.office-source > span,
+.office-source summary {
+  font-size: 12px;
+  color: #65705f;
+}
+.office-source details {
+  position: relative;
+  margin-left: auto;
+}
+.office-source details[open] {
+  padding: 10px;
+  background: #fffdf6;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.office-source details p {
+  font-size: 12px;
+}
+.observed-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 20px;
+}
+.observed-sessions > button {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
+}
+.observed-sessions > button.selected {
+  border-color: #92a386;
+  background: #f1f5ed;
+}
+.observed-sessions > button > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.observed-sessions strong {
+  display: block;
+  font-size: 14px;
+}
+.observed-sessions small,
+.observed-time {
+  font-size: 12px;
+  color: #687360;
+  font-weight: 400;
+}
+.observed-prompt {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  margin: 6px 0;
+}
+.observed-profile {
+  padding: 20px;
+}
+.observed-profile h2 {
+  font-size: 20px;
+  margin: 0 0 10px;
+}
+.observed-profile h2 small {
+  font-size: 12px;
+  font-weight: 400;
+}
+.observed-profile p {
+  font-size: 14px;
+}
+.observed-profile dl {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.observed-profile dt {
+  color: #687360;
+}
+.observed-profile dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.observed-note {
+  font-size: 12px !important;
+  color: #687360;
+  line-height: 1.7;
+}
+.observed-events {
+  padding: 0 20px 20px;
+  overflow-y: auto;
+  max-height: 700px;
+}
+.observed-events article {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.observed-events article > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.observed-events article strong {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.observed-events time {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #687360;
+  font-size: 11px;
+}
+.observed-events pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 10px 0 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.observed-page .office-toolbar > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 760px) {
+  .office-source {
+    margin: 14px 16px 0;
+  }
+  .office-source > span {
+    width: 100%;
+  }
+  .observed-page .observed-inspector {
+    display: block;
+  }
+  .observed-time {
+    display: none;
+  }
+  .observed-profile h2 {
+    font-size: 18px;
+  }
+  .observed-events {
+    max-height: 500px;
+  }
+}

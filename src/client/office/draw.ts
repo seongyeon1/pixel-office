@@ -17,6 +17,7 @@ export function drawOffice(
   team: TeamConfig,
   time: number,
   reduced: boolean,
+  external = false,
 ) {
   const r = (x: number, y: number, w: number, h: number, color: string) => {
     ctx.fillStyle = color;
@@ -228,7 +229,7 @@ export function drawOffice(
     r(x - 51, y + 45, 102, 24, '#fbfaf2');
     r(x - 51, y + 69, 102, 2, '#c7c7b6');
     txt(id === 'claude' ? 'Claude' : 'Codex', x - 40, y + 61, 12, '#425146');
-    txt(seniorityLabels[team[id].seniority], x + 19, y + 61, 10, '#858b77');
+    txt(external ? '외부' : seniorityLabels[team[id].seniority], x + 19, y + 61, 10, '#858b77');
     if (a.waiting) {
       r(x - 17, y - 59, 34, 26, '#fff4d6');
       r(x - 3, y - 33, 6, 5, '#fff4d6');

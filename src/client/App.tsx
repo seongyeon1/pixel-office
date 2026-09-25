@@ -37,6 +37,7 @@ import {
   type Provider,
   type Run,
   type ProjectSummary,
+  type ObservationSnapshot,
   type TeamConfig,
   type OfficeEvent,
   type Interaction,
@@ -46,6 +47,7 @@ import { applyEvent, emptyState, type OfficeState } from './state';
 import { Office } from './office/Office';
 import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
+import { ObservedOffice } from './components/ObservedOffice';
 import { RepositoryList, repositoryName } from './components/RepositoryList';
 type Project = { root: string; head: string; dirty: boolean };
 type Snapshot = { run: Run; events: OfficeEvent[]; interactions: Interaction[]; sequence: number };
@@ -66,6 +68,13 @@ export function App() {
   stateRef.current = state;
   const [runs, setRuns] = useState<Run[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [observation, setObservation] = useState<ObservationSnapshot>({
+    sessions: [],
+    scannedAt: null,
+    scanning: false,
+    warnings: [],
+  });
+  const [officeSource, setOfficeSource] = useState<'auto' | 'app' | 'external'>('auto');
   const [loadingProject, setLoadingProject] = useState(false);
   const projectRef = useRef<string | null>(null);
   const selectionVersion = useRef(0);
@@ -91,6 +100,12 @@ export function App() {
   const otherActive = projects.find(
     (p) => p.root !== project?.root && p.latestRun && !terminal(p.latestRun.status),
   );
+  const observedSessions = observation.sessions.filter((s) => s.projectPath === project?.root);
+  const observing =
+    officeSource === 'external' ||
+    (officeSource === 'auto' &&
+      observedSessions.length > 0 &&
+      !(state.run && !terminal(state.run.status)));
   const actualTeam = state.run?.team ?? team;
   const displayedMode = state.run?.mode ?? mode;
   const displayedImplementer =
@@ -99,13 +114,15 @@ export function App() {
   const refreshRuns = async () => {
     const root = projectRef.current;
     const version = selectionVersion.current;
-    const [list, repositories] = await Promise.all([
+    const [list, repositories, observed] = await Promise.all([
       root ? api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}`) : Promise.resolve([]),
       api<ProjectSummary[]>('/projects'),
+      api<ObservationSnapshot>('/observed'),
     ]);
     if (version !== selectionVersion.current) return;
     setRuns(list);
     setProjects(repositories);
+    setObservation(observed);
   };
   const selectRun = async (id: string) => {
     const version = ++snapshotVersion.current;
@@ -147,6 +164,7 @@ export function App() {
     setError('');
     setModal(null);
     setView('office');
+    setOfficeSource('auto');
     setLoadingProject(true);
     try {
       const [list, metadata] = await Promise.all([
@@ -171,16 +189,19 @@ export function App() {
     (async () => {
       try {
         await bootstrap();
-        const [h, repositories] = await Promise.all([
+        const [h, repositories, observed] = await Promise.all([
           api<Health>('/health'),
           api<ProjectSummary[]>('/projects'),
+          api<ObservationSnapshot>('/observed'),
         ]);
         if (cancelled) return;
         setHealth(h);
         setProjects(repositories);
+        setObservation(observed);
         const root =
           localStorage.getItem('pixel.project') ??
-          repositories.find((p) => p.latestRun?.id === h.activeId)?.root;
+          repositories.find((p) => p.latestRun?.id === h.activeId)?.root ??
+          observed.sessions[0]?.projectPath;
         if (root) await switchProject(root);
         if (!cancelled) setBooted(true);
       } catch (e) {
@@ -191,6 +212,10 @@ export function App() {
       cancelled = true;
     };
   }, []);
+  useEffect(() => {
+    if (booted && !projectRef.current && observation.sessions[0])
+      void switchProject(observation.sessions[0].projectPath);
+  }, [booted, observation.sessions]);
   useEffect(() => {
     if (!booted) return;
     let stopped = false;
@@ -331,6 +356,7 @@ export function App() {
       await selectRun(run.id);
       await refreshRuns();
       setView('office');
+      setOfficeSource('app');
       setInspector(true);
     } catch (e) {
       setError((e as Error).message);
@@ -455,10 +481,12 @@ export function App() {
               <span>
                 <strong>{providerName(id)}</strong>
                 <small>
-                  {seniorityLabels[actualTeam[id].seniority]} ·{' '}
-                  {state.agents[id].waiting
-                    ? '응답 대기'
-                    : activityLabels[state.agents[id].activity]}
+                  {observing ? '외부 세션' : seniorityLabels[actualTeam[id].seniority]} ·{' '}
+                  {observing
+                    ? `${observedSessions.filter((s) => s.provider === id).length}개`
+                    : state.agents[id].waiting
+                      ? '응답 대기'
+                      : activityLabels[state.agents[id].activity]}
                 </small>
               </span>
               <span className={`presence ${health?.providers[id].authenticated ? 'online' : ''}`} />
@@ -542,7 +570,43 @@ export function App() {
             </button>
           </div>
         )}
-        {view === 'office' ? (
+        {view === 'office' && (
+          <div className="office-source" aria-label="작업 출처">
+            <button
+              className={observing ? 'selected' : ''}
+              onClick={() => setOfficeSource('external')}
+            >
+              외부 세션 {observedSessions.length}
+            </button>
+            <button className={!observing ? 'selected' : ''} onClick={() => setOfficeSource('app')}>
+              앱 작업
+            </button>
+            <span>
+              {observation.scanning
+                ? '세션 찾는 중'
+                : observation.scannedAt
+                  ? `자동 감지 · ${new Date(observation.scannedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+                  : '세션 탐색 준비 중'}
+            </span>
+            {observation.warnings.length > 0 && (
+              <details>
+                <summary>감지 안내</summary>
+                {observation.warnings.map((w) => (
+                  <p key={w}>{w}</p>
+                ))}
+              </details>
+            )}
+          </div>
+        )}
+        {view === 'office' && observing ? (
+          <ObservedOffice
+            key={project?.root ?? 'none'}
+            sessions={observedSessions}
+            root={project?.root ?? ''}
+            selectedProvider={selected}
+            onProviderChange={setSelected}
+          />
+        ) : view === 'office' ? (
           <main className={`office-page ${inspector ? '' : 'inspector-hidden'}`}>
             <div className="main-column">
               <div className="page-heading">
@@ -992,6 +1056,7 @@ export function App() {
                     key={r.id}
                     onClick={() => {
                       void selectRun(r.id);
+                      setOfficeSource('app');
                       setView('office');
                       setInspector(true);
                     }}

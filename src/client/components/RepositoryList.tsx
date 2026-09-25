@@ -30,8 +30,12 @@ export function RepositoryList({
               {p.latestRun && (
                 <span className={`presence ${terminal(p.latestRun.status) ? '' : 'working'}`} />
               )}
-              {p.latestRun ? statusLabels[p.latestRun.status] : '새 작업 대기'} · 기록 {p.runCount}
-              개
+              {p.observedCount
+                ? `외부 세션 ${p.observedCount}개 · 활동 ${p.observedActive ?? 0}개`
+                : p.latestRun
+                  ? statusLabels[p.latestRun.status]
+                  : '새 작업 대기'}{' '}
+              · 기록 {p.runCount}개
             </span>
           </span>
           {selected === p.root ? <Check size={16} /> : <ChevronRight size={16} />}

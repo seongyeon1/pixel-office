@@ -14,6 +14,7 @@ import type { Store } from './store.js';
 import type { Orchestrator } from './orchestrator.js';
 import { inspectProject, collectChanges } from './projects.js';
 import { listModels } from './models.js';
+import type { Observation } from './observation/observer.js';
 export async function createServer({
   store,
   adapters,
@@ -21,6 +22,7 @@ export async function createServer({
   token,
   port,
   demo = false,
+  observation,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -28,6 +30,7 @@ export async function createServer({
   token: string;
   port: number;
   demo?: boolean;
+  observation?: Observation;
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const session = randomBytes(32).toString('hex');
@@ -77,7 +80,29 @@ export async function createServer({
     store.rememberProject(project.root);
     return project;
   });
-  app.get('/api/projects', async () => store.listProjects());
+  app.get(
+    '/api/observed',
+    async () =>
+      observation?.list() ?? { sessions: [], scannedAt: null, scanning: false, warnings: [] },
+  );
+  app.get<{ Params: { id: string } }>('/api/observed/:id', async (req, reply) => {
+    const session = observation?.get(req.params.id);
+    return session ?? reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+  });
+  app.get('/api/projects', async () => {
+    const projects = new Map(store.listProjects().map((p) => [p.root, p]));
+    for (const session of observation?.list().sessions ?? []) {
+      const p = projects.get(session.projectPath) ?? {
+        root: session.projectPath,
+        runCount: 0,
+        latestRun: null,
+      };
+      p.observedCount = (p.observedCount ?? 0) + 1;
+      p.observedActive = (p.observedActive ?? 0) + (session.status === 'active' ? 1 : 0);
+      projects.set(p.root, p);
+    }
+    return [...projects.values()];
+  });
   app.get<{ Querystring: { projectPath?: string } }>('/api/runs', async (req) => {
     const { projectPath } = z
       .object({ projectPath: z.string().min(1).optional() })

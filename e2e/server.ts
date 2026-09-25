@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import staticPlugin from '@fastify/static';
+import { createObservation } from '../src/server/observation/observer.js';
 import { createStore } from '../src/server/store.js';
 import { createOrchestrator } from '../src/server/orchestrator.js';
 import { createServer } from '../src/server/transport.js';
@@ -88,6 +89,21 @@ const make = (id: Provider): Adapter => ({
 });
 const adapters = { codex: make('codex'), claude: make('claude') };
 const orchestrator = createOrchestrator({ store, adapters, dataDir: dir });
+const observation = createObservation({
+  codexHome: join(dir, 'observed-codex'),
+  claudeHome: join(dir, 'observed-claude'),
+});
+await mkdir(join(dir, 'observed-codex', 'sessions'), { recursive: true });
+await mkdir(join(dir, 'observed-claude', 'projects'), { recursive: true });
+await writeFile(
+  '.pixel/e2e-observer.json',
+  JSON.stringify({
+    codex: join(dir, 'observed-codex', 'sessions', 'test.jsonl'),
+    claude: join(dir, 'observed-claude', 'projects', 'test.jsonl'),
+    project,
+  }),
+);
+observation.start();
 const { app } = await createServer({
   store,
   adapters,
@@ -95,10 +111,12 @@ const { app } = await createServer({
   token: 'e2e-token',
   port: 4318,
   demo: true,
+  observation,
 });
 await app.register(staticPlugin, { root: resolve('dist/client') });
 await app.listen({ port: 4318, host: '127.0.0.1' });
 process.on('SIGTERM', async () => {
+  observation.close();
   await orchestrator.shutdown();
   await app.close();
   store.close();

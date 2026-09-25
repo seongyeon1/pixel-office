@@ -41,6 +41,8 @@ export interface Run {
   error?: string;
 }
 export interface ProjectSummary {
+  observedCount?: number;
+  observedActive?: number;
   root: string;
   runCount: number;
   latestRun: Run | null;
@@ -151,3 +153,37 @@ export const activityLabels: Record<Activity, string> = {
   executing: '명령 실행',
   reviewing: '코드 검토',
 };
+
+export type ObservedStatus = 'active' | 'idle' | 'stale';
+export interface ObservedEvent {
+  id: string;
+  timestamp: string;
+  kind: 'request' | 'message' | 'tool' | 'result' | 'complete';
+  activity: Activity;
+  title: string;
+  detail: string;
+}
+export interface ObservedSession {
+  id: string;
+  sessionId: string;
+  provider: Provider;
+  projectPath: string;
+  cwd: string;
+  label: string;
+  prompt: string;
+  model: string;
+  status: ObservedStatus;
+  activity: Activity;
+  updatedAt: string;
+  processAlive: boolean | null;
+  truncated: boolean;
+}
+export interface ObservationSnapshot {
+  sessions: ObservedSession[];
+  scannedAt: string | null;
+  scanning: boolean;
+  warnings: string[];
+}
+export interface ObservedDetail extends ObservedSession {
+  events: ObservedEvent[];
+}

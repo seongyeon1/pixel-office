@@ -7,15 +7,17 @@ export function Office({
   selected,
   onSelect,
   team,
+  external = false,
 }: {
   agents: Record<Provider, AgentState>;
   selected: Provider;
   onSelect: (id: Provider) => void;
   team: TeamConfig;
+  external?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const data = useRef({ agents, selected, team });
-  data.current = { agents, selected, team };
+  const data = useRef({ agents, selected, team, external });
+  data.current = { agents, selected, team, external };
   const locations = useRef({ claude: { ...positions.claude }, codex: { ...positions.codex } });
   useEffect(() => {
     const c = canvas.current!;
@@ -54,6 +56,7 @@ export function Office({
           current.team,
           time,
           reduced.matches,
+          current.external,
         );
       raf = requestAnimationFrame(render);
     };

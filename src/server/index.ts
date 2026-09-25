@@ -6,6 +6,7 @@ import { createCodexAdapter } from './adapters/codex.js';
 import { createClaudeAdapter } from './adapters/claude.js';
 import { createOrchestrator } from './orchestrator.js';
 import { createServer } from './transport.js';
+import { createObservation } from './observation/observer.js';
 const dataDir = resolve(process.env.PIXEL_DATA_DIR ?? '.pixel');
 await mkdir(dataDir, { recursive: true });
 const port = Number(process.env.PORT ?? 4317);
@@ -14,7 +15,16 @@ const store = createStore(resolve(dataDir, 'office.sqlite'));
 store.interruptActive();
 const adapters = { codex: createCodexAdapter(), claude: createClaudeAdapter() };
 const orchestrator = createOrchestrator({ store, adapters, dataDir });
-const { app, origin } = await createServer({ store, adapters, orchestrator, token, port });
+const observation = createObservation({ excludeRoots: [resolve(dataDir, 'workspaces')] });
+observation.start();
+const { app, origin } = await createServer({
+  store,
+  adapters,
+  orchestrator,
+  token,
+  port,
+  observation,
+});
 const production = process.argv[1]?.endsWith('.js');
 if (production) {
   const { default: staticPlugin } = await import('@fastify/static');
@@ -47,6 +57,7 @@ let closing = false;
 const shutdown = async () => {
   if (closing) return;
   closing = true;
+  observation.close();
   await orchestrator.shutdown();
   await app.close();
   store.close();
