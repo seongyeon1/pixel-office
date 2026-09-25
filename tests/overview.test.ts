@@ -226,3 +226,18 @@ test('a path with only automated sessions opens no room; a repository shows its 
   expect(rooms.map((r) => r.root)).toEqual(['/work/pixel', '/work/repo-access-request']);
   expect(rooms.map((r) => r.repoName)).toEqual(['', 'langconnect-enterprise']);
 });
+
+test('connected projects stay on the floor when empty; folders only seen in logs leave with their people', async () => {
+  const { shownOnFloor } = await import('../src/client/overview/projects.js');
+  const rows: ObservedSession[] = [
+    { ...session('gone', '/home/me', 'idle'), updatedAt: new Date(0).toISOString() },
+    { ...session('here', '/work/busy') },
+  ];
+  const rooms = projectRooms(
+    [{ ...project('/work/connected'), connected: true }, project('/work/ran', run)],
+    rows,
+    { now: 3600000 },
+  );
+  const shown = rooms.filter(shownOnFloor).map((r) => r.root);
+  expect(shown).toEqual(['/work/busy', '/work/connected', '/work/ran']);
+});

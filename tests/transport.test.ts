@@ -425,7 +425,11 @@ test('rooms merged by hand move their sessions to the target room and can be spl
     }) as import('../src/shared/contracts.js').ObservedSession;
   const observation = {
     list: () => ({
-      sessions: [session('one', '/work/langconnect'), session('two', '/work/langconnect/repo')],
+      sessions: [
+        session('one', '/work/langconnect'),
+        session('two', '/work/langconnect/repo'),
+        { ...session('smoke', '/tmp/pixel-smoke/project'), automated: true },
+      ],
       scannedAt: null,
       scanning: false,
       warnings: [],
@@ -464,9 +468,15 @@ test('rooms merged by hand move their sessions to the target room and can be spl
       })
     ).statusCode,
   ).toBe(200);
-  expect(await rooms()).toEqual(['/work/langconnect/repo', '/work/langconnect/repo']);
+  expect(await rooms()).toEqual([
+    '/work/langconnect/repo',
+    '/work/langconnect/repo',
+    '/tmp/pixel-smoke/project',
+  ]);
   const projects = (await app.inject({ url: '/api/projects', headers: { host, cookie } })).json();
   expect(projects.map((p: { root: string }) => p.root)).toEqual(['/work/langconnect/repo']);
+  // Script-started sessions never make a folder a project.
+  expect(projects.map((p: { root: string }) => p.root)).not.toContain('/tmp/pixel-smoke/project');
   // Merging back would loop.
   expect(
     (
@@ -480,7 +490,11 @@ test('rooms merged by hand move their sessions to the target room and can be spl
     (await app.inject({ url: '/api/rooms/aliases', headers: { host, cookie } })).json(),
   ).toEqual([{ source: '/work/langconnect', target: '/work/langconnect/repo' }]);
   await post('/api/rooms/split', { source: '/work/langconnect' });
-  expect(await rooms()).toEqual(['/work/langconnect', '/work/langconnect/repo']);
+  expect(await rooms()).toEqual([
+    '/work/langconnect',
+    '/work/langconnect/repo',
+    '/tmp/pixel-smoke/project',
+  ]);
   await app.close();
   store.close();
 });

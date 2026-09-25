@@ -11,6 +11,7 @@ import {
   type Adapter,
   type Provider,
   type HarnessCatalog,
+  type ProjectSummary,
   type OfficeEvent,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
@@ -263,13 +264,14 @@ export async function createServer({
   });
   app.get('/api/projects', async () => {
     const aliases = store.roomAliases();
-    const projects = new Map(
+    const projects = new Map<string, ProjectSummary>(
       store
         .listProjects()
         .filter((p) => !aliases.has(p.root))
-        .map((p) => [p.root, p]),
+        .map((p) => [p.root, { ...p, connected: true }]),
     );
-    for (const session of roomSessions()) {
+    // Script- and hook-started sessions never make a folder a project (e.g. smoke-test repos).
+    for (const session of roomSessions().filter((s) => !s.automated)) {
       const p = projects.get(session.projectPath) ?? {
         root: session.projectPath,
         runCount: 0,
