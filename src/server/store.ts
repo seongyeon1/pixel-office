@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import {
   terminal,
   type Run,
+  type ProjectSummary,
   type RunStatus,
   type EventInput,
   type OfficeEvent,
@@ -15,15 +16,43 @@ export function createStore(path: string) {
   db.exec(
     `PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, run_id TEXT, data TEXT); CREATE INDEX IF NOT EXISTS events_run ON events(run_id,sequence); CREATE TABLE IF NOT EXISTS interactions(id TEXT PRIMARY KEY, run_id TEXT, resolved INTEGER DEFAULT 0, data TEXT);`,
   );
+  db.exec(`CREATE TABLE IF NOT EXISTS projects(root TEXT PRIMARY KEY);
+    CREATE INDEX IF NOT EXISTS runs_project ON runs(json_extract(data, '$.projectPath'));`);
   const getRun = (id: string) => {
     const row = db.prepare('SELECT data FROM runs WHERE id=?').get(id) as
       { data: string } | undefined;
     return row ? (JSON.parse(row.data) as Run) : undefined;
   };
-  const listRuns = () =>
-    (
-      db.prepare('SELECT data FROM runs ORDER BY rowid DESC LIMIT 100').all() as { data: string }[]
-    ).map((r) => JSON.parse(r.data) as Run);
+  const listRuns = (projectPath?: string) => {
+    const rows =
+      projectPath === undefined
+        ? db.prepare('SELECT data FROM runs ORDER BY rowid DESC LIMIT 100').all()
+        : db
+            .prepare(
+              "SELECT data FROM runs WHERE json_extract(data, '$.projectPath')=? ORDER BY rowid DESC LIMIT 100",
+            )
+            .all(projectPath);
+    return (rows as { data: string }[]).map((r) => JSON.parse(r.data) as Run);
+  };
+  const listProjects = (): ProjectSummary[] => {
+    const rows = db
+      .prepare(
+        `WITH grouped AS (
+      SELECT json_extract(data, '$.projectPath') AS root, COUNT(*) AS runCount, MAX(rowid) AS latest
+      FROM runs GROUP BY json_extract(data, '$.projectPath')
+    ), roots AS (SELECT root FROM projects UNION SELECT root FROM grouped)
+    SELECT roots.root, COALESCE(grouped.runCount, 0) AS runCount, runs.data
+    FROM roots LEFT JOIN grouped ON grouped.root=roots.root
+    LEFT JOIN runs ON runs.rowid=grouped.latest
+    ORDER BY grouped.latest DESC, roots.root`,
+      )
+      .all() as { root: string; runCount: number; data: string | null }[];
+    return rows.map(({ root, runCount, data }) => ({
+      root,
+      runCount,
+      latestRun: data ? (JSON.parse(data) as Run) : null,
+    }));
+  };
   const updateRun = (id: string, patch: Partial<Run>) => {
     const run = getRun(id);
     if (!run) throw new Error('실행을 찾을 수 없습니다.');
@@ -44,6 +73,10 @@ export function createStore(path: string) {
     bus,
     getRun,
     listRuns,
+    listProjects,
+    rememberProject(root: string) {
+      db.prepare('INSERT OR IGNORE INTO projects(root) VALUES(?)').run(root);
+    },
     updateRun,
     createRun(run: Run) {
       db.prepare('INSERT INTO runs(id,data) VALUES(?,?)').run(run.id, JSON.stringify(run));

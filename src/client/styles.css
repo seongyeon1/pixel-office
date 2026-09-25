@@ -1793,3 +1793,122 @@ nav button.active svg {
     border-radius: 7px;
   }
 }
+
+.repository-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 240px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf7;
+  color: var(--ink);
+}
+.repository-switch > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repository-switch > svg {
+  flex-shrink: 0;
+}
+.repository-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 22px;
+}
+.repository-list > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+}
+.repository-list > button:hover,
+.repository-list > button.selected {
+  background: #eff3ed;
+  border-color: #a5b39b;
+}
+.repository-list > button > svg {
+  flex-shrink: 0;
+}
+.repository-description {
+  flex: 1;
+  min-width: 0;
+}
+.repository-description strong {
+  display: block;
+  font-size: 14px;
+}
+.repository-description small {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: #65705f;
+  margin: 3px 0 7px;
+}
+.repository-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #65705f;
+}
+.other-repository {
+  margin: 16px 32px 0;
+  padding: 12px 16px;
+  border: 1px solid #d8dfcf;
+  border-radius: 10px;
+  background: #f3f6ee;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+.other-repository > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.other-repository button {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 0;
+  color: #4e6744;
+  font-weight: 600;
+}
+.scene-label {
+  max-width: 75%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.modal {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+@media (max-width: 760px) {
+  .repository-switch {
+    max-width: 170px;
+    font-size: 12px;
+  }
+  .other-repository {
+    margin: 12px 16px 0;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .repository-list {
+    max-height: 230px;
+  }
+}

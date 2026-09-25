@@ -46,3 +46,28 @@ test('restart interrupts active jobs without changing completed jobs', () => {
   expect(db.getRun('r2')?.status).toBe('completed');
   db.close();
 });
+
+test('groups repositories by full path and filters before the history limit', () => {
+  const db = createStore(':memory:');
+  db.createRun({ ...run(), id: 'old', projectPath: '/one/app', status: 'completed' });
+  for (let i = 0; i < 105; i++)
+    db.createRun({ ...run(), id: `other-${i}`, projectPath: '/two/app', status: 'completed' });
+  expect(db.listRuns('/one/app').map((r) => r.id)).toEqual(['old']);
+  db.rememberProject('/empty/app');
+  db.rememberProject('/empty/app');
+  const projects = db.listProjects();
+  expect(projects).toHaveLength(3);
+  expect(projects.find((p) => p.root === '/one/app')).toMatchObject({
+    runCount: 1,
+    latestRun: { id: 'old' },
+  });
+  expect(projects.find((p) => p.root === '/two/app')).toMatchObject({
+    runCount: 105,
+    latestRun: { id: 'other-104' },
+  });
+  expect(projects.find((p) => p.root === '/empty/app')).toMatchObject({
+    runCount: 0,
+    latestRun: null,
+  });
+  db.close();
+});

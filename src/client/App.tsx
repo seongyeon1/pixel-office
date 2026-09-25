@@ -36,6 +36,7 @@ import {
   type Mode,
   type Provider,
   type Run,
+  type ProjectSummary,
   type TeamConfig,
   type OfficeEvent,
   type Interaction,
@@ -45,6 +46,8 @@ import { applyEvent, emptyState, type OfficeState } from './state';
 import { Office } from './office/Office';
 import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
+import { RepositoryList, repositoryName } from './components/RepositoryList';
+type Project = { root: string; head: string; dirty: boolean };
 type Snapshot = { run: Run; events: OfficeEvent[]; interactions: Interaction[]; sequence: number };
 type Health = { providers: Record<Provider, Connection>; activeId: string | null; demo: boolean };
 const providerName = (id: Provider) => (id === 'claude' ? 'Claude' : 'Codex');
@@ -62,13 +65,16 @@ export function App() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const [runs, setRuns] = useState<Run[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [loadingProject, setLoadingProject] = useState(false);
+  const projectRef = useRef<string | null>(null);
+  const selectionVersion = useRef(0);
+  const snapshotVersion = useRef(0);
   const [selected, setSelected] = useState<Provider>('claude');
   const [tab, setTab] = useState<'activity' | 'files'>('activity');
   const [view, setView] = useState<'office' | 'history' | 'team'>('office');
   const [modal, setModal] = useState<'project' | 'team' | null>(null);
-  const [project, setProject] = useState<{ root: string; head: string; dirty: boolean } | null>(
-    null,
-  );
+  const [project, setProject] = useState<Project | null>(null);
   const [path, setPath] = useState(() => localStorage.getItem('pixel.project') ?? '');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<Mode>('collaborate');
@@ -80,16 +86,33 @@ export function App() {
   const [inspector, setInspector] = useState(true);
   const [zoom, setZoom] = useState(1);
   const busy =
-    runs.some((r) => !terminal(r.status)) || (!!state.run && !terminal(state.run.status));
+    projects.some((p) => p.latestRun && !terminal(p.latestRun.status)) ||
+    (!!state.run && !terminal(state.run.status));
+  const otherActive = projects.find(
+    (p) => p.root !== project?.root && p.latestRun && !terminal(p.latestRun.status),
+  );
   const actualTeam = state.run?.team ?? team;
   const displayedMode = state.run?.mode ?? mode;
   const displayedImplementer =
     displayedMode === 'collaborate' ? (state.run?.implementer ?? implementer) : displayedMode;
   const active = state.run && !terminal(state.run.status);
-  const refreshRuns = () => api<Run[]>('/runs').then(setRuns);
+  const refreshRuns = async () => {
+    const root = projectRef.current;
+    const version = selectionVersion.current;
+    const [list, repositories] = await Promise.all([
+      root ? api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}`) : Promise.resolve([]),
+      api<ProjectSummary[]>('/projects'),
+    ]);
+    if (version !== selectionVersion.current) return;
+    setRuns(list);
+    setProjects(repositories);
+  };
   const selectRun = async (id: string) => {
+    const version = ++snapshotVersion.current;
     try {
       const snap = await api<Snapshot>(`/runs/${id}`);
+      if (version !== snapshotVersion.current || snap.run.projectPath !== projectRef.current)
+        return;
       let next = emptyState();
       next.run = snap.run;
       for (const e of snap.events) next = applyEvent(next, e);
@@ -104,7 +127,43 @@ export function App() {
       setState(next);
       setChanges([]);
     } catch (e) {
-      setError((e as Error).message);
+      if (version === snapshotVersion.current) setError((e as Error).message);
+    }
+  };
+  const switchProject = async (root: string, inspected?: Project) => {
+    const version = ++selectionVersion.current;
+    snapshotVersion.current++;
+    projectRef.current = root;
+    setProject(inspected ?? { root, head: '', dirty: false });
+    localStorage.setItem('pixel.project', root);
+    setPath(root);
+    const empty = emptyState();
+    stateRef.current = empty;
+    setState(empty);
+    setRuns([]);
+    setChanges([]);
+    setPrompt('');
+    setSocketStatus('');
+    setError('');
+    setModal(null);
+    setView('office');
+    setLoadingProject(true);
+    try {
+      const [list, metadata] = await Promise.all([
+        api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}`),
+        inspected
+          ? Promise.resolve(inspected)
+          : api<Project>('/projects/inspect', { path: root }).catch(() => null),
+      ]);
+      if (version !== selectionVersion.current) return;
+      setRuns(list);
+      if (metadata) setProject(metadata);
+      else setError('레포 경로를 확인할 수 없습니다. 보관된 작업 기록은 계속 볼 수 있어요.');
+      if (list[0]) await selectRun(list[0].id);
+    } catch (e) {
+      if (version === selectionVersion.current) setError((e as Error).message);
+    } finally {
+      if (version === selectionVersion.current) setLoadingProject(false);
     }
   };
   useEffect(() => {
@@ -112,13 +171,18 @@ export function App() {
     (async () => {
       try {
         await bootstrap();
-        const h = await api<Health>('/health');
-        const list = await api<Run[]>('/runs');
+        const [h, repositories] = await Promise.all([
+          api<Health>('/health'),
+          api<ProjectSummary[]>('/projects'),
+        ]);
         if (cancelled) return;
         setHealth(h);
-        setRuns(list);
-        setBooted(true);
-        if (h.activeId) await selectRun(h.activeId);
+        setProjects(repositories);
+        const root =
+          localStorage.getItem('pixel.project') ??
+          repositories.find((p) => p.latestRun?.id === h.activeId)?.root;
+        if (root) await switchProject(root);
+        if (!cancelled) setBooted(true);
       } catch (e) {
         if (!cancelled) setAuthError((e as Error).message);
       }
@@ -127,6 +191,28 @@ export function App() {
       cancelled = true;
     };
   }, []);
+  useEffect(() => {
+    if (!booted) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        if (!stopped) await refreshRuns();
+      } catch (e) {
+        if (!stopped && e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+          setAuthError('서버 연결이 만료되었습니다. 새 연결 URL로 다시 열어주세요.');
+          setBooted(false);
+        }
+      } finally {
+        if (!stopped) timer = setTimeout(poll, 2000);
+      }
+    };
+    timer = setTimeout(poll, 2000);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [booted]);
   useEffect(() => {
     if (!state.run) return;
     const id = state.run.id;
@@ -163,13 +249,15 @@ export function App() {
       };
       ws.onmessage = (e) => {
         const event = JSON.parse(e.data) as OfficeEvent;
-        if (event.runId !== id) return;
+        if (stopped || event.runId !== id || stateRef.current.run?.id !== id) return;
         setState((s) => {
+          if (s.run?.id !== id) return s;
           const n = applyEvent(s, event);
           stateRef.current = n;
           return n;
         });
-        if (event.type === 'run.updated') void refreshRuns();
+        if (event.type === 'run.updated' || event.type === 'run.status')
+          void refreshRuns().catch(() => {});
       };
       ws.onclose = () => {
         if (!stopped) {
@@ -183,14 +271,23 @@ export function App() {
     return () => {
       stopped = true;
       clearTimeout(timer);
-      ws.close();
+      ws?.close();
     };
   }, [state.run?.id]);
   useEffect(() => {
+    let cancelled = false;
+    setChanges([]);
     if (tab === 'files' && state.run)
       api<Change[]>(`/runs/${state.run.id}/changes`)
-        .then(setChanges)
-        .catch((e) => setError(e.message));
+        .then((files) => {
+          if (!cancelled) setChanges(files);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e.message);
+        });
+    return () => {
+      cancelled = true;
+    };
   }, [tab, state.run?.id, state.run?.status]);
   useEffect(() => {
     if (!modal) return;
@@ -204,13 +301,11 @@ export function App() {
     setPending(true);
     setError('');
     try {
-      const p = await api<{ root: string; head: string; dirty: boolean }>('/projects/inspect', {
+      const p = await api<Project>('/projects/inspect', {
         path,
       });
-      setProject(p);
-      localStorage.setItem('pixel.project', p.root);
-      setPath(p.root);
-      setModal(null);
+      await switchProject(p.root, p);
+      await refreshRuns();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -222,7 +317,7 @@ export function App() {
       setModal('project');
       return;
     }
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || loadingProject || busy) return;
     setPending(true);
     setError('');
     try {
@@ -258,7 +353,10 @@ export function App() {
   };
   const newTask = () => {
     if (active) return;
-    setState(emptyState());
+    snapshotVersion.current++;
+    const empty = emptyState();
+    stateRef.current = empty;
+    setState(empty);
     setPrompt('');
     setChanges([]);
     setView('office');
@@ -318,7 +416,7 @@ export function App() {
             <Folder size={17} />
           </span>
           <span>
-            {project ? project.root.split('/').pop() : '내 워크스페이스'}
+            {project ? repositoryName(project.root) : '내 워크스페이스'}
             <small>{project ? '프로젝트 연결됨' : '프로젝트를 연결해주세요'}</small>
           </span>
           <ChevronDown size={14} />
@@ -391,7 +489,16 @@ export function App() {
       <div className="workspace">
         <header className="topbar">
           <div className="breadcrumb">
-            <span>내 워크스페이스</span>
+            <button
+              className="repository-switch"
+              aria-label="레포 전환"
+              title={project?.root}
+              onClick={() => setModal('project')}
+            >
+              <Folder size={15} />
+              <span>{project ? repositoryName(project.root) : '레포 선택'}</span>
+              <ChevronDown size={13} />
+            </button>
             <ChevronRight size={14} />
             <strong>
               {view === 'office' ? '오피스' : view === 'history' ? '작업 기록' : '우리 팀'}
@@ -412,6 +519,20 @@ export function App() {
             <span className="user-avatar">나</span>
           </div>
         </header>
+        {otherActive && (
+          <div className="other-repository" role="status">
+            <span>
+              <span className="presence working" /> {repositoryName(otherActive.root)}에서{' '}
+              {statusLabels[otherActive.latestRun!.status]} · 현재 한 작업씩 실행할 수 있어요.
+            </span>
+            <button
+              onClick={() => void switchProject(otherActive.root)}
+              aria-label="진행 중인 레포로 이동"
+            >
+              작업 보러 가기 <ArrowUpRight size={14} />
+            </button>
+          </div>
+        )}
         {error && (
           <div className="error-banner" role="alert">
             <AlertCircle size={17} />
@@ -428,7 +549,9 @@ export function App() {
                 <div>
                   <div className="overline">
                     <span className="tiny-square" />
-                    우리 팀의 작업 공간
+                    {project
+                      ? `${repositoryName(project.root)}의 작업 공간`
+                      : '우리 팀의 작업 공간'}
                   </div>
                   <h1>
                     오늘의 오피스<span className="soft-dot">.</span>
@@ -474,7 +597,8 @@ export function App() {
                     />
                   </div>
                   <div className="scene-label">
-                    <span className="pixel-dot" /> Pixel HQ <span>1F</span>
+                    <span className="pixel-dot" />{' '}
+                    {project ? repositoryName(project.root) : 'Pixel HQ'} <span>1F</span>
                   </div>
                   <div className="zoom-controls">
                     <button
@@ -555,7 +679,7 @@ export function App() {
                 <div className="composer-bottom">
                   <button className="project-chip" onClick={() => setModal('project')}>
                     <Folder size={14} />
-                    {project?.root.split('/').pop() ?? '프로젝트 연결'}
+                    {project ? repositoryName(project.root) : '프로젝트 연결'}
                     <ChevronDown size={12} />
                   </button>
                   <select
@@ -576,7 +700,7 @@ export function App() {
                   ) : (
                     <button
                       className="primary start-button"
-                      disabled={pending || busy || !prompt.trim()}
+                      disabled={pending || loadingProject || busy || !prompt.trim()}
                       onClick={() => void start()}
                     >
                       {pending ? (
@@ -854,7 +978,11 @@ export function App() {
             <div className="page-heading">
               <div>
                 <h1>작업 기록</h1>
-                <p>동료들과 함께 만든 결과를 다시 살펴보세요.</p>
+                <p>
+                  {project
+                    ? `${repositoryName(project.root)}의 최근 작업 ${runs.length}개를 보여드려요.`
+                    : '레포를 선택하면 해당 작업 기록을 볼 수 있어요.'}
+                </p>
               </div>
             </div>
             {runs.length ? (
@@ -874,7 +1002,7 @@ export function App() {
                     <span>
                       <strong>{r.prompt}</strong>
                       <small>
-                        {r.projectPath.split('/').pop()} ·{' '}
+                        {repositoryName(r.projectPath)} ·{' '}
                         {new Date(r.createdAt).toLocaleString('ko-KR')}
                       </small>
                     </span>
@@ -920,32 +1048,39 @@ export function App() {
               </button>
             </div>
             {modal === 'project' ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void connectProject();
-                }}
-              >
-                <p className="muted">컴퓨터에 있는 Git 프로젝트의 경로를 입력해주세요.</p>
-                <label>
-                  프로젝트 경로
-                  <input
-                    autoFocus
-                    value={path}
-                    onChange={(e) => setPath(e.target.value)}
-                    placeholder="/Users/me/projects/my-app"
-                  />
-                </label>
-                <p className="hint">
-                  마지막 커밋을 기준으로 별도 작업 폴더를 만들어요. 기존 파일과 브랜치는 그대로
-                  보관돼요.
-                </p>
-                {error && <p className="inline-error">{error}</p>}
-                <button className="primary full" disabled={pending || !path.trim()}>
-                  {pending ? <LoaderCircle size={16} className="spin" /> : <Link2 size={16} />}
-                  프로젝트 연결
-                </button>
-              </form>
+              <>
+                <RepositoryList
+                  projects={projects}
+                  selected={project?.root}
+                  onSelect={(root) => void switchProject(root)}
+                />
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void connectProject();
+                  }}
+                >
+                  <p className="muted">새 레포를 연결하려면 Git 프로젝트 경로를 입력해주세요.</p>
+                  <label>
+                    프로젝트 경로
+                    <input
+                      autoFocus
+                      value={path}
+                      onChange={(e) => setPath(e.target.value)}
+                      placeholder="/Users/me/projects/my-app"
+                    />
+                  </label>
+                  <p className="hint">
+                    마지막 커밋을 기준으로 별도 작업 폴더를 만들어요. 기존 파일과 브랜치는 그대로
+                    보관돼요.
+                  </p>
+                  {error && <p className="inline-error">{error}</p>}
+                  <button className="primary full" disabled={pending || !path.trim()}>
+                    {pending ? <LoaderCircle size={16} className="spin" /> : <Link2 size={16} />}
+                    프로젝트 연결
+                  </button>
+                </form>
+              </>
             ) : (
               <>
                 <TeamPanel

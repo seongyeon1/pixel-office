@@ -40,6 +40,11 @@ export interface Run {
   summary?: string;
   error?: string;
 }
+export interface ProjectSummary {
+  root: string;
+  runCount: number;
+  latestRun: Run | null;
+}
 export interface OfficeEvent {
   eventId: string;
   sequence: number;

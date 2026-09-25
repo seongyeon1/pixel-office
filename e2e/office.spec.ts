@@ -103,3 +103,72 @@ test('single-agent mode shows the actual implementer instead of a reviewer role'
   await expect(page.getByText('구현과 테스트를 담당해요', { exact: true })).toBeVisible();
   await expect(page.getByText('Claude가 단독으로 작업해요', { exact: true })).toBeVisible();
 });
+
+test('repository switching isolates live activity and history and survives reload', async ({
+  page,
+}) => {
+  const { mkdtemp, realpath, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const dir = await mkdtemp(join(tmpdir(), 'pixel-repo-switch-'));
+  const second = join(dir, 'sample');
+  await mkdir(second);
+  execFileSync('git', ['init'], { cwd: second, stdio: 'pipe' });
+  await writeFile(join(second, 'README.md'), 'second repo');
+  execFileSync('git', ['add', '.'], { cwd: second, stdio: 'pipe' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=Pixel', '-c', 'user.email=pixel@example.test', 'commit', '-m', 'seed'],
+    { cwd: second, stdio: 'pipe' },
+  );
+  const firstRoot = await realpath((await readFile('.pixel/e2e-project.txt', 'utf8')).trim());
+  const secondRoot = await realpath(second);
+  await connect(page);
+  await page.getByLabel('작업 내용').fill('첫 레포의 승인 대기 작업');
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  await page.getByRole('button', { name: 'Codex 선택' }).click();
+  await expect(page.getByRole('heading', { name: '승인 필요' })).toBeVisible();
+  await page.getByRole('button', { name: '레포 전환', exact: true }).click();
+  await page.getByLabel('프로젝트 경로', { exact: true }).fill(second);
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '프로젝트 연결', exact: true })
+    .click();
+  await expect(page.getByRole('heading', { name: '승인 필요' })).toHaveCount(0);
+  await expect(page.locator('.current-task')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '진행 중인 레포로 이동' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
+    'title',
+    secondRoot,
+  );
+  await expect(page.locator('.current-task')).toHaveCount(0);
+  await page.getByRole('button', { name: /^작업 기록/ }).click();
+  await expect(page.getByRole('heading', { name: '첫 작업을 기다리고 있어요' })).toBeVisible();
+  await page.getByRole('button', { name: '진행 중인 레포로 이동' }).click();
+  await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
+    'title',
+    firstRoot,
+  );
+  await page.getByRole('button', { name: 'Codex 선택' }).click();
+  await expect(page.getByRole('heading', { name: '승인 필요' })).toBeVisible();
+  await page.getByRole('button', { name: '승인', exact: true }).click();
+  await expect(page.locator('.run-result.success')).toBeVisible();
+  await page.getByRole('button', { name: '레포 전환', exact: true }).click();
+  await page.getByRole('button', { name: `레포 선택 ${secondRoot}`, exact: true }).click();
+  await page.getByLabel('작업 내용').fill('두 번째 레포의 작업');
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  await page.getByRole('button', { name: 'Codex 선택' }).click();
+  await page.getByRole('button', { name: '승인', exact: true }).click();
+  await expect(page.locator('.run-result.success')).toBeVisible();
+  await page.getByRole('button', { name: /^작업 기록/ }).click();
+  await expect(page.locator('.history-list')).toContainText('두 번째 레포의 작업');
+  await expect(page.locator('.history-list')).not.toContainText('첫 레포의 승인 대기 작업');
+  await page.reload();
+  await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
+    'title',
+    secondRoot,
+  );
+  await expect(page.locator('.current-task')).toContainText('두 번째 레포의 작업');
+});

@@ -72,10 +72,18 @@ export async function createServer({
     demo,
     activeId: orchestrator.activeId ?? null,
   }));
-  app.post('/api/projects/inspect', async (req) =>
-    inspectProject(z.object({ path: z.string() }).parse(req.body).path),
-  );
-  app.get('/api/runs', async () => store.listRuns());
+  app.post('/api/projects/inspect', async (req) => {
+    const project = await inspectProject(z.object({ path: z.string() }).parse(req.body).path);
+    store.rememberProject(project.root);
+    return project;
+  });
+  app.get('/api/projects', async () => store.listProjects());
+  app.get<{ Querystring: { projectPath?: string } }>('/api/runs', async (req) => {
+    const { projectPath } = z
+      .object({ projectPath: z.string().min(1).optional() })
+      .parse(req.query);
+    return store.listRuns(projectPath);
+  });
   app.get<{ Params: { provider: string } }>('/api/models/:provider', async (req) => {
     const provider = z.enum(['codex', 'claude']).parse(req.params.provider);
     return demo ? { models: [] } : listModels(provider);
