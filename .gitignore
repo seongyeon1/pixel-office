@@ -8,3 +8,5 @@ playwright-report/
 .env*
 *.log
 .DS_Store
+.claude/.bc-*.json
+.claude/.bc-explain/
