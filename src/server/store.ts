@@ -12,6 +12,8 @@ import {
   type Interaction,
   type ObservedSession,
   type RetiredSession,
+  type RepoHarness,
+  emptyHarness,
 } from '../shared/contracts.js';
 export function createStore(path: string) {
   const db = new DatabaseSync(path);
@@ -24,6 +26,7 @@ export function createStore(path: string) {
   db.exec(`CREATE TABLE IF NOT EXISTS chat_messages(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS chat_session ON chat_messages(session_id);`);
   db.exec('CREATE TABLE IF NOT EXISTS retired_sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS repo_harness(root TEXT PRIMARY KEY, data TEXT NOT NULL)');
   const getRun = (id: string) => {
     const row = db.prepare('SELECT data FROM runs WHERE id=?').get(id) as
       { data: string } | undefined;
@@ -80,6 +83,23 @@ export function createStore(path: string) {
     getRun,
     listRuns,
     listProjects,
+    getHarness(root: string): RepoHarness {
+      const row = db.prepare('SELECT data FROM repo_harness WHERE root=?').get(root) as
+        { data: string } | undefined;
+      // Unknown or older rows fall back field by field, so a new provider starts isolated.
+      const saved = row ? (JSON.parse(row.data) as Partial<RepoHarness>) : {};
+      const base = emptyHarness();
+      return {
+        claude: { ...base.claude, ...saved.claude },
+        codex: { ...base.codex, ...saved.codex },
+      };
+    },
+    setHarness(root: string, harness: RepoHarness) {
+      db.prepare('INSERT OR REPLACE INTO repo_harness(root,data) VALUES(?,?)').run(
+        root,
+        JSON.stringify(harness),
+      );
+    },
     listRetired(): RetiredSession[] {
       return (
         db.prepare('SELECT data FROM retired_sessions ORDER BY rowid DESC').all() as {

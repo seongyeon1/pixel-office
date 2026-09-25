@@ -139,6 +139,21 @@ const { app } = await createServer({
   demo: true,
   observation,
   chat,
+  harnessCatalog: async () => ({
+    claude: {
+      plugins: [
+        { id: 'superpowers@fixture', name: 'superpowers', description: 'Core workflow skills' },
+      ],
+      skills: [
+        { id: 'bc-ship', name: 'bc-ship', description: 'Ship code with checks' },
+        { id: 'task-observer', name: 'task-observer', description: 'Watch tasks' },
+      ],
+    },
+    codex: {
+      plugins: [{ id: 'linear@fixture', name: 'linear', description: 'fixture' }],
+      skills: [{ id: 'bc-arxiv', name: 'bc-arxiv', description: 'Read papers' }],
+    },
+  }),
   // Stand-ins print their arguments and echo one line, like an interactive CLI would.
   agentCommands: {
     claude: `sh -c 'echo FAKE-CLAUDE "$@"; while IFS= read -r line; do echo "GOT:$line"; done' fake-claude`,

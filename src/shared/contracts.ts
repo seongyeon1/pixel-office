@@ -37,6 +37,8 @@ export interface Run {
   revision: number;
   createdAt: string;
   team: TeamConfig;
+  // The repository's harness when the run was created; later edits do not affect it.
+  harness?: RepoHarness;
   summary?: string;
   error?: string;
 }
@@ -76,6 +78,27 @@ export const reviewSchema = z.object({
 });
 export type Review = z.infer<typeof reviewSchema>;
 export const reviewJsonSchema = () => z.toJSONSchema(reviewSchema, { target: 'draft-7' });
+// Plugins and skills an app run may use in one repository, per provider. Empty means isolated.
+export interface HarnessChoice {
+  plugins: string[];
+  skills: string[];
+  // CLAUDE.md for Claude, AGENTS.md for Codex.
+  projectDoc: boolean;
+}
+export type RepoHarness = Record<Provider, HarnessChoice>;
+export const emptyHarness = (): RepoHarness => ({
+  claude: { plugins: [], skills: [], projectDoc: false },
+  codex: { plugins: [], skills: [], projectDoc: false },
+});
+export interface HarnessItem {
+  id: string;
+  name: string;
+  description: string;
+}
+export type HarnessCatalog = Record<
+  Provider,
+  { plugins: HarnessItem[]; skills: HarnessItem[]; error?: string }
+>;
 export interface PhaseInput {
   runId: string;
   cwd: string;
@@ -83,6 +106,9 @@ export interface PhaseInput {
   role: 'implementer' | 'reviewer';
   profile: AgentProfile;
   signal: AbortSignal;
+  harness?: HarnessChoice;
+  // Per-repository folder for files the adapter generates from the harness.
+  harnessDir?: string;
 }
 export interface PhaseResult {
   outcome: 'completed' | 'failed' | 'cancelled';
