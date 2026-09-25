@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FolderPlus, Map, Search } from 'lucide-react';
-import type { ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
+import type { Department, ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
 import { projectRooms, shownOnFloor, withFamily, type ProjectWorker } from './projects';
 import { compareFamilies, type ModelFamily } from '../models/family';
 import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
 import { FloorMap } from '../floor/FloorMap';
+import { byDepartment, departmentOf, OTHER } from '../floor/departments';
+import { DepartmentPanel } from './DepartmentPanel';
 import { api } from '../api';
 import { markSeen, useSeenReports } from '../floor/seen';
 import { useClock } from '../floor/clock';
@@ -39,6 +41,24 @@ export function ProjectMap({
   const [family, setFamily] = useState('');
   const clock = useClock();
   const [aliases, setAliases] = useState<{ source: string; target: string }[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [department, setDepartment] = useState('');
+  const loadDepartments = () =>
+    api<Department[]>('/departments')
+      .then(setDepartments)
+      .catch(() => {});
+  useEffect(() => {
+    void loadDepartments();
+  }, []);
+  const departmentName = (id: string) =>
+    id === OTHER ? '기타' : (departments.find((d) => d.id === id)?.name ?? '기타');
+  const departmentFor = useMemo(() => {
+    if (!departments.length) return undefined;
+    return (root: string) => {
+      const id = departmentOf(root, departments);
+      return { id, name: departmentName(id) };
+    };
+  }, [departments]);
   const loadAliases = () =>
     api<{ source: string; target: string }[]>('/rooms/aliases')
       .then(setAliases)
@@ -80,13 +100,14 @@ export function ProjectMap({
   const activeFamily = families.some((f) => f.family.key === family) ? family : '';
   const visible = useMemo(
     () =>
-      withFamily(rooms, activeFamily).filter(
+      byDepartment(withFamily(rooms, activeFamily), departments).filter(
         (room) =>
           shownOnFloor(room) &&
+          (!department || departmentOf(room.root, departments) === department) &&
           (!onlyActive || room.activeCount > 0) &&
           room.root.toLocaleLowerCase().includes(needle),
       ),
-    [rooms, activeFamily, onlyActive, needle],
+    [rooms, activeFamily, onlyActive, needle, departments, department],
   );
   const roster = useMemo(() => rooms.flatMap((r) => r.workers.map((w) => w.id)), [rooms]);
   const onDuty = roster.length;
@@ -151,6 +172,22 @@ export function ProjectMap({
           />
           활동 있는 프로젝트만
         </label>
+        {departments.length > 0 && (
+          <select
+            className="project-map-model"
+            aria-label="부서로 방 거르기"
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+          >
+            <option value="">모든 부서</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+            <option value={OTHER}>기타</option>
+          </select>
+        )}
         <select
           className="project-map-model"
           aria-label="모델로 동료 거르기"
@@ -166,6 +203,7 @@ export function ProjectMap({
         </select>
         <span>{visible.length}개 공간</span>
       </div>
+      <DepartmentPanel departments={departments} onChanged={loadDepartments} />
       {observation.warnings.length > 0 && (
         <details className="project-map-warnings">
           <summary>세션 감지 안내</summary>
@@ -177,6 +215,7 @@ export function ProjectMap({
       {visible.length ? (
         <FloorMap
           rooms={visible}
+          departmentOf={departmentFor}
           merging={{ ...merging, roots: rooms.map((r) => r.root) }}
           roster={roster}
           ready={!!observation.scannedAt}

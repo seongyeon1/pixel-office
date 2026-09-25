@@ -288,3 +288,72 @@
   font-size: 14px;
   color: #47613b;
 }
+.department-panel {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: #56614e;
+}
+.department-panel summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.department-panel summary small {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #e8eee0;
+  font-weight: 500;
+}
+.department-panel p {
+  margin: 8px 0;
+  color: #7c8775;
+}
+.department-panel ul {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.department-panel li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.department-panel li code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #8a9282;
+}
+.department-panel li button {
+  padding: 3px;
+  border: 0;
+  background: transparent;
+  color: #9a4d2f;
+}
+.department-panel form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.department-panel input {
+  flex: 1 1 160px;
+  padding: 6px 9px;
+  font-size: 13px;
+}
+.department-panel form button {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #55745e;
+  color: #fff;
+}
+.department-panel form button:disabled {
+  opacity: 0.5;
+}

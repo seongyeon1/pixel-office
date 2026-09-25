@@ -575,3 +575,27 @@
   font-size: 11px;
   color: #9a4d2f;
 }
+/* Department bands: a faint floor tint and a plaque in the gap above the first band. */
+.floor-dept {
+  position: absolute;
+  right: 0;
+  border-radius: 6px;
+  background: #dfe7d51f;
+  box-shadow: inset 0 0 0 2px #c9d6bd66;
+  pointer-events: none;
+}
+.floor-dept:nth-of-type(3n + 2) {
+  background: #e7dcc81f;
+}
+.floor-dept-name {
+  position: absolute;
+  left: 10px;
+  top: 3px;
+  padding: 1px 10px;
+  border-radius: 4px;
+  background: #47613b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}

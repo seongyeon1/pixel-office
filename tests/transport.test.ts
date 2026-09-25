@@ -498,3 +498,63 @@ test('rooms merged by hand move their sessions to the target room and can be spl
   await app.close();
   store.close();
 });
+
+test('departments are named folders, stored by their real path, one per folder', async () => {
+  const { mkdtemp, realpath } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-departments' });
+  const { app } = await createServer({ store, adapters, orchestrator: o, token: 't', port: 4317 });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 't' },
+    })
+  ).headers['set-cookie'] as string;
+  const folder = await mkdtemp(join(tmpdir(), 'pixel-dept-'));
+  const post = (payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/departments',
+      headers: { host, origin, cookie },
+      payload,
+    });
+  const created = await post({ name: 'skt', root: folder });
+  expect(created.statusCode).toBe(200);
+  expect(created.json()).toMatchObject({ name: 'skt', root: await realpath(folder) });
+  expect((await post({ name: 'again', root: folder })).statusCode).toBe(400);
+  expect((await post({ name: 'relative', root: 'project/skt' })).statusCode).toBe(400);
+  expect((await post({ name: '', root: '/x' })).statusCode).toBe(400);
+  const list = (await app.inject({ url: '/api/departments', headers: { host, cookie } })).json();
+  expect(list.map((d: { name: string }) => d.name)).toEqual(['skt']);
+  expect(
+    (
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/departments/${created.json().id}`,
+        headers: { host, origin: 'https://foreign.example', cookie },
+      })
+    ).statusCode,
+  ).toBe(403);
+  await app.inject({
+    method: 'DELETE',
+    url: `/api/departments/${created.json().id}`,
+    headers: { host, origin, cookie },
+  });
+  expect((await app.inject({ url: '/api/departments', headers: { host, cookie } })).json()).toEqual(
+    [],
+  );
+  await app.close();
+  store.close();
+});

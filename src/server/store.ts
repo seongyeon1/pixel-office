@@ -13,6 +13,7 @@ import {
   type ObservedSession,
   type RetiredSession,
   type RepoHarness,
+  type Department,
   emptyHarness,
 } from '../shared/contracts.js';
 export function createStore(path: string) {
@@ -28,6 +29,9 @@ export function createStore(path: string) {
   db.exec('CREATE TABLE IF NOT EXISTS retired_sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS repo_harness(root TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS room_aliases(source TEXT PRIMARY KEY, target TEXT NOT NULL)');
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS departments(id TEXT PRIMARY KEY, name TEXT NOT NULL, root TEXT NOT NULL UNIQUE)',
+  );
   const aliases = () =>
     new Map(
       (
@@ -99,6 +103,23 @@ export function createStore(path: string) {
     getRun,
     listRuns,
     listProjects,
+    listDepartments(): Department[] {
+      return db
+        .prepare('SELECT id, name, root FROM departments ORDER BY name')
+        .all() as unknown as Department[];
+    },
+    addDepartment(name: string, root: string): Department {
+      const department = { id: randomUUID(), name, root };
+      db.prepare('INSERT INTO departments(id,name,root) VALUES(?,?,?)').run(
+        department.id,
+        name,
+        root,
+      );
+      return department;
+    },
+    removeDepartment(id: string) {
+      db.prepare('DELETE FROM departments WHERE id=?').run(id);
+    },
     roomAliases: aliases,
     resolveRoom,
     mergeRoom(source: string, target: string) {
