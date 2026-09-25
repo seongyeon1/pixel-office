@@ -226,3 +226,176 @@ test('prioritizes an open Claude session over newer closed logs when the discove
   expect(observer.list().sessions.map((s) => s.sessionId)).toEqual(['live-session']);
   observer.close();
 });
+
+test('reports the worktree and branch of each session and keeps deleted worktrees in their repository', async () => {
+  const f = await fixture();
+  const { realpath, rm } = await import('node:fs/promises');
+  const repo = await realpath(f.repo);
+  const wt = join(f.repo, '.claude', 'worktrees', 'resume');
+  execFileSync('git', ['worktree', 'add', '-b', 'feat/resume', wt], { cwd: f.repo, stdio: 'pipe' });
+  const write = (name: string, cwd: string) =>
+    writeFile(
+      join(f.codexHome, 'sessions', `${name}.jsonl`),
+      line({ timestamp, type: 'session_meta', payload: { id: name, cwd } }) +
+        line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } }),
+    );
+  await write('main-session', f.repo);
+  await write('wt-session', join(wt, 'src'));
+  let now = Date.now();
+  const observer = createObservation({ ...f, now: () => now });
+  await observer.scan();
+  const by = (id: string) => observer.list().sessions.find((s) => s.sessionId === id)!;
+  expect(by('main-session')).toMatchObject({
+    projectPath: repo,
+    worktree: { path: repo, main: true },
+  });
+  expect(by('wt-session')).toMatchObject({
+    projectPath: repo,
+    worktree: { path: await realpath(wt), branch: 'feat/resume', main: false },
+  });
+  expect(by('main-session').worktree!.branch).toMatch(/^(main|master)$/);
+  // A worktree removed after its session ended must not become a separate room.
+  execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: f.repo, stdio: 'pipe' });
+  await rm(wt, { recursive: true, force: true });
+  now += 120000;
+  await observer.scan();
+  expect(by('wt-session').projectPath).toBe(repo);
+  observer.close();
+  // A fresh observer (e.g. after a restart) has no memory, but still finds the repository above it.
+  const restarted = createObservation(f);
+  await restarted.scan();
+  expect(restarted.list().sessions.find((s) => s.sessionId === 'wt-session')!.projectPath).toBe(
+    repo,
+  );
+  restarted.close();
+});
+
+test('links Claude and Codex subagents to the session that spawned them', async () => {
+  const f = await fixture();
+  const parentDir = join(f.claudeHome, 'projects', 'repo');
+  await mkdir(join(parentDir, 'parent-1', 'subagents'), { recursive: true });
+  const claude = (sessionId: string, extra: object = {}) =>
+    line({
+      timestamp,
+      type: 'user',
+      sessionId,
+      cwd: f.repo,
+      message: { content: 'work' },
+      ...extra,
+    });
+  await writeFile(join(parentDir, 'parent-1.jsonl'), claude('parent-1'));
+  await writeFile(
+    join(parentDir, 'parent-1', 'subagents', 'agent-abc.jsonl'),
+    claude('parent-1', { agentId: 'abc', isSidechain: true }),
+  );
+  const codex = (id: string, parent?: string) =>
+    line({
+      timestamp,
+      type: 'session_meta',
+      payload: { id, cwd: f.repo, ...(parent ? { parent_thread_id: parent } : {}) },
+    }) + line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } });
+  await writeFile(join(f.codexHome, 'sessions', 'rollout-lead.jsonl'), codex('lead'));
+  await writeFile(join(f.codexHome, 'sessions', 'rollout-kant.jsonl'), codex('kant', 'lead'));
+  const observer = createObservation(f);
+  await observer.scan();
+  const sessions = observer.list().sessions;
+  const claudeParent = sessions.find((s) => s.provider === 'claude' && !s.parentId)!;
+  const claudeChild = sessions.find((s) => s.provider === 'claude' && s.parentId)!;
+  expect(claudeParent.sessionId).toBe('parent-1');
+  expect(claudeChild.parentId).toBe(claudeParent.id);
+  const lead = sessions.find((s) => s.sessionId === 'lead')!;
+  expect(lead.parentId).toBeUndefined();
+  expect(sessions.find((s) => s.sessionId === 'kant')!.parentId).toBe(lead.id);
+  observer.close();
+});
+
+test('raises attention for pending questions, plan approval and long silent tools', async () => {
+  const f = await fixture();
+  let now = Date.now();
+  const at = (offset = 0) => new Date(now + offset).toISOString();
+  const dir = join(f.claudeHome, 'projects');
+  const tool = (sessionId: string, name: string, id: string) =>
+    line({
+      timestamp: at(),
+      type: 'assistant',
+      sessionId,
+      cwd: f.repo,
+      message: { content: [{ type: 'tool_use', name, id, input: {} }] },
+    });
+  const result = (sessionId: string, id: string) =>
+    line({
+      timestamp: at(),
+      type: 'user',
+      sessionId,
+      cwd: f.repo,
+      message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+    });
+  await writeFile(join(dir, 'ask.jsonl'), tool('ask', 'AskUserQuestion', 'q1'));
+  await writeFile(join(dir, 'plan.jsonl'), tool('plan', 'ExitPlanMode', 'p1'));
+  await writeFile(join(dir, 'bash.jsonl'), tool('bash', 'Bash', 'b1'));
+  await writeFile(join(dir, 'agent.jsonl'), tool('agent', 'Agent', 'a1'));
+  await writeFile(
+    join(f.codexHome, 'sessions', 'rollout-cq.jsonl'),
+    line({ timestamp: at(), type: 'session_meta', payload: { id: 'cq', cwd: f.repo } }) +
+      line({
+        timestamp: at(),
+        type: 'response_item',
+        payload: { type: 'function_call', name: 'request_user_input_async', call_id: 'c1' },
+      }),
+  );
+  const observer = createObservation({ ...f, now: () => now });
+  await observer.scan();
+  const by = (id: string) => observer.list().sessions.find((s) => s.sessionId === id)!;
+  expect(by('ask').attention).toMatchObject({ kind: 'question', certain: true });
+  expect(by('plan').attention).toMatchObject({ kind: 'approval', certain: true });
+  expect(by('cq').attention).toMatchObject({ kind: 'question', certain: true });
+  expect(by('bash').attention).toBeNull();
+  now += 61000;
+  await observer.scan();
+  expect(by('bash').attention).toMatchObject({ kind: 'approval', certain: false });
+  // Subagent runs are long by design and are never guessed to be permission prompts.
+  expect(by('agent').attention).toBeNull();
+  // Waiting on a person is not a stale session.
+  now += 600000;
+  await observer.scan();
+  expect(by('ask').status).toBe('active');
+  await appendFile(join(dir, 'ask.jsonl'), result('ask', 'q1'));
+  await appendFile(join(dir, 'bash.jsonl'), result('bash', 'b1'));
+  await observer.scan();
+  expect(by('ask').attention).toBeNull();
+  expect(by('bash').attention).toBeNull();
+  observer.close();
+});
+
+test('a guess never revives an abandoned turn and a closed terminal cannot keep asking', async () => {
+  const f = await fixture();
+  let now = Date.now();
+  const dir = join(f.claudeHome, 'projects');
+  const tool = (sessionId: string, name: string) =>
+    line({
+      timestamp: new Date(now).toISOString(),
+      type: 'assistant',
+      sessionId,
+      cwd: f.repo,
+      message: { content: [{ type: 'tool_use', name, id: `${sessionId}-t`, input: {} }] },
+    });
+  await writeFile(join(dir, 'left.jsonl'), tool('left', 'Bash'));
+  await writeFile(join(dir, 'closed.jsonl'), tool('closed', 'AskUserQuestion'));
+  await mkdir(join(f.claudeHome, 'sessions'));
+  // A registry entry whose process no longer exists.
+  await writeFile(
+    join(f.claudeHome, 'sessions', '999999.json'),
+    JSON.stringify({ pid: 999999, sessionId: 'closed' }),
+  );
+  const observer = createObservation({ ...f, now: () => now });
+  await observer.scan();
+  const by = (id: string) => observer.list().sessions.find((s) => s.sessionId === id)!;
+  expect(by('closed')).toMatchObject({ processAlive: false, attention: null });
+  now += 5 * 60000;
+  await observer.scan();
+  expect(by('left')).toMatchObject({ attention: { certain: false }, status: 'stale' });
+  now += 30 * 60000;
+  await observer.scan();
+  expect(by('left').attention).toBeNull();
+  observer.close();
+});
