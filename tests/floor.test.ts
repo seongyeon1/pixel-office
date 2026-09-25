@@ -3,6 +3,7 @@ import {
   floorLayout,
   LOUNGE,
   MEETING,
+  RECORDS,
   type FloorInput,
   type Loc,
 } from '../src/client/floor/layout.js';
@@ -162,6 +163,7 @@ test('a repository office puts a wide room first with small facilities beside it
     minCell: 160,
     roomSpan: 2,
     facilityRows: 1,
+    records: false,
   };
   const room = {
     root: '/r',
@@ -182,4 +184,18 @@ test('a repository office puts a wide room first with small facilities beside it
   const narrow = floorLayout([room], 340, office);
   expect(narrow.cells.every((c) => c.w === narrow.cells[0].w)).toBe(true);
   expect(narrow.seats.size).toBe(11);
+});
+test('the whole map has a records room where running automated work sits, never at a desk', () => {
+  const L = floorLayout([{ root: '/r', lanes: [lane('/r', ['p'])] }], 1400);
+  expect(L.cells.slice(0, 3).map((c) => c.key)).toEqual([MEETING, LOUNGE, RECORDS]);
+  const workers = [
+    worker('p', '/r'),
+    worker('auto-1', '/r', { session: { automated: true } as ProjectWorker['session'] }),
+    worker('auto-2', '/r', { session: { automated: true } as ProjectWorker['session'] }),
+  ];
+  const p = placements(workers, L, 0);
+  expect(p.get('auto-1')).toMatchObject({ kind: 'records', cell: RECORDS });
+  expect(p.get('auto-2')).toMatchObject({ kind: 'records', cell: RECORDS });
+  expect(p.get('auto-1')!.x).not.toBe(p.get('auto-2')!.x);
+  expect(p.get('p')!.kind).not.toBe('records');
 });

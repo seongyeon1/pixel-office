@@ -72,6 +72,39 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
       }),
     );
   };
+  // A hook-started session: one still writing, one finished with its work log.
+  const automated = async (id: string, cwd: string, finished: boolean) => {
+    const path = join(dirname(fixtures.claude), `${id}.jsonl`);
+    files.push(path);
+    const timestamp = new Date().toISOString();
+    await writeFile(
+      path,
+      line({
+        timestamp,
+        type: 'user',
+        sessionId: id,
+        cwd,
+        entrypoint: 'sdk-cli',
+        message: {
+          content: '다음 에이전트 세션 transcript을 한국어 업무일지 형식으로 요약해주세요.',
+        },
+      }) +
+        (finished
+          ? line({
+              timestamp,
+              type: 'assistant',
+              sessionId: id,
+              cwd,
+              entrypoint: 'sdk-cli',
+              message: {
+                model: 'claude-opus-5-5',
+                stop_reason: 'end_turn',
+                content: [{ type: 'text', text: '### 맵을 층 평면도로 개편\n- 방·복도·입구 추가' }],
+              },
+            })
+          : ''),
+    );
+  };
   const worker = (root: string, id: string) =>
     page.getByRole('button', { name: `전체 맵 동료 ${root} ${id}`, exact: true });
   try {
@@ -113,6 +146,8 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
     await codex('campus-old', roots[2], true, new Date(Date.now() - 45 * 60000));
     await claude('campus-ask', roots[2], 'AskUserQuestion');
     await claude('campus-leave', roots[2], 'Read');
+    await automated('campus-journal-live', roots[0], false);
+    await automated('campus-journal-done', roots[0], true);
     await page.getByRole('button', { name: '전체 맵', exact: true }).click();
     await page.getByLabel('전체 맵 프로젝트 검색').fill(parent.split('/').at(-1)!);
     const a = page.getByRole('article', { name: `프로젝트 공간 ${roots[0]}`, exact: true });
@@ -129,6 +164,10 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
     await expect(notes).toContainText('응답 필요 1', { timeout: 20000 });
     await expect(worker(roots[2], 'campus-ask')).toHaveAttribute('data-mark', 'question');
     await expect(worker(roots[2], 'campus-old')).toHaveCount(0);
+    // Hook-started work never takes a desk or raises a report; running work sits in the records room.
+    await expect(page.getByLabel('기록실', { exact: true })).toContainText('작성 중 1');
+    await expect(worker(roots[0], 'campus-journal-live')).toHaveAttribute('data-place', 'records');
+    await expect(worker(roots[0], 'campus-journal-done')).toHaveCount(0);
     // Model families: a badge per coworker and a filter that keeps only matching rooms.
     await expect(worker(roots[0], 'campus-a4').locator('.floor-family')).toHaveText('Astra');
     await expect(worker(roots[0], 'campus-a0').locator('.floor-family')).toHaveText('Sol');
@@ -181,6 +220,18 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
     });
     await expect(worker(roots[2], 'campus-leave')).toHaveCount(0);
     await expect(page.getByText('최근 퇴근 2명', { exact: true })).toBeVisible();
+    // Their results are collected on the records page instead.
+    await page.getByRole('button', { name: /^자동 기록/ }).click();
+    await expect(page.getByRole('heading', { name: '자동 기록', exact: true })).toBeVisible();
+    await page.getByLabel('자동 기록 레포 검색').fill(parent.split('/').at(-1)!);
+    const done = page.getByRole('button', {
+      name: `자동 기록 업무일지 shared campus-journal-done`,
+      exact: true,
+    });
+    await done.click();
+    await expect(page.locator('.record.open pre').first()).toContainText('맵을 층 평면도로 개편');
+    await page.getByRole('button', { name: '전체 맵', exact: true }).click();
+    await page.getByLabel('전체 맵 프로젝트 검색').fill(parent.split('/').at(-1)!);
     // Opening a coworker reads the report.
     await worker(roots[0], 'campus-a4').click();
     await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();

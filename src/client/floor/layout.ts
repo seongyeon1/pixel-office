@@ -9,7 +9,7 @@ export interface Loc extends Point {
   cell: string | null;
   band: number | null;
 }
-export type CellKind = 'room' | 'meeting' | 'lounge';
+export type CellKind = 'room' | 'meeting' | 'lounge' | 'records';
 export interface Cell {
   key: string;
   kind: CellKind;
@@ -45,9 +45,11 @@ export interface FloorLayout {
   hidden: Map<string, number>;
   meeting: Loc[];
   lounge: Loc[];
+  records: Loc[];
 }
 export const MEETING = 'facility:meeting';
 export const LOUNGE = 'facility:lounge';
+export const RECORDS = 'facility:records';
 const SPINE_W = 76;
 const GAP = 14;
 const ROOM_MIN_W = 280;
@@ -73,6 +75,8 @@ export interface FloorOptions {
   roomSpan?: number;
   // Height of the meeting room and lounge, in desk rows.
   facilityRows?: number;
+  // The records room where automated work (work logs, summaries) sits while it runs.
+  records?: boolean;
 }
 export function floorLayout(
   rooms: FloorInput[],
@@ -83,6 +87,7 @@ export function floorLayout(
     minCell = ROOM_MIN_W,
     roomSpan = 1,
     facilityRows = 2,
+    records = true,
   }: FloorOptions = {},
 ): FloorLayout {
   const usable = Math.max(minCell, width - SPINE_W);
@@ -93,6 +98,9 @@ export function floorLayout(
   const facilities = [
     { key: MEETING, kind: 'meeting' as const, rows: facilityRows, span: 1, perRow: 0 },
     { key: LOUNGE, kind: 'lounge' as const, rows: facilityRows, span: 1, perRow: 0 },
+    ...(records
+      ? [{ key: RECORDS, kind: 'records' as const, rows: facilityRows, span: 1, perRow: 0 }]
+      : []),
   ];
   const projectCells = rooms.map((room) => {
     const span = Math.min(cols, roomSpan);
@@ -226,5 +234,7 @@ export function floorLayout(
     // Around the meeting table, and along the lounge counter and sofa.
     meeting: spots(MEETING, [0.3, 0.5, 0.7], [0.36, 0.86]),
     lounge: spots(LOUNGE, [0.22, 0.42, 0.62, 0.82], [0.5, 0.9]),
+    // Writing desks along the archive shelves.
+    records: records ? spots(RECORDS, [0.2, 0.4, 0.6, 0.8], [0.55, 0.95]) : [],
   };
 }

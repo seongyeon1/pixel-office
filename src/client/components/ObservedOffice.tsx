@@ -7,6 +7,7 @@ import {
   MessageCircle,
   TerminalSquare,
   LogOut,
+  ScrollText,
 } from 'lucide-react';
 import {
   activityLabels,
@@ -51,7 +52,11 @@ export function ObservedOffice({
   onRetire,
   retired,
   onRestore,
+  automatedCount = 0,
+  onRecords,
 }: {
+  automatedCount?: number;
+  onRecords?: () => void;
   sessions: ObservedSession[];
   root: string;
   selectedProvider: Provider;
@@ -258,6 +263,12 @@ export function ObservedOffice({
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
+        {automatedCount > 0 && onRecords && (
+          <button className="automated-note" onClick={onRecords}>
+            <ScrollText size={14} />이 레포의 자동 기록(업무일지·세션 요약 등) {automatedCount}건은
+            자동 기록에서 볼 수 있어요
+          </button>
+        )}
         <section className="observed-sessions" aria-label="감지된 세션">
           {groups.map(({ family, items }) => (
             <Fragment key={family.key}>

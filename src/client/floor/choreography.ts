@@ -1,6 +1,6 @@
 import type { ProjectWorker } from '../overview/projects';
 import type { FloorLayout, Loc } from './layout';
-export type PlaceKind = 'desk' | 'meeting' | 'lounge' | 'visit';
+export type PlaceKind = 'desk' | 'meeting' | 'lounge' | 'visit' | 'records';
 export type Placement = Loc & { kind: PlaceKind };
 export const MEETING_CYCLE = 90000;
 export const MEETING_LENGTH = 30000;
@@ -42,7 +42,14 @@ export function placements(
         });
     }
   let lounge = 0;
+  let records = 0;
   for (const w of [...workers].sort((a, b) => a.id.localeCompare(b.id))) {
+    // Automated work has no desk: it writes in the records room while it runs.
+    if (w.session?.automated) {
+      if (L.records.length)
+        out.set(w.id, { ...L.records[records++ % L.records.length], kind: 'records' });
+      continue;
+    }
     const desk = seat(w.id);
     if (!desk || meeting.has(w.id)) continue;
     const host = w.visiting ? seat(w.visiting) : undefined;

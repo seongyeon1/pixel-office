@@ -12,5 +12,11 @@ export function onDuty(s: ObservedSession, now: number): boolean {
 }
 // A finished turn is a report until the person opens that coworker.
 export function hasReport(s: ObservedSession, seen: Seen): boolean {
-  return !s.parentId && s.status === 'idle' && !!s.updatedAt && s.updatedAt > (seen[s.id] ?? '');
+  return (
+    !s.parentId &&
+    !s.automated &&
+    s.status === 'idle' &&
+    !!s.updatedAt &&
+    s.updatedAt > (seen[s.id] ?? '')
+  );
 }

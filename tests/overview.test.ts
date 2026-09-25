@@ -198,3 +198,20 @@ test('coworkers carry their model family, and the family filter keeps only match
   expect(astra[0]).toMatchObject({ activeCount: 1, waitingCount: 0 });
   expect(withFamily(rooms, '')).toBe(rooms);
 });
+
+test('automated sessions stay out of rooms, reports and counts; only running ones are listed apart', () => {
+  const rows: ObservedSession[] = [
+    { ...session('person', '/r') },
+    {
+      ...session('journal', '/r', 'idle'),
+      automated: true,
+      updatedAt: new Date(50000).toISOString(),
+    },
+    { ...session('summary', '/r', 'active'), automated: true },
+  ];
+  const [room] = projectRooms([], rows, at);
+  expect(room.workers.map((w) => w.id)).toEqual(['observed:person']);
+  expect(room.offDuty).toEqual([]);
+  expect(room.automations.map((w) => w.id)).toEqual(['observed:summary']);
+  expect(room).toMatchObject({ observedCount: 1, reportCount: 0, activeCount: 1 });
+});

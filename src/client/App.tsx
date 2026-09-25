@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Code2,
+  ScrollText,
   Puzzle,
   Folder,
   History,
@@ -52,6 +53,7 @@ import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
 import { compareFamilies, modelFamily, type ModelFamily } from './models/family';
 import { HarnessPanel } from './components/HarnessPanel';
+import { RecordsPage } from './records/RecordsPage';
 import type { ProjectWorker } from './overview/projects';
 import { ResumeDock } from './components/SessionResume';
 import { ObservedOffice } from './components/ObservedOffice';
@@ -89,7 +91,7 @@ export function App() {
   const snapshotVersion = useRef(0);
   const [selected, setSelected] = useState<Provider>('claude');
   const [tab, setTab] = useState<'activity' | 'files'>('activity');
-  const [view, setView] = useState<'overview' | 'office' | 'history' | 'team'>(() =>
+  const [view, setView] = useState<'overview' | 'office' | 'history' | 'team' | 'records'>(() =>
     localStorage.getItem('pixel.overview') === 'true' ? 'overview' : 'office',
   );
   const [targetSessionId, setTargetSessionId] = useState<string>();
@@ -115,7 +117,14 @@ export function App() {
   const otherActive = projects.find(
     (p) => p.root !== project?.root && p.latestRun && !terminal(p.latestRun.status),
   );
-  const observedSessions = observation.sessions.filter((s) => s.projectPath === project?.root);
+  // Hook- and script-started sessions (work logs, summaries) live in 자동 기록, not in the office.
+  const observedSessions = observation.sessions.filter(
+    (s) => s.projectPath === project?.root && !s.automated,
+  );
+  const automatedHere = observation.sessions.filter(
+    (s) => s.projectPath === project?.root && s.automated,
+  ).length;
+  const automatedCount = observation.sessions.filter((s) => s.automated).length;
   // Model families behind each provider: observed sessions of this repository, or the team setting.
   const familiesOf = (id: Provider) => {
     const list = observing
@@ -512,6 +521,10 @@ export function App() {
             <History size={18} />
             작업 기록<span className="count">{runs.length}</span>
           </button>
+          <button className={view === 'records' ? 'active' : ''} onClick={() => setView('records')}>
+            <ScrollText size={18} />
+            자동 기록<span className="count">{automatedCount}</span>
+          </button>
           <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>
             <Users size={18} />
             우리 팀
@@ -604,14 +617,16 @@ export function App() {
                   ? '오피스'
                   : view === 'history'
                     ? '작업 기록'
-                    : '우리 팀'}
+                    : view === 'records'
+                      ? '자동 기록'
+                      : '우리 팀'}
             </strong>
           </div>
           <div className="topbar-right">
             <button
               className="open-workspace"
               aria-expanded={workspaceOpen}
-              disabled={!project || view === 'overview'}
+              disabled={!project || view === 'overview' || view === 'records'}
               title={
                 view === 'overview'
                   ? '프로젝트 오피스에서 코드와 터미널을 열 수 있어요.'
@@ -627,7 +642,7 @@ export function App() {
             </button>
             <button
               className="open-workspace"
-              disabled={!project || view === 'overview'}
+              disabled={!project || view === 'overview' || view === 'records'}
               title="이 레포의 앱 작업에 쓸 플러그인과 스킬"
               onClick={() => setHarnessOpen(true)}
             >
@@ -727,10 +742,14 @@ export function App() {
             }}
             onOpen={(root, worker) => void switchProject(root, undefined, { worker })}
           />
+        ) : view === 'records' ? (
+          <RecordsPage sessions={observation.sessions} />
         ) : view === 'office' && observing ? (
           <ObservedOffice
             key={project?.root ?? 'none'}
             sessions={observedSessions}
+            automatedCount={automatedHere}
+            onRecords={() => setView('records')}
             initialSessionId={targetSessionId}
             root={project?.root ?? ''}
             selectedProvider={selected}
