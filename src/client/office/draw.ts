@@ -23,7 +23,9 @@ export const positions: Record<Provider, { x: number; y: number }> = {
 };
 export function targetFor(id: Provider, activity: Activity) {
   if (activity === 'reading') return { x: id === 'claude' ? 165 : 222, y: 155 };
-  if (activity === 'reviewing') return { x: id === 'claude' ? 718 : 804, y: 416 };
+  if (activity === 'idle') return { x: id === 'claude' ? 145 : 227, y: 430 };
+  if (activity === 'reviewing' || activity === 'responding')
+    return { x: id === 'claude' ? 718 : 804, y: 416 };
   if (activity === 'executing') return { x: id === 'claude' ? 348 : 580, y: 385 };
   return positions[id];
 }

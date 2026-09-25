@@ -170,3 +170,143 @@ test('chat routes require authentication, validate input, and cancel only their 
     store.close();
   }
 });
+
+test('workspace routes and terminal websocket reject foreign origins and unknown roots', async () => {
+  const { mkdtemp, realpath, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createServer: createNetServer } = await import('node:net');
+  const { WebSocket } = await import('ws');
+  const { once } = await import('node:events');
+  const reserve = createNetServer();
+  reserve.listen(0, '127.0.0.1');
+  await once(reserve, 'listening');
+  const port = (reserve.address() as import('node:net').AddressInfo).port;
+  await new Promise<void>((r) => reserve.close(() => r()));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'pixel-workspace-api-')));
+  await writeFile(join(root, 'README.md'), 'workspace fixture');
+  const store = createStore(':memory:');
+  store.rememberProject(root);
+  const adapter: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: '' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: adapter, claude: adapter };
+  const { app, origin } = await createServer({
+    store,
+    adapters,
+    orchestrator: createOrchestrator({ store, adapters, dataDir: root }),
+    token: 'test',
+    terminalShell: '/bin/sh',
+    port,
+  });
+  const headers = { host: `127.0.0.1:${port}`, origin };
+  try {
+    await app.listen({ port, host: '127.0.0.1' });
+    const path = `/api/workspace/file?root=${encodeURIComponent(root)}&path=README.md`;
+    expect((await app.inject({ url: path, headers })).statusCode).toBe(401);
+    const auth = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers,
+      payload: { token: 'test' },
+    });
+    const cookie = (auth.headers['set-cookie'] as string).split(';')[0];
+    const trusted = { ...headers, cookie };
+    expect((await app.inject({ url: path, headers: trusted })).json().text).toBe(
+      'workspace fixture',
+    );
+    expect(
+      (await app.inject({ url: path, headers: { ...trusted, origin: 'https://foreign.example' } }))
+        .statusCode,
+    ).toBe(403);
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/terminals', headers, payload: { root } }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/terminals',
+          headers: trusted,
+          payload: { root: '/' },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/terminals',
+          headers: { ...trusted, origin: 'https://foreign.example' },
+          payload: { root },
+        })
+      ).statusCode,
+    ).toBe(403);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/terminals',
+      headers: trusted,
+      payload: { root },
+    });
+    expect(created.statusCode).toBe(200);
+    const id = created.json().id;
+    for (const wsHeaders of [
+      { origin },
+      { origin: 'https://foreign.example', cookie },
+      { cookie },
+    ]) {
+      const denied = await new Promise<number>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/api/terminal?id=${id}`, {
+          headers: wsHeaders,
+        });
+        ws.on('error', () => {});
+        ws.on('unexpected-response', (_req, response) => {
+          const code = response.statusCode!;
+          response.destroy();
+          ws.terminate();
+          resolve(code);
+        });
+        ws.on('open', () => {
+          ws.terminate();
+          reject(new Error('Unauthorized websocket accepted'));
+        });
+      });
+      expect(denied).toBe(403);
+    }
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/terminal?id=${id}`, {
+      headers: { origin, cookie },
+    });
+    const [raw] = await once(ws, 'message');
+    expect(JSON.parse(raw.toString()).type).toBe('ready');
+    ws.send(JSON.stringify({ type: 'resize', cols: 0, rows: -1 }));
+    const error = await new Promise<any>((r) =>
+      ws.on('message', (raw) => {
+        const m = JSON.parse(raw.toString());
+        if (m.type === 'error') r(m);
+      }),
+    );
+    expect(error.message).toContain('입력을 처리');
+    const closed = once(ws, 'close');
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/terminals/${id}/close`,
+          headers: trusted,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200);
+    await closed;
+    expect((await app.inject({ url: `/api/terminals/${id}`, headers: trusted })).statusCode).toBe(
+      404,
+    );
+  } finally {
+    await app.close();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

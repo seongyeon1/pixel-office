@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import { createWorkspaceReader } from './workspace.js';
+import { createTerminals } from './terminals.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -23,6 +25,7 @@ export async function createServer({
   token,
   port,
   demo = false,
+  terminalShell,
   observation,
   chat,
 }: {
@@ -32,10 +35,21 @@ export async function createServer({
   token: string;
   port: number;
   demo?: boolean;
+  terminalShell?: string;
   observation?: Observation;
   chat?: ChatService;
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
+  const terminals = createTerminals({ shell: terminalShell });
+  const workspace = createWorkspaceReader(() => [
+    ...store.listProjects().map((p) => p.root),
+    ...(observation?.list().sessions ?? []).map((s) => s.projectPath),
+    ...store.listRuns().map((r) => r.worktreePath),
+  ]);
+  const workspaceQuery = z.object({
+    root: z.string().min(1),
+    path: z.string().max(4096).default(''),
+  });
   const session = randomBytes(32).toString('hex');
   const origin = `http://127.0.0.1:${port}`;
   const same = (a: string, b: string) =>
@@ -73,6 +87,34 @@ export async function createServer({
     reply.header('set-cookie', `pixel_session=${session}; Path=/; HttpOnly; SameSite=Strict`);
     return { ok: true };
   });
+  app.get('/api/workspace/tree', async (req) => {
+    const { root, path } = workspaceQuery.parse(req.query);
+    return workspace.list(root, path);
+  });
+  app.get('/api/workspace/file', async (req) => {
+    const { root, path } = workspaceQuery.parse(req.query);
+    return workspace.read(root, path);
+  });
+  app.post('/api/terminals', async (req) => {
+    const { root, cols, rows } = z
+      .object({
+        root: z.string().min(1),
+        cols: z.number().int().min(20).max(300).default(80),
+        rows: z.number().int().min(5).max(100).default(24),
+      })
+      .parse(req.body);
+    return terminals.create(await workspace.authorize(root), cols, rows);
+  });
+  app.get<{ Params: { id: string } }>('/api/terminals/:id', async (req, reply) => {
+    return (
+      terminals.get(req.params.id) ??
+      reply.code(404).send({ error: '종료된 터미널입니다. 새 터미널을 열어 주세요.' })
+    );
+  });
+  app.post<{ Params: { id: string } }>('/api/terminals/:id/close', async (req) => {
+    await terminals.end(req.params.id);
+    return { ok: true };
+  });
   app.get('/api/health', async () => ({
     providers: { codex: await adapters.codex.probe(), claude: await adapters.claude.probe() },
     demo,
@@ -102,13 +144,11 @@ export async function createServer({
     if (!observation?.get(req.params.id))
       return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
     try {
-      return reply
-        .code(202)
-        .send({
-          mode: 'records',
-          directAvailable: false,
-          messages: chat.ask(req.params.id, question),
-        });
+      return reply.code(202).send({
+        mode: 'records',
+        directAvailable: false,
+        messages: chat.ask(req.params.id, question),
+      });
     } catch (e) {
       return reply.code(409).send({ error: (e as Error).message });
     }
@@ -190,12 +230,22 @@ export async function createServer({
     }
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+  const terminalSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   app.server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', origin);
-    if (url.pathname !== '/api/events') return;
+    if (url.pathname !== '/api/events' && url.pathname !== '/api/terminal') return;
     if (!trusted(req) || req.headers.origin !== origin || !authed(req)) {
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
+      return;
+    }
+    if (url.pathname === '/api/terminal') {
+      const id = url.searchParams.get('id') ?? '';
+      if (!terminals.get(id)) {
+        socket.destroy();
+        return;
+      }
+      terminalSockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(id, ws));
       return;
     }
     const runId = url.searchParams.get('runId') ?? '';
@@ -231,6 +281,9 @@ export async function createServer({
     });
   });
   app.addHook('onClose', async () => {
+    await terminals.close();
+    for (const client of terminalSockets.clients) client.terminate();
+    terminalSockets.close();
     await chat?.close();
     for (const client of wss.clients) client.terminate();
     wss.close();

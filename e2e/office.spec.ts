@@ -218,6 +218,12 @@ test('existing sessions are discovered by repo and show live tools without execu
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex external-codex', exact: true }),
     ).toBeVisible();
+    const movingAgent = page.getByRole('button', {
+      name: '캐릭터 Codex external-codex',
+      exact: true,
+    });
+    await expect(movingAgent).toHaveAttribute('data-zone', 'test');
+    const beforeMove = await movingAgent.getAttribute('style');
     await page.getByRole('tab', { name: '작업 내역', exact: true }).click();
     await expect(page.locator('.observed-inspector')).toContainText('npm test');
     await expect(page.locator('.observed-inspector')).toContainText('관측 전용');
@@ -233,6 +239,14 @@ test('existing sessions are discovered by repo and show live tools without execu
     await expect(page.locator('.observed-inspector')).toContainText('외부 세션 작업 완료', {
       timeout: 10000,
     });
+    await expect(movingAgent).toHaveAttribute('data-zone', 'lounge');
+    await expect(movingAgent).toHaveAttribute('data-moving', 'true');
+    await expect(movingAgent).not.toHaveAttribute('style', beforeMove!);
+    await movingAgent.click();
+    await expect(movingAgent).toHaveAttribute('aria-pressed', 'true');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(movingAgent).toHaveCSS('transition-duration', '0s');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.getByRole('button', { name: '세션 선택 Claude external-claude' }).click();
     await expect(page.locator('.observed-inspector')).toContainText('README.md');
     await expect(page.locator('.observed-inspector')).not.toContainText('npm test');
@@ -350,5 +364,83 @@ test('separate Codex characters keep independent chats and expose failure and ca
         { timeout: 10000 },
       )
       .toBe(0);
+  }
+});
+
+test('office workspace reads code and provides a real terminal with reconnect and repo isolation', async ({
+  page,
+}, info) => {
+  const { writeFile, mkdtemp, realpath, rm } = await import('node:fs/promises');
+  const { execFileSync } = await import('node:child_process');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const root = await realpath((await readFile('.pixel/e2e-project.txt', 'utf8')).trim());
+  const second = await realpath(await mkdtemp(join(tmpdir(), 'pixel-second-tools-')));
+  execFileSync('git', ['init'], { cwd: second, stdio: 'pipe' });
+  await writeFile(join(second, 'SECOND.md'), 'second repository only');
+  execFileSync('git', ['add', '.'], { cwd: second, stdio: 'pipe' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'seed'],
+    { cwd: second, stdio: 'pipe' },
+  );
+  try {
+    await connect(page);
+    await page.getByRole('button', { name: '코드 · 터미널', exact: true }).click();
+    await page.getByRole('button', { name: '파일 README.md', exact: true }).click();
+    await expect(page.locator('.source-code')).toHaveText('fixture');
+    await page.screenshot({
+      path: `docs/images/workspace-code-${info.project.name}.png`,
+      fullPage: false,
+    });
+    await page.getByRole('tab', { name: '터미널', exact: true }).click();
+    await page.getByRole('button', { name: '터미널 시작', exact: true }).click();
+    await expect(page.locator('.terminal-toolbar')).toContainText('연결됨');
+    const terminal = page.getByTestId('terminal-input');
+    await terminal.pressSequentially('printf \'E2E_ROOT:%s\\n\' "$PWD"');
+    await terminal.press('Enter');
+    await expect(page.locator('.xterm-accessibility')).toContainText(`E2E_ROOT:${root}`);
+    await terminal.pressSequentially('sleep 30');
+    await terminal.press('Enter');
+    await page.getByRole('button', { name: 'Ctrl+C', exact: true }).click();
+    await terminal.pressSequentially("printf '%s%s\\n' RESUMED _OK");
+    await terminal.press('Enter');
+    await expect(page.locator('.xterm-accessibility')).toContainText('RESUMED_OK');
+    await page.screenshot({
+      path: `docs/images/workspace-terminal-${info.project.name}.png`,
+      fullPage: false,
+    });
+    await page.getByRole('button', { name: '작업 공간 닫기' }).click();
+    await page.getByRole('button', { name: '코드 · 터미널', exact: true }).click();
+    await page.getByRole('tab', { name: '터미널', exact: true }).click();
+    await expect(page.locator('.terminal-toolbar')).toContainText('연결됨');
+    await expect(page.locator('.xterm-accessibility')).toContainText('RESUMED_OK');
+    await page.getByRole('button', { name: '작업 공간 닫기' }).click();
+    await page.getByRole('button', { name: '레포 전환', exact: true }).click();
+    await page.getByLabel('프로젝트 경로', { exact: true }).fill(second);
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: '프로젝트 연결', exact: true })
+      .click();
+    await page.getByRole('button', { name: '코드 · 터미널', exact: true }).click();
+    await page.getByRole('button', { name: '파일 SECOND.md', exact: true }).click();
+    await expect(page.locator('.source-code')).toHaveText('second repository only');
+    await expect(page.getByRole('button', { name: '파일 README.md', exact: true })).toHaveCount(0);
+    await page.getByRole('tab', { name: '터미널', exact: true }).click();
+    await expect(page.getByRole('button', { name: '터미널 시작', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.getByRole('button', { name: '작업 공간 닫기' }).click();
+    await page.getByRole('button', { name: '레포 전환', exact: true }).click();
+    await page.getByRole('button', { name: `레포 선택 ${root}`, exact: true }).click();
+    await page.getByRole('button', { name: '코드 · 터미널', exact: true }).click();
+    await page.getByRole('tab', { name: '터미널', exact: true }).click();
+    await expect(page.locator('.terminal-toolbar')).toContainText('연결됨');
+    await expect(page.locator('.xterm-accessibility')).toContainText('RESUMED_OK');
+    await page.getByRole('button', { name: '터미널 종료', exact: true }).click();
+    await expect(page.getByRole('button', { name: '터미널 시작', exact: true })).toBeVisible();
+  } finally {
+    await rm(second, { recursive: true, force: true });
   }
 });

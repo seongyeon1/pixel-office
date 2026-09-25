@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { PixelWorker } from './PixelWorker';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { WalkingWorker } from './WalkingWorker';
+import { sessionPositions, sessionLayout, zoneLabels, type OfficeZone } from './movement';
 import { ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
-import { activityLabels, type ChatMessage, type ObservedSession } from '../../shared/contracts';
+import { type ChatMessage, type ObservedSession } from '../../shared/contracts';
 const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude');
 export function SessionOffice({
   sessions,
@@ -16,6 +17,7 @@ export function SessionOffice({
   reply?: ChatMessage;
   onChat: () => void;
 }) {
+  const mapScroll = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(0);
   const index = sessions.findIndex((s) => s.id === selected?.id);
   useEffect(() => {
@@ -24,6 +26,14 @@ export function SessionOffice({
   const pages = Math.max(1, Math.ceil(sessions.length / 8));
   const safePage = Math.min(page, pages - 1);
   const shown = sessions.slice(safePage * 8, safePage * 8 + 8);
+  const positions = sessionPositions(shown);
+  const layout = sessionLayout(shown);
+  const selectedX = selected ? positions.get(selected.id)?.x : undefined;
+  useEffect(() => {
+    const viewport = mapScroll.current;
+    if (viewport && selectedX !== undefined)
+      viewport.scrollTo({ left: Math.max(0, selectedX - viewport.clientWidth / 2 + 38) });
+  }, [selected?.id, selectedX]);
   const speech =
     reply &&
     reply.sessionId === selected?.id &&
@@ -54,41 +64,53 @@ export function SessionOffice({
           <i />
           <span>PIXEL OFFICE</span>
         </div>
-        <div className="session-desks">
-          {shown.map((s) => (
-            <button
-              key={s.id}
-              className={`session-desk ${s.status} ${s.id === selected?.id ? 'selected' : ''}`}
-              aria-label={`캐릭터 ${providerName(s)} ${s.sessionId}`}
-              aria-pressed={s.id === selected?.id}
-              onClick={() => onSelect(s)}
-            >
-              <span className="desk-activity">
-                {s.status === 'active'
-                  ? activityLabels[s.activity]
-                  : s.status === 'idle'
-                    ? '응답 완료'
-                    : '최근 활동 확인'}
-              </span>
-              <div className="desk-art">
-                <PixelWorker provider={s.provider} identity={s.sessionId} />
-                <span className="pixel-monitor">
+        <div
+          ref={mapScroll}
+          className="session-map-scroll"
+          tabIndex={0}
+          aria-label="에이전트 이동 맵. 좁은 화면에서는 좌우로 스크롤하세요."
+        >
+          <div
+            className="session-map"
+            style={
+              {
+                height: layout.height,
+                '--map-top-height': `${layout.topHeight}px`,
+                '--map-bottom-height': `${layout.bottomHeight}px`,
+                '--map-lower-top': `${layout.lowerTop}px`,
+              } as CSSProperties
+            }
+          >
+            {(['desk', 'library', 'test', 'lounge'] as OfficeZone[]).map((zone) => (
+              <div key={zone} className={`map-zone ${zone}`} aria-hidden="true">
+                <span>{zoneLabels[zone]}</span>
+                <div className="map-furniture">
                   <i />
-                </span>
-                <span className="pixel-table" />
+                  <i />
+                  <i />
+                </div>
               </div>
-              <strong>
-                {providerName(s)} <small>{s.label || s.sessionId.slice(0, 8)}</small>
-              </strong>
-            </button>
-          ))}
-          {!shown.length && (
-            <p className="observed-note">이 레포에서 발견한 세션이 책상에 표시됩니다.</p>
-          )}
+            ))}
+            <div className="map-hallway" aria-hidden="true">
+              PIXEL OFFICE
+            </div>
+            {shown.map((s) => (
+              <WalkingWorker
+                key={s.id}
+                session={s}
+                target={positions.get(s.id)!}
+                selected={s.id === selected?.id}
+                onSelect={() => onSelect(s)}
+              />
+            ))}
+            {!shown.length && (
+              <p className="map-empty">이 레포에서 발견한 동료가 이곳에 나타납니다.</p>
+            )}
+          </div>
         </div>
       </div>
       <div className="session-office-bottom">
-        <span>동료를 선택해 작업과 대화를 확인하세요.</span>
+        <span>관측된 활동에 따라 이동해요. 동료를 눌러 대화하세요.</span>
         {pages > 1 && (
           <nav aria-label="오피스 페이지">
             <button

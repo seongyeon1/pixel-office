@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   Armchair,
   ArrowUpRight,
@@ -49,6 +49,7 @@ import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ObservedOffice } from './components/ObservedOffice';
 import { RepositoryList, repositoryName } from './components/RepositoryList';
+const WorkspacePanel = lazy(() => import('./workspace/WorkspacePanel'));
 type Project = { root: string; head: string; dirty: boolean };
 type Snapshot = { run: Run; events: OfficeEvent[]; interactions: Interaction[]; sequence: number };
 type Health = { providers: Record<Provider, Connection>; activeId: string | null; demo: boolean };
@@ -94,6 +95,7 @@ export function App() {
   const [changes, setChanges] = useState<Change[]>([]);
   const [inspector, setInspector] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const busy =
     projects.some((p) => p.latestRun && !terminal(p.latestRun.status)) ||
     (!!state.run && !terminal(state.run.status));
@@ -419,7 +421,7 @@ export function App() {
     .slice(-30)
     .reverse();
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${workspaceOpen && project ? 'workspace-is-open' : ''}`}>
       <aside className="sidebar">
         <a
           className="brand"
@@ -533,6 +535,15 @@ export function App() {
             </strong>
           </div>
           <div className="topbar-right">
+            <button
+              className="open-workspace"
+              aria-expanded={workspaceOpen}
+              disabled={!project}
+              onClick={() => setWorkspaceOpen((v) => !v)}
+            >
+              <Code2 size={16} />
+              코드 · 터미널
+            </button>
             <span className="connection-pill">
               <span className="presence online" />
               {health?.demo ? '데모' : '로컬 연결'}
@@ -547,6 +558,16 @@ export function App() {
             <span className="user-avatar">나</span>
           </div>
         </header>
+        {workspaceOpen && project && (
+          <Suspense fallback={<p role="status">작업 공간을 여는 중…</p>}>
+            <WorkspacePanel
+              key={project.root}
+              root={project.root}
+              run={state.run}
+              onClose={() => setWorkspaceOpen(false)}
+            />
+          </Suspense>
+        )}
         {otherActive && (
           <div className="other-repository" role="status">
             <span>
