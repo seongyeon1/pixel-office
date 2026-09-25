@@ -9,6 +9,7 @@ import {
 import { route } from '../src/client/floor/route.js';
 import { LOUNGE_CYCLE, MEETING_CYCLE, placements } from '../src/client/floor/choreography.js';
 import type { ProjectWorker } from '../src/client/overview/projects.js';
+import { modelFamily } from '../src/client/models/family.js';
 const lane = (key: string, ids: string[], main = true) => ({
   key,
   branch: main ? 'main' : key,
@@ -113,6 +114,7 @@ const worker = (id: string, root: string, extra: Partial<ProjectWorker> = {}): P
   certain: true,
   updatedAt: '',
   session: {} as ProjectWorker['session'],
+  family: modelFamily('claude', 'claude-opus-5-5'),
   ...extra,
 });
 test('facts decide first: a raised hand stays at the desk and a reviewer is visited', () => {

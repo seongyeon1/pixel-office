@@ -280,3 +280,11 @@
   font-size: 11px;
   color: #8a9282;
 }
+.project-map-model {
+  padding: 7px 10px;
+  border: 1px solid #d8e0cf;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 14px;
+  color: #47613b;
+}

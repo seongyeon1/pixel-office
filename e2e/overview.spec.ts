@@ -20,13 +20,20 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
   const registry = join(claudeHome, 'sessions', '999999.json');
   const files: string[] = [];
   const line = (data: unknown) => JSON.stringify(data) + '\n';
-  const codex = async (id: string, cwd: string, done = false, at = new Date()) => {
+  const codex = async (
+    id: string,
+    cwd: string,
+    done = false,
+    at = new Date(),
+    model = 'gpt-6-sol',
+  ) => {
     const path = join(dirname(fixtures.codex), `${id}.jsonl`);
     files.push(path);
     const timestamp = at.toISOString();
     await writeFile(
       path,
       line({ timestamp, type: 'session_meta', payload: { id, cwd } }) +
+        line({ timestamp, type: 'turn_context', payload: { model, cwd } }) +
         line({
           timestamp,
           type: 'event_msg',
@@ -58,7 +65,10 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
         type: 'assistant',
         sessionId: id,
         cwd,
-        message: { content: [{ type: 'tool_use', name: tool, id: `${id}-tool`, input: {} }] },
+        message: {
+          model: 'claude-fable-5-1',
+          content: [{ type: 'tool_use', name: tool, id: `${id}-tool`, input: {} }],
+        },
       }),
     );
   };
@@ -89,9 +99,16 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
       });
       expect(response.ok()).toBe(true);
     }
-    for (let i = 0; i < 5; i++) await codex(`campus-a${i}`, roots[0], i === 4);
+    for (let i = 0; i < 5; i++)
+      await codex(
+        `campus-a${i}`,
+        roots[0],
+        i === 4,
+        new Date(),
+        i === 4 ? 'gpt-6-astra' : 'gpt-6-sol',
+      );
     await codex('campus-wt', worktree);
-    const beta = await codex('campus-b', roots[1]);
+    const beta = await codex('campus-b', roots[1], false, new Date(), 'gpt-6-luna');
     // Finished 45 minutes ago: already went home.
     await codex('campus-old', roots[2], true, new Date(Date.now() - 45 * 60000));
     await claude('campus-ask', roots[2], 'AskUserQuestion');
@@ -112,6 +129,17 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
     await expect(notes).toContainText('응답 필요 1', { timeout: 20000 });
     await expect(worker(roots[2], 'campus-ask')).toHaveAttribute('data-mark', 'question');
     await expect(worker(roots[2], 'campus-old')).toHaveCount(0);
+    // Model families: a badge per coworker and a filter that keeps only matching rooms.
+    await expect(worker(roots[0], 'campus-a4').locator('.floor-family')).toHaveText('Astra');
+    await expect(worker(roots[0], 'campus-a0').locator('.floor-family')).toHaveText('Sol');
+    await expect(worker(roots[2], 'campus-ask').locator('.floor-family')).toHaveText('Fable');
+    const models = page.getByLabel('모델로 동료 거르기');
+    await models.selectOption({ label: 'Codex · Luna (1)' });
+    await expect(b).toBeVisible();
+    await expect(a).toHaveCount(0);
+    await expect(notes).toHaveCount(0);
+    await models.selectOption('');
+    await expect(a).toBeVisible();
     await expect(page.getByText('최근 퇴근 1명', { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,

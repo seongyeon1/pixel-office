@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   Activity as ActivityIcon,
   FileCode2,
@@ -20,6 +20,7 @@ import {
 import { api } from '../api';
 import { SessionOffice } from '../office/SessionOffice';
 import { markSeen } from '../floor/seen';
+import { compareFamilies, modelFamily, type ModelFamily } from '../models/family';
 import { PixelWorker } from '../office/PixelWorker';
 import { SessionChat } from './SessionChat';
 import { RetiredSessions } from './RetiredSessions';
@@ -146,10 +147,18 @@ export function ObservedOffice({
   const visible = sessions.filter(
     (s) =>
       (filter === 'all' || s.status === filter) &&
-      `${s.provider} ${s.sessionId} ${s.label} ${s.prompt} ${s.model}`
+      `${s.provider} ${s.sessionId} ${s.label} ${s.prompt} ${s.model} ${modelFamily(s.provider, s.model).label}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
+  // Grouped by model family in the stated display order; within a family, newest first as before.
+  const groups = Object.values(
+    visible.reduce<Record<string, { family: ModelFamily; items: ObservedSession[] }>>((acc, s) => {
+      const family = modelFamily(s.provider, s.model);
+      (acc[family.key] ??= { family, items: [] }).items.push(s);
+      return acc;
+    }, {}),
+  ).sort((a, b) => compareFamilies(a.family, b.family));
   return (
     <main className="office-page observed-page">
       <div className="main-column">
@@ -250,29 +259,38 @@ export function ObservedOffice({
           />
         </label>
         <section className="observed-sessions" aria-label="감지된 세션">
-          {visible.map((s) => (
-            <button
-              key={s.id}
-              aria-label={`세션 선택 ${name(s.provider)} ${s.sessionId}${s.label ? ` ${s.label}` : ''}`}
-              aria-pressed={selected?.id === s.id}
-              className={selected?.id === s.id ? 'selected' : ''}
-              onClick={() => choose(s)}
-            >
-              <span className={`presence ${s.status === 'active' ? 'working' : ''}`} />
-              <span>
-                <strong>
-                  {name(s.provider)} <small>{s.label || s.sessionId.slice(0, 8)}</small>
-                  <em>{activityLabels[s.activity]}</em>
-                </strong>
-                <span className="observed-prompt">
-                  {s.prompt || '작업 요청이 기록되지 않은 세션'}
-                </span>
-                <small>
-                  {observedStatus[s.status]} · {s.model || '모델 정보 없음'}
-                </small>
-              </span>
-              <span className="observed-time">{clock(s.updatedAt)}</span>
-            </button>
+          {groups.map(({ family, items }) => (
+            <Fragment key={family.key}>
+              <h3 className="family-heading" data-provider={family.provider}>
+                {name(family.provider)} · {family.label}
+                {family.version && <span>{family.version}</span>}
+                <small>{items.length}</small>
+              </h3>
+              {items.map((s) => (
+                <button
+                  key={s.id}
+                  aria-label={`세션 선택 ${name(s.provider)} ${s.sessionId}${s.label ? ` ${s.label}` : ''}`}
+                  aria-pressed={selected?.id === s.id}
+                  className={selected?.id === s.id ? 'selected' : ''}
+                  onClick={() => choose(s)}
+                >
+                  <span className={`presence ${s.status === 'active' ? 'working' : ''}`} />
+                  <span>
+                    <strong>
+                      {name(s.provider)} <small>{s.label || s.sessionId.slice(0, 8)}</small>
+                      <em>{activityLabels[s.activity]}</em>
+                    </strong>
+                    <span className="observed-prompt">
+                      {s.prompt || '작업 요청이 기록되지 않은 세션'}
+                    </span>
+                    <small>
+                      {observedStatus[s.status]} · {s.model || '모델 정보 없음'}
+                    </small>
+                  </span>
+                  <span className="observed-time">{clock(s.updatedAt)}</span>
+                </button>
+              ))}
+            </Fragment>
           ))}
           {!visible.length && (
             <div className="empty-history">

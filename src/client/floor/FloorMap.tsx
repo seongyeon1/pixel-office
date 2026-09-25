@@ -4,6 +4,7 @@ import { repositoryName } from '../components/RepositoryList';
 import type { ProjectRoom, ProjectWorker } from '../overview/projects';
 import { FloorWorker } from './FloorWorker';
 import { hash, placements } from './choreography';
+import { describeModel, useModelCatalog } from '../models/catalog';
 import { FEET, SEAT_W, floorLayout, type Cell, type Loc } from './layout';
 import './floor.css';
 interface Departure {
@@ -114,6 +115,7 @@ export function FloorMap({
   nameOf?: (w: ProjectWorker) => string;
 }) {
   const [box, width] = useWidth();
+  const catalog = useModelCatalog();
   // The floor border sits outside the layout.
   const layout = useMemo(
     () => floorLayout(rooms, width - 6, office ? OFFICE : undefined),
@@ -256,6 +258,11 @@ export function FloorMap({
               delay={arrivals.current.get(w.id) ? hash(w.id) % 1600 : 0}
               layout={layout}
               name={nameOf(w)}
+              modelNote={describeModel(
+                catalog,
+                w.provider,
+                w.session?.model ?? w.run?.team[w.provider].model ?? '',
+              )}
               selected={selectedId === undefined ? undefined : selectedId === w.id}
               onOpen={() => onOpen(w.root, w)}
             />
