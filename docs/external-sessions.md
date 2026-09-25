@@ -30,7 +30,7 @@
 
 ## 작업 기록 기반 대화
 
-세션 선택 후 요약 / 작업 내역 / 대화 탭을 전환한다. 같은 공급자의 세션도 별도 캐릭터·대화로 표시하며 검색과 상태 필터를 지원한다. 원본 작업에 명령을 전달할 수 있는 직접 연결은 현재 없다. API의 `directAvailable`은 false이며 UI에서 직접 연결로 표현하지 않는다.
+세션 선택 후 요약 / 작업 내역 / 대화 탭을 전환한다. 같은 공급자의 세션도 별도 캐릭터·대화로 표시하며 검색과 상태 필터를 지원한다. 대화 탭은 기록 기반 질문 전용이다. 이 API의 `directAvailable`은 false로 유지한다. 실제 세션 재개는 별도의 **이어서 작업** 터미널을 사용한다.
 
 - `GET /api/observed/:id/chat`: 해당 세션의 최근 100개 대화 메시지.
 - `POST /api/observed/:id/chat`: `{ "question": "지금 어떤 일을 했어?" }`. 수락 시 202를 반환하고 클라이언트가 약 1.5초 간격으로 진행 상태를 읽는다.
@@ -45,3 +45,15 @@
 질문 시 같은 공급자의 기본 모델로 새로운 요청을 보내므로 계정 사용량이 발생한다. 원본 작업의 모델과 답변 모델은 다를 수 있다. 원래 터미널·IDE 세션을 직접 제어하려면 소유한 실행 연결의 입력 채널과 요청·응답 식별 기능을 추가해야 한다.
 
 Codex 옵션은 [공식 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)와 설치된 App Server JSON 스키마를 확인했다. Claude 옵션은 설치된 SDK 타입 선언을 확인했다. 검증한 버전은 [검증 기록](verification.md)을 참고한다.
+
+
+## 세션 재개와 퇴근
+
+`feat/session-resume` 워크트리의 미완성 구현을 통합했다. 설치된 `codex resume --help`, `codex fork --help`, `claude --help`로 옵션을 확인했다.
+
+- `POST /api/observed/:id/resume`: `{ mode: "resume" | "fork", cols?, rows? }`. 서버가 관측한 UUID와 작업 폴더만 사용하며, 클라이언트의 명령 문자열이나 경로는 받지 않는다. 실행 중 프로세스 또는 활동 중 세션의 resume은 409, fork는 허용한다. Claude fork는 `--resume <id> --fork-session`, Codex fork는 `fork <id>`다.
+- `GET /api/observed/:id/terminal`: 같은 세션에 이미 열린 PTY를 찾는다. 브라우저 저장소가 사라져도 다시 연결한다. 복제해 열린 터미널도 원래 선택한 동료의 이어가기 패널에서 찾을 수 있다.
+- `POST /api/observed/:id/retire`: 세션 요약과 퇴근 시각을 SQLite에 저장하고 앱 소유 터미널·답변 생성을 종료한다. 원래 외부 프로세스에 시그널을 보내지 않고 로그나 파일도 삭제하지 않는다.
+- `POST /api/observed/:id/restore`: 퇴근 표시를 제거한다. 원본 로그가 현재 관측되지 않으면 409와 안내를 반환한다.
+- `/api/observed`는 활동 목록과 퇴근 목록을 분리해 제공한다. `/api/projects`의 활동 집계에서도 퇴근한 동료를 제외한다. 같은 세션의 재개·퇴근·복귀 요청은 직렬화해 경합을 막는다.
+- 이어가기 PTY는 연결 해제 후에도 유지한다. 일반 레포 셸의 5분 만료 정책은 그대로다. 승인·Origin 검증은 기존 터미널 API와 같으며, 종료·서버 재시작 후 자동 재개는 하지 않는다.

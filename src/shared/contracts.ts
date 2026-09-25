@@ -180,9 +180,14 @@ export interface ObservedSession {
 }
 export interface ObservationSnapshot {
   sessions: ObservedSession[];
+  retired?: RetiredSession[];
   scannedAt: string | null;
   scanning: boolean;
   warnings: string[];
+}
+export interface RetiredSession extends ObservedSession {
+  retiredAt: string;
+  available?: boolean;
 }
 export interface ObservedDetail extends ObservedSession {
   events: ObservedEvent[];

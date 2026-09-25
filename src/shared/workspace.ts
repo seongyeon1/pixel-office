@@ -19,6 +19,9 @@ export interface TerminalInfo {
   shell: string;
   cols: number;
   rows: number;
+  command?: string;
+  persistent?: boolean;
+  tag?: string;
 }
 export type TerminalMessage =
   | { type: 'ready'; data: string }

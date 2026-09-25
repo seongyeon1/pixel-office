@@ -119,3 +119,80 @@ test('closing the service terminates a shell that ignores hangup', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('command terminals run the command, fall back to a shell, persist and are found by tag', async () => {
+  const manager = createTerminals({ shell: '/bin/sh', detachedMs: 50 });
+  const root = await realpath(tmpdir());
+  const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  let ws: WebSocket | undefined;
+  try {
+    await once(server, 'listening');
+    const command = `printf 'AGENT:%s\\n' "$PWD"`;
+    const info = manager.create(root, 80, 24, { command, tag: 'observed-1', persistent: true });
+    expect(info).toMatchObject({ tag: 'observed-1', command });
+    expect(manager.find('observed-1')?.id).toBe(info.id);
+    expect(manager.find('other')).toBeUndefined();
+    // Persistent terminals outlive the detach timeout.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(manager.get(info.id)).toBeDefined();
+    server.on('connection', (socket) => manager.attach(info.id, socket));
+    ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    let output = '';
+    ws.on('message', (raw) => {
+      const m = JSON.parse(raw.toString());
+      if (m.data) output += m.data;
+    });
+    await once(ws, 'open');
+    await expect.poll(() => output).toContain(`AGENT:${root}`);
+    // A shell remains after the command finishes.
+    ws.send(JSON.stringify({ type: 'input', data: "printf '%s%s\\n' AFTER _CMD\r" }));
+    await expect.poll(() => output).toContain('AFTER_CMD');
+  } finally {
+    ws?.terminate();
+    await manager.close();
+    for (const client of server.clients) client.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('ending an agent terminal also stops its foreground CLI process', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'pixel-agent-exit-')));
+  const manager = createTerminals({ shell: '/bin/sh' });
+  let child = 0;
+  try {
+    // A separate foreground program, matching how the agent CLI is launched.
+    const terminal = manager.create(root, 80, 24, {
+      command: "sh -c 'echo $$ > child.pid; exec sleep 60'",
+      tag: 'exit-check',
+      persistent: true,
+    });
+    await expect
+      .poll(async () => {
+        child = Number(await readFile(join(root, 'child.pid'), 'utf8').catch(() => '0'));
+        return child;
+      })
+      .toBeGreaterThan(0);
+    process.kill(child, 0);
+    await manager.end(terminal.id);
+    await expect
+      .poll(() => {
+        try {
+          process.kill(child, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(false);
+  } finally {
+    await manager.close();
+    if (child) {
+      try {
+        process.kill(child, 'SIGKILL');
+      } catch {}
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});

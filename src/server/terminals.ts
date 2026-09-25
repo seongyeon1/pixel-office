@@ -21,7 +21,14 @@ interface Session {
   done: Promise<void>;
   exited: boolean;
   timer?: ReturnType<typeof setTimeout>;
+  persistent: boolean;
 }
+interface CreateOptions {
+  command?: string;
+  tag?: string;
+  persistent?: boolean;
+}
+const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 export function createTerminals({
   detachedMs = 5 * 60 * 1000,
   shell = process.env.SHELL || '/bin/sh',
@@ -65,28 +72,54 @@ export function createTerminals({
   };
   const expire = (s: Session) => {
     clearTimeout(s.timer);
+    // An agent keeps working while nobody watches; only an explicit close or shutdown ends it.
+    if (s.persistent) return;
     s.timer = setTimeout(() => void end(s.info.id), detachedMs);
     s.timer.unref();
   };
   return {
-    create(root: string, cols: number, rows: number): TerminalInfo {
+    create(
+      root: string,
+      cols: number,
+      rows: number,
+      { command, tag, persistent = false }: CreateOptions = {},
+    ): TerminalInfo {
       if (sessions.size >= 8)
         throw new Error(
           '터미널은 최대 8개까지 열 수 있습니다. 사용하지 않는 터미널을 종료해 주세요.',
         );
-      const pty = spawn(shell, ['-i'], {
+      // An interactive shell loads the user's PATH and aliases, then stays open after the command.
+      const args = command ? ['-i', '-c', `${command}; exec ${quote(shell)} -i`] : ['-i'];
+      const pty = spawn(shell, args, {
         name: 'xterm-256color',
         cwd: root,
         cols,
         rows,
         env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
       });
-      const info = { id: randomUUID(), root, cols, rows, shell: basename(shell) };
+      const info: TerminalInfo = {
+        id: randomUUID(),
+        root,
+        cols,
+        rows,
+        shell: basename(shell),
+        ...(command && { command }),
+        ...(persistent && { persistent }),
+        ...(tag && { tag }),
+      };
       let exited!: () => void;
       const done = new Promise<void>((resolve) => {
         exited = resolve;
       });
-      const s: Session = { info, pty, buffer: '', sockets: new Set(), done, exited: false };
+      const s: Session = {
+        info,
+        pty,
+        buffer: '',
+        sockets: new Set(),
+        done,
+        exited: false,
+        persistent,
+      };
       sessions.set(info.id, s);
       expire(s);
       pty.onData((data) => {
@@ -107,6 +140,9 @@ export function createTerminals({
     },
     get(id: string) {
       return sessions.get(id)?.info;
+    },
+    find(tag: string) {
+      return [...sessions.values()].find((s) => s.info.tag === tag)?.info;
     },
     attach(id: string, ws: WebSocket) {
       const s = sessions.get(id);

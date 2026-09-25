@@ -10,6 +10,8 @@ import {
   type EventInput,
   type OfficeEvent,
   type Interaction,
+  type ObservedSession,
+  type RetiredSession,
 } from '../shared/contracts.js';
 export function createStore(path: string) {
   const db = new DatabaseSync(path);
@@ -21,6 +23,7 @@ export function createStore(path: string) {
     CREATE INDEX IF NOT EXISTS runs_project ON runs(json_extract(data, '$.projectPath'));`);
   db.exec(`CREATE TABLE IF NOT EXISTS chat_messages(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS chat_session ON chat_messages(session_id);`);
+  db.exec('CREATE TABLE IF NOT EXISTS retired_sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   const getRun = (id: string) => {
     const row = db.prepare('SELECT data FROM runs WHERE id=?').get(id) as
       { data: string } | undefined;
@@ -77,6 +80,58 @@ export function createStore(path: string) {
     getRun,
     listRuns,
     listProjects,
+    listRetired(): RetiredSession[] {
+      return (
+        db.prepare('SELECT data FROM retired_sessions ORDER BY rowid DESC').all() as {
+          data: string;
+        }[]
+      ).map((row) => JSON.parse(row.data));
+    },
+    isRetired(id: string) {
+      return !!db.prepare('SELECT id FROM retired_sessions WHERE id=?').get(id);
+    },
+    retire(session: ObservedSession) {
+      // Persist summary only; transcripts and worktrees stay with their original provider.
+      const {
+        id,
+        sessionId,
+        provider,
+        projectPath,
+        cwd,
+        label,
+        prompt,
+        model,
+        status,
+        activity,
+        updatedAt,
+        processAlive,
+        truncated,
+      } = session;
+      const data = {
+        id,
+        sessionId,
+        provider,
+        projectPath,
+        cwd,
+        label,
+        prompt,
+        model,
+        status,
+        activity,
+        updatedAt,
+        processAlive,
+        truncated,
+        retiredAt: new Date().toISOString(),
+      };
+      db.prepare('INSERT OR REPLACE INTO retired_sessions(id,data) VALUES(?,?)').run(
+        id,
+        JSON.stringify(data),
+      );
+      db.prepare('INSERT OR IGNORE INTO projects(root) VALUES(?)').run(projectPath);
+    },
+    restore(id: string) {
+      db.prepare('DELETE FROM retired_sessions WHERE id=?').run(id);
+    },
     saveChat(message: ChatMessage) {
       db.prepare(
         'INSERT INTO chat_messages(id,session_id,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',

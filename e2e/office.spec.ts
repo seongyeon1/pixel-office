@@ -226,7 +226,7 @@ test('existing sessions are discovered by repo and show live tools without execu
     const beforeMove = await movingAgent.getAttribute('style');
     await page.getByRole('tab', { name: '작업 내역', exact: true }).click();
     await expect(page.locator('.observed-inspector')).toContainText('npm test');
-    await expect(page.locator('.observed-inspector')).toContainText('관측 전용');
+    await expect(page.locator('.observed-inspector')).toContainText('기록 · 이어가기');
     await expect(page.getByRole('button', { name: '작업 중단', exact: true })).toHaveCount(0);
     await appendFile(
       f.codex,

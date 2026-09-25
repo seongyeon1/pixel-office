@@ -18,6 +18,7 @@ import { inspectProject, collectChanges } from './projects.js';
 import { listModels } from './models.js';
 import type { ChatService } from './chat.js';
 import type { Observation } from './observation/observer.js';
+import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
 export async function createServer({
   store,
   adapters,
@@ -28,6 +29,7 @@ export async function createServer({
   terminalShell,
   observation,
   chat,
+  agentCommands,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -38,9 +40,30 @@ export async function createServer({
   terminalShell?: string;
   observation?: Observation;
   chat?: ChatService;
+  agentCommands?: AgentCommands;
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const terminals = createTerminals({ shell: terminalShell });
+  const sessionLocks = new Map<string, Promise<void>>();
+  const withSession = async <T>(id: string, action: () => Promise<T>): Promise<T> => {
+    const previous = sessionLocks.get(id);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sessionLocks.set(id, pending);
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (sessionLocks.get(id) === pending) sessionLocks.delete(id);
+    }
+  };
+  const visibleSessions = () => {
+    const retired = new Set(store.listRetired().map((s) => s.id));
+    return (observation?.list().sessions ?? []).filter((s) => !retired.has(s.id));
+  };
   const workspace = createWorkspaceReader(() => [
     ...store.listProjects().map((p) => p.root),
     ...(observation?.list().sessions ?? []).map((s) => s.projectPath),
@@ -115,6 +138,66 @@ export async function createServer({
     await terminals.end(req.params.id);
     return { ok: true };
   });
+  // Resuming runs the provider CLI in the app's PTY; the observed id tags the terminal.
+  app.get<{ Params: { id: string } }>('/api/observed/:id/terminal', async (req, reply) => {
+    return (
+      terminals.find(req.params.id) ??
+      reply.code(404).send({ error: '이어서 작업 중인 터미널이 없습니다.' })
+    );
+  });
+  app.post<{ Params: { id: string } }>('/api/observed/:id/resume', async (req, reply) => {
+    const { mode, cols, rows } = z
+      .object({
+        mode: z.enum(['resume', 'fork']),
+        cols: z.number().int().min(20).max(300).default(80),
+        rows: z.number().int().min(5).max(100).default(24),
+      })
+      .parse(req.body);
+    return withSession(req.params.id, async () => {
+      const session = observation?.get(req.params.id);
+      if (!session) return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+      if (store.isRetired(session.id))
+        return reply.code(409).send({ error: '퇴근한 동료입니다. 먼저 다시 출근시켜 주세요.' });
+      const existing = terminals.find(session.id);
+      if (existing) return existing;
+      try {
+        const command = resumeCommand(session, mode, agentCommands);
+        return terminals.create(await resumeFolder(session), cols, rows, {
+          command,
+          tag: session.id,
+          persistent: true,
+        });
+      } catch (e) {
+        return reply
+          .code(e instanceof ResumeConflict ? 409 : 400)
+          .send({ error: (e as Error).message });
+      }
+    });
+  });
+  app.post<{ Params: { id: string } }>('/api/observed/:id/retire', async (req, reply) =>
+    withSession(req.params.id, async () => {
+      const session = observation?.get(req.params.id);
+      if (!session) return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+      store.retire(session);
+      chat?.cancel(session.id);
+      const terminal = terminals.find(session.id);
+      if (terminal) await terminals.end(terminal.id);
+      return { ok: true };
+    }),
+  );
+  app.post<{ Params: { id: string } }>('/api/observed/:id/restore', async (req, reply) =>
+    withSession(req.params.id, async () => {
+      if (!observation?.get(req.params.id))
+        return reply
+          .code(409)
+          .send({
+            error:
+              '원본 세션 로그를 현재 찾을 수 없습니다. 원래 CLI에서 세션을 열면 다시 감지됩니다.',
+          });
+      store.restore(req.params.id);
+      return { ok: true };
+    }),
+  );
   app.get('/api/health', async () => ({
     providers: { codex: await adapters.codex.probe(), claude: await adapters.claude.probe() },
     demo,
@@ -125,11 +208,22 @@ export async function createServer({
     store.rememberProject(project.root);
     return project;
   });
-  app.get(
-    '/api/observed',
-    async () =>
-      observation?.list() ?? { sessions: [], scannedAt: null, scanning: false, warnings: [] },
-  );
+  app.get('/api/observed', async () => {
+    const snapshot = observation?.list() ?? {
+      sessions: [],
+      scannedAt: null,
+      scanning: false,
+      warnings: [],
+    };
+    const live = new Map(snapshot.sessions.map((s) => [s.id, s]));
+    return {
+      ...snapshot,
+      sessions: visibleSessions(),
+      retired: store
+        .listRetired()
+        .map((s) => ({ ...s, ...live.get(s.id), available: live.has(s.id) })),
+    };
+  });
   app.get<{ Params: { id: string } }>('/api/observed/:id', async (req, reply) => {
     const session = observation?.get(req.params.id);
     return session ?? reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
@@ -159,7 +253,7 @@ export async function createServer({
   });
   app.get('/api/projects', async () => {
     const projects = new Map(store.listProjects().map((p) => [p.root, p]));
-    for (const session of observation?.list().sessions ?? []) {
+    for (const session of visibleSessions()) {
       const p = projects.get(session.projectPath) ?? {
         root: session.projectPath,
         runCount: 0,

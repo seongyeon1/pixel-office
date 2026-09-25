@@ -139,6 +139,11 @@ const { app } = await createServer({
   demo: true,
   observation,
   chat,
+  // Stand-ins print their arguments and echo one line, like an interactive CLI would.
+  agentCommands: {
+    claude: `sh -c 'echo FAKE-CLAUDE "$@"; while IFS= read -r line; do echo "GOT:$line"; done' fake-claude`,
+    codex: `sh -c 'echo FAKE-CODEX "$@"; while IFS= read -r line; do echo "GOT:$line"; done' fake-codex`,
+  },
 });
 await app.register(staticPlugin, { root: resolve('dist/client') });
 await app.listen({ port: 4318, host: '127.0.0.1' });

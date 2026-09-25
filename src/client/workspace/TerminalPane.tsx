@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Play, RefreshCw, Square, Trash2 } from 'lucide-react';
@@ -6,7 +6,24 @@ import '@xterm/xterm/css/xterm.css';
 import { api, ApiError } from '../api';
 import type { TerminalInfo, TerminalMessage } from '../../shared/workspace';
 
-export function TerminalPane({ root }: { root: string }) {
+type Open = () => Promise<TerminalInfo>;
+export function TerminalPane({
+  root,
+  storageKey = `pixel.terminal:${root}`,
+  recover,
+  idle,
+  label = '레포 터미널',
+  footer = '레포별 터미널 · 연결이 끊기면 5분 후 종료됩니다.',
+}: {
+  root: string;
+  storageKey?: string;
+  /** Finds a terminal the server still runs when this browser has no stored id. */
+  recover?: () => Promise<TerminalInfo | null>;
+  /** Replaces the start screen; `start` opens a terminal with the given request. */
+  idle?: (start: (open: Open) => void, pending: boolean) => ReactNode;
+  label?: string;
+  footer?: string;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const generation = useRef(0);
@@ -16,20 +33,31 @@ export function TerminalPane({ root }: { root: string }) {
   const [connected, setConnected] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState('');
-  const storageKey = `pixel.terminal:${root}`;
   useEffect(() => {
     let cancelled = false;
     const id = sessionStorage.getItem(storageKey);
-    if (id)
-      void api<TerminalInfo>(`/terminals/${id}`)
-        .then((value) => {
-          if (!cancelled && value.root === root) setInfo(value);
-        })
-        .catch((e) => {
-          if (cancelled) return;
-          if (e instanceof ApiError && e.status === 404) sessionStorage.removeItem(storageKey);
-          else setError(e.message);
-        });
+    const restore = async () => {
+      if (id)
+        try {
+          const value = await api<TerminalInfo>(`/terminals/${id}`);
+          if (value.root === root || (recover && storageKey === `pixel.resume:${value.tag}`)) {
+            if (!cancelled) setInfo(value);
+            return;
+          }
+          sessionStorage.removeItem(storageKey);
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 404)) throw e;
+          sessionStorage.removeItem(storageKey);
+        }
+      const found = await recover?.();
+      if (found && !cancelled) {
+        sessionStorage.setItem(storageKey, found.id);
+        setInfo(found);
+      }
+    };
+    restore().catch((e) => {
+      if (!cancelled) setError((e as Error).message);
+    });
     return () => {
       cancelled = true;
       generation.current++;
@@ -81,7 +109,7 @@ export function TerminalPane({ root }: { root: string }) {
       if (message.type === 'ready') {
         term.reset();
         term.write(message.data);
-        setStatus(`${info.shell} · 연결됨`);
+        setStatus(`${info.command ?? info.shell} · 연결됨`);
         setConnected(true);
         setError('');
         resize();
@@ -112,14 +140,14 @@ export function TerminalPane({ root }: { root: string }) {
       term.dispose();
     };
   }, [info, attempt, storageKey]);
-  const start = async () => {
+  const start = async (open: Open) => {
     const current = generation.current;
     setPending(true);
     setError('');
     try {
-      const next = await api<TerminalInfo>('/terminals', { root, cols: 80, rows: 24 });
+      const next = await open();
       if (generation.current !== current) {
-        await api(`/terminals/${next.id}/close`, {});
+        if (!next.persistent) await api(`/terminals/${next.id}/close`, {});
         return;
       }
       sessionStorage.setItem(storageKey, next.id);
@@ -155,7 +183,7 @@ export function TerminalPane({ root }: { root: string }) {
     }
   };
   return (
-    <section className="terminal-pane" aria-label="레포 터미널">
+    <section className="terminal-pane" aria-label={label}>
       <div className="terminal-toolbar">
         <span role="status">{status}</span>
         <div>
@@ -190,18 +218,26 @@ export function TerminalPane({ root }: { root: string }) {
       )}
       {info ? (
         <div ref={container} className="terminal-screen" />
+      ) : idle ? (
+        idle((open) => void start(open), pending)
       ) : (
         <div className="terminal-empty">
           <p>이 레포에서 명령을 실행하세요.</p>
           <code>{root}</code>
-          <button className="primary" disabled={pending} onClick={() => void start()}>
+          <button
+            className="primary"
+            disabled={pending}
+            onClick={() =>
+              void start(() => api<TerminalInfo>('/terminals', { root, cols: 80, rows: 24 }))
+            }
+          >
             <Play size={15} />
             {pending ? '여는 중…' : '터미널 시작'}
           </button>
           <small>내 컴퓨터의 셸입니다. 명령은 실제 파일을 변경할 수 있어요.</small>
         </div>
       )}
-      <footer>레포별 터미널 · 연결이 끊기면 5분 후 종료됩니다.</footer>
+      <footer>{footer}</footer>
     </section>
   );
 }

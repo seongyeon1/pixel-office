@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Activity as ActivityIcon, FileCode2, Radio, Search, MessageCircle } from 'lucide-react';
+import {
+  Activity as ActivityIcon,
+  FileCode2,
+  Radio,
+  Search,
+  MessageCircle,
+  TerminalSquare,
+  LogOut,
+} from 'lucide-react';
 import {
   activityLabels,
   type ChatMessage,
@@ -7,11 +15,13 @@ import {
   type ObservedEvent,
   type ObservedSession,
   type Provider,
+  type RetiredSession,
 } from '../../shared/contracts';
 import { api } from '../api';
 import { SessionOffice } from '../office/SessionOffice';
 import { PixelWorker } from '../office/PixelWorker';
 import { SessionChat } from './SessionChat';
+import { RetiredSessions } from './RetiredSessions';
 import { repositoryName } from './RepositoryList';
 export const observedStatus = {
   active: '활동 관측',
@@ -35,12 +45,20 @@ export function ObservedOffice({
   selectedProvider,
   initialSessionId,
   onProviderChange,
+  onResume,
+  onRetire,
+  retired,
+  onRestore,
 }: {
   sessions: ObservedSession[];
   root: string;
   selectedProvider: Provider;
   initialSessionId?: string;
   onProviderChange: (id: Provider) => void;
+  onResume: (session: ObservedSession) => void;
+  onRetire: (id: string) => Promise<void>;
+  retired: RetiredSession[];
+  onRestore: (id: string) => Promise<void>;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(initialSessionId ?? null);
   const [detail, setDetail] = useState<ObservedDetail | null>(null);
@@ -49,6 +67,21 @@ export function ObservedOffice({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [reply, setReply] = useState<ChatMessage>();
+  const [retiring, setRetiring] = useState<string>();
+  const [retirePending, setRetirePending] = useState(false);
+  const [retireError, setRetireError] = useState('');
+  const retire = async (id: string) => {
+    setRetirePending(true);
+    setRetireError('');
+    try {
+      await onRetire(id);
+      setRetiring(undefined);
+    } catch (e) {
+      setRetireError((e as Error).message);
+    } finally {
+      setRetirePending(false);
+    }
+  };
   useEffect(() => {
     const initial =
       sessions.find((s) => s.id === initialSessionId) ??
@@ -149,10 +182,40 @@ export function ObservedOffice({
               <span>
                 {clock(selected.updatedAt)} 기준 · {observedStatus[selected.status]}
               </span>
-              <button onClick={openChat}>
-                <MessageCircle size={14} />이 동료에게 질문
-              </button>
+              <div className="session-actions">
+                <button className="primary" onClick={() => onResume(selected)}>
+                  <TerminalSquare size={14} />
+                  이어서 작업
+                </button>
+                <button onClick={openChat}>
+                  <MessageCircle size={14} />이 동료에게 질문
+                </button>
+                <button
+                  onClick={() => {
+                    setRetiring(selected.id);
+                    setRetireError('');
+                  }}
+                >
+                  <LogOut size={14} />
+                  퇴근시키기
+                </button>
+              </div>
             </footer>
+            {retiring === selected.id && (
+              <div className="retire-confirm" role="group" aria-label="동료 퇴근 확인">
+                <p>
+                  이 동료를 맵에서 숨기고, 앱에서 연 이어가기 터미널을 종료합니다. 기록과 작업
+                  파일은 보관됩니다. 다른 터미널에서 실행 중인 원래 프로세스는 계속 동작합니다.
+                </p>
+                <button disabled={retirePending} onClick={() => void retire(selected.id)}>
+                  {retirePending ? '퇴근 중…' : '퇴근 확인'}
+                </button>
+                <button disabled={retirePending} onClick={() => setRetiring(undefined)}>
+                  취소
+                </button>
+                {retireError && <p role="alert">{retireError}</p>}
+              </div>
+            )}
           </section>
         )}
         <div className="session-list-heading">
@@ -220,11 +283,12 @@ export function ObservedOffice({
             </div>
           )}
         </section>
+        <RetiredSessions sessions={retired} onRestore={onRestore} />
       </div>
       <aside className="inspector observed-inspector">
         <div className="inspector-heading">
           <span>동료 살펴보기</span>
-          <span className="small-tag">관측 전용</span>
+          <span className="small-tag">기록 · 이어가기</span>
         </div>
         {selected ? (
           <>
@@ -313,9 +377,13 @@ export function ObservedOffice({
                 </dd>
               </dl>
               <p className="observed-note">
-                상태는 최근 기록을 기준으로 표시합니다. 명령·승인·중단은 원래 터미널이나 앱에서
-                진행해주세요.
+                대화 탭은 기록을 참고한 별도 답변입니다. 원래 대화를 불러와 직접 일을 시키려면
+                이어서 작업을 열어 주세요.
               </p>
+              <button className="session-ask" onClick={() => onResume(selected)}>
+                <TerminalSquare size={16} />
+                터미널에서 이어서 작업
+              </button>
               <button className="session-ask" onClick={openChat}>
                 <MessageCircle size={16} />
                 작업에 대해 질문하기

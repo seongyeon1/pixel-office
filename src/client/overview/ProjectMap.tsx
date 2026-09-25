@@ -9,6 +9,7 @@ import { PixelWorker } from '../office/PixelWorker';
 import { repositoryName } from '../components/RepositoryList';
 import { projectRooms, type ProjectWorker, type ProjectRoom } from './projects';
 import './project-map.css';
+import { RetiredSessions } from '../components/RetiredSessions';
 const providerName = (worker: ProjectWorker) => (worker.provider === 'codex' ? 'Codex' : 'Claude');
 function Room({
   room,
@@ -101,11 +102,13 @@ export function ProjectMap({
   observation,
   onOpen,
   onConnect,
+  onRestore,
 }: {
   projects: ProjectSummary[];
   observation: ObservationSnapshot;
   onOpen: (root: string, worker?: ProjectWorker) => void;
   onConnect: () => void;
+  onRestore: (id: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const [onlyActive, setOnlyActive] = useState(false);
@@ -198,6 +201,7 @@ export function ProjectMap({
           {!rooms.length && <button onClick={onConnect}>프로젝트 연결</button>}
         </section>
       )}
+      <RetiredSessions sessions={observation.retired ?? []} onRestore={onRestore} />
       <p className="project-map-note">
         캐릭터를 누르면 해당 동료의 작업을 엽니다. 각 공간에는 응답이 필요한 동료와 활동 중인
         동료부터 최대 4명을 표시합니다.

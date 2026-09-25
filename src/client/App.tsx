@@ -50,6 +50,7 @@ import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
 import type { ProjectWorker } from './overview/projects';
+import { ResumeDock } from './components/SessionResume';
 import { ObservedOffice } from './components/ObservedOffice';
 import { RepositoryList, repositoryName } from './components/RepositoryList';
 const WorkspacePanel = lazy(() => import('./workspace/WorkspacePanel'));
@@ -102,6 +103,8 @@ export function App() {
   const [inspector, setInspector] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [resumeSessionId, setResumeSessionId] = useState<string>();
+  const resumeSession = observation.sessions.find((s) => s.id === resumeSessionId);
   const busy =
     projects.some((p) => p.latestRun && !terminal(p.latestRun.status)) ||
     (!!state.run && !terminal(state.run.status));
@@ -109,10 +112,13 @@ export function App() {
     (p) => p.root !== project?.root && p.latestRun && !terminal(p.latestRun.status),
   );
   const observedSessions = observation.sessions.filter((s) => s.projectPath === project?.root);
+  const retiredSessions = (observation.retired ?? []).filter(
+    (s) => s.projectPath === project?.root,
+  );
   const observing =
     officeSource === 'external' ||
     (officeSource === 'auto' &&
-      observedSessions.length > 0 &&
+      (observedSessions.length > 0 || retiredSessions.length > 0) &&
       !(state.run && !terminal(state.run.status)));
   const actualTeam = state.run?.team ?? team;
   const displayedMode = state.run?.mode ?? mode;
@@ -176,6 +182,7 @@ export function App() {
     setError('');
     setModal(null);
     if (!options?.keepView) setView('office');
+    setResumeSessionId(undefined);
     setTargetSessionId(options?.worker?.session?.id);
     if (options?.worker) setSelected(options.worker.provider);
     setOfficeSource(options?.worker?.session ? 'external' : options?.worker?.run ? 'app' : 'auto');
@@ -437,7 +444,9 @@ export function App() {
     .slice(-30)
     .reverse();
   return (
-    <div className={`app-shell ${workspaceOpen && project ? 'workspace-is-open' : ''}`}>
+    <div
+      className={`app-shell ${(workspaceOpen && project) || resumeSession ? 'workspace-is-open' : ''}`}
+    >
       <aside className="sidebar">
         <a
           className="brand"
@@ -469,6 +478,7 @@ export function App() {
           <button
             className={view === 'overview' ? 'active' : ''}
             onClick={() => {
+              setResumeSessionId(undefined);
               setView('overview');
               setWorkspaceOpen(false);
             }}
@@ -582,7 +592,10 @@ export function App() {
                   ? '프로젝트 오피스에서 코드와 터미널을 열 수 있어요.'
                   : undefined
               }
-              onClick={() => setWorkspaceOpen((v) => !v)}
+              onClick={() => {
+                setResumeSessionId(undefined);
+                setWorkspaceOpen((v) => !v);
+              }}
             >
               <Code2 size={16} />
               코드 · 터미널
@@ -610,6 +623,13 @@ export function App() {
               onClose={() => setWorkspaceOpen(false)}
             />
           </Suspense>
+        )}
+        {resumeSession && (
+          <ResumeDock
+            key={resumeSession.id}
+            session={resumeSession}
+            onClose={() => setResumeSessionId(undefined)}
+          />
         )}
         {otherActive && view !== 'overview' && (
           <div className="other-repository" role="status">
@@ -667,6 +687,10 @@ export function App() {
             projects={projects}
             observation={observation}
             onConnect={() => setModal('project')}
+            onRestore={async (id) => {
+              await api(`/observed/${id}/restore`, {});
+              await refreshRuns();
+            }}
             onOpen={(root, worker) => void switchProject(root, undefined, { worker })}
           />
         ) : view === 'office' && observing ? (
@@ -677,6 +701,20 @@ export function App() {
             root={project?.root ?? ''}
             selectedProvider={selected}
             onProviderChange={setSelected}
+            retired={retiredSessions}
+            onRestore={async (id) => {
+              await api(`/observed/${id}/restore`, {});
+              await refreshRuns();
+            }}
+            onResume={(session) => {
+              setWorkspaceOpen(false);
+              setResumeSessionId(session.id);
+            }}
+            onRetire={async (id) => {
+              await api(`/observed/${id}/retire`, {});
+              if (resumeSessionId === id) setResumeSessionId(undefined);
+              await refreshRuns();
+            }}
           />
         ) : view === 'office' ? (
           <main className={`office-page ${inspector ? '' : 'inspector-hidden'}`}>
