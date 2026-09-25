@@ -41,6 +41,8 @@ export interface ProjectLane {
 }
 export interface ProjectRoom {
   root: string;
+  // Connected on purpose or used for app runs; such rooms stay on the floor even when empty.
+  connected: boolean;
   pathLabel: string;
   // Repository name behind origin when it differs from the folder name.
   repoName: string;
@@ -104,6 +106,7 @@ export function projectRooms(
         root,
         pathLabel: root,
         repoName: '',
+        connected: false,
         workers: [],
         lanes: [],
         offDuty: [],
@@ -119,7 +122,11 @@ export function projectRooms(
     }
     return room;
   };
-  for (const project of projects) get(project.root).latestRun = project.latestRun;
+  for (const project of projects) {
+    const room = get(project.root);
+    room.latestRun = project.latestRun;
+    room.connected = !!project.connected || project.runCount > 0;
+  }
   for (const s of sessions) {
     if (s.automated) continue;
     const room = get(s.projectPath);
@@ -279,3 +286,7 @@ export function withFamily(rooms: ProjectRoom[], family: string): ProjectRoom[] 
     })
     .filter((room) => room.workers.length);
 }
+
+// A folder only seen in session logs leaves the floor once nobody is at work there; connected
+// projects stay even when empty.
+export const shownOnFloor = (room: ProjectRoom) => room.connected || room.workers.length > 0;

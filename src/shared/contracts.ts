@@ -43,6 +43,8 @@ export interface Run {
   error?: string;
 }
 export interface ProjectSummary {
+  // Connected on purpose (or used for app runs), as opposed to only seen in session logs.
+  connected?: boolean;
   observedCount?: number;
   observedActive?: number;
   root: string;

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FolderPlus, Map, Search } from 'lucide-react';
 import type { ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
-import { projectRooms, withFamily, type ProjectWorker } from './projects';
+import { projectRooms, shownOnFloor, withFamily, type ProjectWorker } from './projects';
 import { compareFamilies, type ModelFamily } from '../models/family';
 import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
@@ -82,7 +82,9 @@ export function ProjectMap({
     () =>
       withFamily(rooms, activeFamily).filter(
         (room) =>
-          (!onlyActive || room.activeCount > 0) && room.root.toLocaleLowerCase().includes(needle),
+          shownOnFloor(room) &&
+          (!onlyActive || room.activeCount > 0) &&
+          room.root.toLocaleLowerCase().includes(needle),
       ),
     [rooms, activeFamily, onlyActive, needle],
   );
