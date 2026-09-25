@@ -40,7 +40,7 @@ import {
   type OfficeEvent,
   type Interaction,
 } from '../shared/contracts';
-import { api, bootstrap } from './api';
+import { api, bootstrap, ApiError } from './api';
 import { applyEvent, emptyState, type OfficeState } from './state';
 import { Office } from './office/Office';
 import { TeamPanel } from './components/TeamPanel';
@@ -82,6 +82,9 @@ export function App() {
   const busy =
     runs.some((r) => !terminal(r.status)) || (!!state.run && !terminal(state.run.status));
   const actualTeam = state.run?.team ?? team;
+  const displayedMode = state.run?.mode ?? mode;
+  const displayedImplementer =
+    displayedMode === 'collaborate' ? (state.run?.implementer ?? implementer) : displayedMode;
   const active = state.run && !terminal(state.run.status);
   const refreshRuns = () => api<Run[]>('/runs').then(setRuns);
   const selectRun = async (id: string) => {
@@ -131,6 +134,25 @@ export function App() {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     let attempts = 0;
+    const reconnect = async () => {
+      if (stopped) return;
+      try {
+        const currentHealth = await api<Health>('/health');
+        if (stopped) return;
+        setHealth(currentHealth);
+        await selectRun(id);
+        if (!stopped) connect();
+      } catch (e) {
+        if (stopped) return;
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+          stopped = true;
+          setAuthError('서버 연결이 만료되었습니다. 새 연결 URL로 다시 열어주세요.');
+          setBooted(false);
+        } else {
+          timer = setTimeout(reconnect, Math.min(1000 * 2 ** attempts++, 10000));
+        }
+      }
+    };
     const connect = () => {
       ws = new WebSocket(
         `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events?runId=${id}&after=${stateRef.current.sequence}`,
@@ -152,7 +174,7 @@ export function App() {
       ws.onclose = () => {
         if (!stopped) {
           setSocketStatus('다시 연결하는 중');
-          timer = setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
+          timer = setTimeout(reconnect, Math.min(1000 * 2 ** attempts++, 10000));
         }
       };
       ws.onerror = () => ws.close();
@@ -572,36 +594,48 @@ export function App() {
                   </p>
                 )}
               </section>
-              <section className="workflow-strip">
-                <div>
-                  <span className={`step-dot ${state.run?.phase === 'implement' ? 'current' : ''}`}>
-                    1
-                  </span>
-                  <span>
-                    구현<small>{providerName(implementer)}</small>
-                  </span>
-                </div>
-                <span className="step-line" />
-                <div>
-                  <span className={`step-dot ${state.run?.phase === 'review' ? 'current' : ''}`}>
-                    2
-                  </span>
-                  <span>
-                    검토<small>{providerName(implementer === 'codex' ? 'claude' : 'codex')}</small>
-                  </span>
-                </div>
-                <span className="step-line" />
-                <div>
-                  <span className={`step-dot ${state.run?.phase === 'revise' ? 'current' : ''}`}>
-                    3
-                  </span>
-                  <span>
-                    수정·완료
-                    <small>{state.run ? statusLabels[state.run.status] : '함께 마무리'}</small>
-                  </span>
-                </div>
-                <span className="workflow-note">서로의 결과를 이어받아요</span>
-              </section>
+              {displayedMode === 'collaborate' ? (
+                <section className="workflow-strip">
+                  <div>
+                    <span
+                      className={`step-dot ${state.run?.phase === 'implement' ? 'current' : ''}`}
+                    >
+                      1
+                    </span>
+                    <span>
+                      구현<small>{providerName(displayedImplementer)}</small>
+                    </span>
+                  </div>
+                  <span className="step-line" />
+                  <div>
+                    <span className={`step-dot ${state.run?.phase === 'review' ? 'current' : ''}`}>
+                      2
+                    </span>
+                    <span>
+                      검토
+                      <small>
+                        {providerName(displayedImplementer === 'codex' ? 'claude' : 'codex')}
+                      </small>
+                    </span>
+                  </div>
+                  <span className="step-line" />
+                  <div>
+                    <span className={`step-dot ${state.run?.phase === 'revise' ? 'current' : ''}`}>
+                      3
+                    </span>
+                    <span>
+                      수정·완료
+                      <small>{state.run ? statusLabels[state.run.status] : '함께 마무리'}</small>
+                    </span>
+                  </div>
+                  <span className="workflow-note">서로의 결과를 이어받아요</span>
+                </section>
+              ) : (
+                <section className="workflow-strip">
+                  <span className="step-dot current">1</span>
+                  <span>{providerName(displayedMode)}가 단독으로 작업해요</span>
+                </section>
+              )}
             </div>
             {inspector && (
               <aside className="inspector">
@@ -622,9 +656,11 @@ export function App() {
                     <span>{seniorityLabels[actualTeam[selected].seniority]}</span>
                   </h2>
                   <p>
-                    {(state.run?.implementer ?? implementer) === selected
+                    {displayedImplementer === selected
                       ? '구현과 테스트를 담당해요'
-                      : '코드 검토와 피드백을 담당해요'}
+                      : displayedMode === 'collaborate'
+                        ? '코드 검토와 피드백을 담당해요'
+                        : '이번 작업에는 참여하지 않아요'}
                   </p>
                   <div className="agent-status">
                     <span

@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -7,7 +7,7 @@ import { createOrchestrator } from '../src/server/orchestrator.js';
 import { createCodexAdapter } from '../src/server/adapters/codex.js';
 import { createClaudeAdapter } from '../src/server/adapters/claude.js';
 import { defaultTeam, terminal, type Mode, type Interaction } from '../src/shared/contracts.js';
-const dir = await mkdtemp(join(tmpdir(), 'pixel-smoke-'));
+const dir = await realpath(await mkdtemp(join(tmpdir(), 'pixel-smoke-')));
 const project = join(dir, 'project');
 await import('node:fs/promises').then((m) => m.mkdir(project));
 const git = (...args: string[]) => execFileSync('git', args, { cwd: project, stdio: 'pipe' });

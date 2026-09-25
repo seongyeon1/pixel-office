@@ -42,3 +42,34 @@ test('deduplicates events and removes only resolved interactions', () => {
   });
   expect(state.interactions).toHaveLength(0);
 });
+import { defaultTeam, type Run } from '../src/shared/contracts.js';
+test('server restart status clears running animation and obsolete approval state', () => {
+  const state = emptyState();
+  state.run = {
+    id: 'r',
+    projectPath: '/p',
+    worktreePath: '/w',
+    branch: 'b',
+    baseCommit: 'a',
+    prompt: 'x',
+    mode: 'codex',
+    implementer: 'codex',
+    status: 'running',
+    phase: 'implement',
+    revision: 0,
+    createdAt: 'now',
+    team: defaultTeam(),
+  };
+  state.agents.codex.activity = 'editing';
+  const next = applyEvent(state, {
+    eventId: 'stop',
+    sequence: 1,
+    runId: 'r',
+    agentId: null,
+    timestamp: 'now',
+    type: 'run.status',
+    payload: { status: 'interrupted' },
+  });
+  expect(next.run?.status).toBe('interrupted');
+  expect(next.agents.codex.activity).toBe('idle');
+});

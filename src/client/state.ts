@@ -1,4 +1,11 @@
-import type { Run, OfficeEvent, Interaction, Provider, Activity } from '../shared/contracts.js';
+import type {
+  Run,
+  OfficeEvent,
+  Interaction,
+  Provider,
+  Activity,
+  RunStatus,
+} from '../shared/contracts.js';
 export interface AgentState {
   activity: Activity;
   text: string;
@@ -32,13 +39,17 @@ export function applyEvent(state: OfficeState, event: OfficeEvent): OfficeState 
     agents: { codex: { ...state.agents.codex }, claude: { ...state.agents.claude } },
   };
   const p = event.payload;
-  if (event.type === 'run.updated') {
-    next.run = p.run as Run;
+  if (event.type === 'run.updated' || (event.type === 'run.status' && next.run)) {
+    next.run =
+      event.type === 'run.updated'
+        ? (p.run as Run)
+        : { ...next.run!, status: p.status as RunStatus };
     if (
       ['completed', 'cancelled', 'failed', 'interrupted', 'needs_attention'].includes(
         next.run.status,
       )
     ) {
+      next.interactions = [];
       for (const a of Object.values(next.agents)) {
         a.activity = 'idle';
         a.waiting = false;

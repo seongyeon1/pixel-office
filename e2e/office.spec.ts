@@ -58,3 +58,48 @@ test('running work can be stopped without starting a reviewer', async ({ page })
   await page.getByRole('button', { name: '작업 중단', exact: true }).click();
   await expect(page.locator('.run-result')).toContainText('중단됨');
 });
+test('expired server session replaces stale execution with a reconnection message', async ({
+  page,
+}) => {
+  let socket: import('@playwright/test').WebSocketRoute | undefined;
+  await page.routeWebSocket('**/api/events*', (ws) => {
+    socket = ws;
+    ws.connectToServer();
+  });
+  await connect(page);
+  await page.getByLabel('작업 내용').fill('서버 재시작 테스트');
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  await page.getByRole('button', { name: 'Codex 선택' }).click();
+  await expect(page.getByRole('heading', { name: '승인 필요' })).toBeVisible();
+  await page.route('**/api/health', (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '연결 URL로 앱을 다시 열어 주세요.' }),
+    }),
+  );
+  await socket!.close();
+  await expect(
+    page.getByText('터미널에 표시된 연결 URL로 열어주세요.', { exact: true }),
+  ).toBeVisible();
+});
+test.afterEach(async ({ page }) => {
+  const response = await page.request.get('/api/health');
+  if (response.ok()) {
+    const h = await response.json();
+    if (h.activeId)
+      await page.request.post(`/api/runs/${h.activeId}/cancel`, {
+        headers: { origin: 'http://127.0.0.1:4318' },
+        data: {},
+      });
+  }
+});
+test('single-agent mode shows the actual implementer instead of a reviewer role', async ({
+  page,
+}) => {
+  await page.goto('/#token=e2e-token');
+  await expect(page.getByRole('heading', { name: '오늘의 오피스.' })).toBeVisible();
+  await page.getByLabel('실행 방식').selectOption('claude');
+  await expect(page.getByText('구현과 테스트를 담당해요', { exact: true })).toBeVisible();
+  await expect(page.getByText('Claude가 단독으로 작업해요', { exact: true })).toBeVisible();
+});

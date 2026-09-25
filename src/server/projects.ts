@@ -50,15 +50,33 @@ export async function collectChanges(cwd: string, baseCommit: string): Promise<C
     let diff = '',
       truncated = false;
     const full = join(cwd, path);
-    const status = untracked.includes(path) ? 'added' : 'modified';
+    let status = untracked.includes(path) ? 'added' : 'modified';
+    let baseSize = 0;
+    if (status !== 'added') {
+      try {
+        baseSize = Number((await git(cwd, ['cat-file', '-s', `${baseCommit}:${path}`])).trim());
+      } catch {
+        // A file added since the base commit has no base blob.
+      }
+    }
+    const fileDiff = () =>
+      git(cwd, [
+        '--literal-pathspecs',
+        'diff',
+        '--no-ext-diff',
+        '--no-textconv',
+        baseCommit,
+        '--',
+        path,
+      ]);
     try {
       const stat = await lstat(full);
       if (stat.isSymbolicLink()) {
         diff = '심볼릭 링크 (대상 파일을 읽지 않음)';
       } else if (!stat.isFile()) {
         diff = '일반 파일이 아닙니다.';
-      } else if (stat.size > max) {
-        diff = `큰 파일 (${stat.size.toLocaleString()} bytes). 작업 폴더에서 확인해 주세요.`;
+      } else if (stat.size > max || baseSize > max) {
+        diff = `큰 파일 (이전 ${baseSize.toLocaleString()} / 현재 ${stat.size.toLocaleString()} bytes). 작업 폴더에서 확인해 주세요.`;
         truncated = true;
       } else if (!isWithin(cwd, await realpath(full))) {
         diff = '작업 폴더 외부 파일은 표시하지 않습니다.';
@@ -71,13 +89,16 @@ export async function collectChanges(cwd: string, baseCommit: string): Promise<C
             .split('\n')
             .map((l) => '+' + l)
             .join('\n');
-        else
-          diff = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', baseCommit, '--', path]);
+        else diff = await fileDiff();
       }
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT')
-        diff = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', baseCommit, '--', path]);
-      else throw e;
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        status = 'deleted';
+        if (baseSize > max) {
+          diff = `삭제된 큰 파일 (${baseSize.toLocaleString()} bytes). 기준 커밋에서 내용을 확인해 주세요.`;
+          truncated = true;
+        } else diff = await fileDiff();
+      } else throw e;
     }
     if (diff.length > max) {
       diff = diff.slice(0, max);
