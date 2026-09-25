@@ -18,6 +18,7 @@ export async function createWorkspace(projectPath:string,runId:string,dataDir:st
  const branch=`pixel/${runId}`;await git(project.root,['worktree','add','-b',branch,path,project.head]);return {path,branch,baseCommit:project.head};
 }
 export async function collectChanges(cwd:string,baseCommit:string):Promise<Change[]>{
+ cwd=await realpath(cwd);
  const tracked=(await git(cwd,['diff','--name-only','-z',baseCommit,'--'])).split('\0').filter(Boolean);
  const untracked=(await git(cwd,['ls-files','--others','--exclude-standard','-z'])).split('\0').filter(Boolean);
  const results:Change[]=[];const max=256*1024;
