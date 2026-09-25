@@ -153,3 +153,31 @@ test('several people working in one repository meet sometimes; idle coworkers ta
   for (let clock = 0; clock < LOUNGE_CYCLE * 20; clock += 5000)
     for (const p of placements(alone, L, clock).values()) expect(p.kind).toBe('desk');
 });
+test('a repository office puts a wide room first with small facilities beside it when there is space', () => {
+  const office = {
+    maxRows: Infinity,
+    roomsFirst: true,
+    minCell: 160,
+    roomSpan: 2,
+    facilityRows: 1,
+  };
+  const room = {
+    root: '/r',
+    lanes: [
+      lane(
+        '/r',
+        Array.from({ length: 11 }, (_, i) => `w${i}`),
+      ),
+    ],
+  };
+  const wide = floorLayout([room], 790, office);
+  expect(wide.cells.map((c) => c.key)).toEqual(['/r', MEETING, LOUNGE]);
+  expect(new Set(wide.cells.map((c) => c.y)).size).toBe(1);
+  expect(wide.cells[0].w).toBeGreaterThan(wide.cells[1].w * 2);
+  // No overflow in an office: every coworker gets a desk.
+  expect(wide.seats.size).toBe(11);
+  expect(wide.hidden.size).toBe(0);
+  const narrow = floorLayout([room], 340, office);
+  expect(narrow.cells.every((c) => c.w === narrow.cells[0].w)).toBe(true);
+  expect(narrow.seats.size).toBe(11);
+});

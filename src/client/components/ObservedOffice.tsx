@@ -163,6 +163,7 @@ export function ObservedOffice({
           </span>
         </div>
         <SessionOffice
+          root={root}
           sessions={sessions}
           selected={selected}
           onSelect={choose}

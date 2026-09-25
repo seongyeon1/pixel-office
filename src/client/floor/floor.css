@@ -404,3 +404,41 @@
   flex-shrink: 0;
   max-width: 62%;
 }
+/* Repository office: captions are always on, and the picked coworker is outlined. */
+.floor.office .floor-caption {
+  display: block;
+}
+.floor.office .floor-mark {
+  bottom: calc(100% + 26px);
+}
+.floor.office .floor-worker:hover .floor-mark,
+.floor.office .floor-worker:focus-visible .floor-mark {
+  display: grid;
+}
+.floor-worker.selected .floor-name {
+  background: #5b8a5c;
+  color: #fff;
+}
+.floor-worker.selected .floor-sprite {
+  filter: drop-shadow(0 0 0 #5b8a5c) drop-shadow(0 2px 0 #5b8a5c55);
+}
+.floor-worker[data-activity='executing'] .floor-caption {
+  border-color: #5e6f68;
+}
+@media (prefers-reduced-motion: reduce) {
+  .floor-worker {
+    transition-duration: 0s !important;
+  }
+}
+.floor.office .floor-caption {
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 4px;
+  font-size: 9px;
+}
+.floor.office .floor-worker:hover .floor-caption,
+.floor.office .floor-worker:focus-visible .floor-caption {
+  max-width: none;
+  z-index: 1;
+}
