@@ -33,14 +33,16 @@ export function ObservedOffice({
   sessions,
   root,
   selectedProvider,
+  initialSessionId,
   onProviderChange,
 }: {
   sessions: ObservedSession[];
   root: string;
   selectedProvider: Provider;
+  initialSessionId?: string;
   onProviderChange: (id: Provider) => void;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSessionId ?? null);
   const [detail, setDetail] = useState<ObservedDetail | null>(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState<'summary' | 'history' | 'chat'>('summary');
@@ -48,7 +50,10 @@ export function ObservedOffice({
   const [filter, setFilter] = useState('all');
   const [reply, setReply] = useState<ChatMessage>();
   useEffect(() => {
-    const initial = sessions.find((s) => s.status === 'active') ?? sessions[0];
+    const initial =
+      sessions.find((s) => s.id === initialSessionId) ??
+      sessions.find((s) => s.status === 'active') ??
+      sessions[0];
     if (initial) {
       setSelectedId(initial.id);
       onProviderChange(initial.provider);

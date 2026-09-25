@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   Armchair,
+  Map,
   ArrowUpRight,
   Check,
   ChevronDown,
@@ -47,6 +48,8 @@ import { applyEvent, emptyState, type OfficeState } from './state';
 import { Office } from './office/Office';
 import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
+import { ProjectMap } from './overview/ProjectMap';
+import type { ProjectWorker } from './overview/projects';
 import { ObservedOffice } from './components/ObservedOffice';
 import { RepositoryList, repositoryName } from './components/RepositoryList';
 const WorkspacePanel = lazy(() => import('./workspace/WorkspacePanel'));
@@ -82,7 +85,10 @@ export function App() {
   const snapshotVersion = useRef(0);
   const [selected, setSelected] = useState<Provider>('claude');
   const [tab, setTab] = useState<'activity' | 'files'>('activity');
-  const [view, setView] = useState<'office' | 'history' | 'team'>('office');
+  const [view, setView] = useState<'overview' | 'office' | 'history' | 'team'>(() =>
+    localStorage.getItem('pixel.overview') === 'true' ? 'overview' : 'office',
+  );
+  const [targetSessionId, setTargetSessionId] = useState<string>();
   const [modal, setModal] = useState<'project' | 'team' | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [path, setPath] = useState(() => localStorage.getItem('pixel.project') ?? '');
@@ -149,7 +155,11 @@ export function App() {
       if (version === snapshotVersion.current) setError((e as Error).message);
     }
   };
-  const switchProject = async (root: string, inspected?: Project) => {
+  const switchProject = async (
+    root: string,
+    inspected?: Project,
+    options?: { keepView?: boolean; worker?: ProjectWorker },
+  ) => {
     const version = ++selectionVersion.current;
     snapshotVersion.current++;
     projectRef.current = root;
@@ -165,8 +175,10 @@ export function App() {
     setSocketStatus('');
     setError('');
     setModal(null);
-    setView('office');
-    setOfficeSource('auto');
+    if (!options?.keepView) setView('office');
+    setTargetSessionId(options?.worker?.session?.id);
+    if (options?.worker) setSelected(options.worker.provider);
+    setOfficeSource(options?.worker?.session ? 'external' : options?.worker?.run ? 'app' : 'auto');
     setLoadingProject(true);
     try {
       const [list, metadata] = await Promise.all([
@@ -179,7 +191,8 @@ export function App() {
       setRuns(list);
       if (metadata) setProject(metadata);
       else setError('레포 경로를 확인할 수 없습니다. 보관된 작업 기록은 계속 볼 수 있어요.');
-      if (list[0]) await selectRun(list[0].id);
+      if (options?.worker?.run) await selectRun(options.worker.run.id);
+      else if (list[0]) await selectRun(list[0].id);
     } catch (e) {
       if (version === selectionVersion.current) setError((e as Error).message);
     } finally {
@@ -204,7 +217,7 @@ export function App() {
           localStorage.getItem('pixel.project') ??
           repositories.find((p) => p.latestRun?.id === h.activeId)?.root ??
           observed.sessions[0]?.projectPath;
-        if (root) await switchProject(root);
+        if (root) await switchProject(root, undefined, { keepView: true });
         if (!cancelled) setBooted(true);
       } catch (e) {
         if (!cancelled) setAuthError((e as Error).message);
@@ -216,8 +229,11 @@ export function App() {
   }, []);
   useEffect(() => {
     if (booted && !projectRef.current && observation.sessions[0])
-      void switchProject(observation.sessions[0].projectPath);
+      void switchProject(observation.sessions[0].projectPath, undefined, { keepView: true });
   }, [booted, observation.sessions]);
+  useEffect(() => {
+    if (booted) localStorage.setItem('pixel.overview', String(view === 'overview'));
+  }, [view, booted]);
   useEffect(() => {
     if (!booted) return;
     let stopped = false;
@@ -450,6 +466,16 @@ export function App() {
           <ChevronDown size={14} />
         </button>
         <nav aria-label="주 메뉴">
+          <button
+            className={view === 'overview' ? 'active' : ''}
+            onClick={() => {
+              setView('overview');
+              setWorkspaceOpen(false);
+            }}
+          >
+            <Map size={18} />
+            전체 맵
+          </button>
           <button className={view === 'office' ? 'active' : ''} onClick={() => setView('office')}>
             <LayoutGrid size={18} />
             오피스
@@ -526,19 +552,36 @@ export function App() {
               onClick={() => setModal('project')}
             >
               <Folder size={15} />
-              <span>{project ? repositoryName(project.root) : '레포 선택'}</span>
+              <span>
+                {view === 'overview'
+                  ? '전체 프로젝트'
+                  : project
+                    ? repositoryName(project.root)
+                    : '레포 선택'}
+              </span>
               <ChevronDown size={13} />
             </button>
             <ChevronRight size={14} />
             <strong>
-              {view === 'office' ? '오피스' : view === 'history' ? '작업 기록' : '우리 팀'}
+              {view === 'overview'
+                ? '전체 맵'
+                : view === 'office'
+                  ? '오피스'
+                  : view === 'history'
+                    ? '작업 기록'
+                    : '우리 팀'}
             </strong>
           </div>
           <div className="topbar-right">
             <button
               className="open-workspace"
               aria-expanded={workspaceOpen}
-              disabled={!project}
+              disabled={!project || view === 'overview'}
+              title={
+                view === 'overview'
+                  ? '프로젝트 오피스에서 코드와 터미널을 열 수 있어요.'
+                  : undefined
+              }
               onClick={() => setWorkspaceOpen((v) => !v)}
             >
               <Code2 size={16} />
@@ -568,7 +611,7 @@ export function App() {
             />
           </Suspense>
         )}
-        {otherActive && (
+        {otherActive && view !== 'overview' && (
           <div className="other-repository" role="status">
             <span>
               <span className="presence working" /> {repositoryName(otherActive.root)}에서{' '}
@@ -619,10 +662,18 @@ export function App() {
             )}
           </div>
         )}
-        {view === 'office' && observing ? (
+        {view === 'overview' ? (
+          <ProjectMap
+            projects={projects}
+            observation={observation}
+            onConnect={() => setModal('project')}
+            onOpen={(root, worker) => void switchProject(root, undefined, { worker })}
+          />
+        ) : view === 'office' && observing ? (
           <ObservedOffice
             key={project?.root ?? 'none'}
             sessions={observedSessions}
+            initialSessionId={targetSessionId}
             root={project?.root ?? ''}
             selectedProvider={selected}
             onProviderChange={setSelected}
