@@ -261,8 +261,10 @@ export function App() {
     };
   }, []);
   useEffect(() => {
-    if (booted && !projectRef.current && observation.sessions[0])
-      void switchProject(observation.sessions[0].projectPath, undefined, { keepView: true });
+    // Opening a project remembers it, so never open one only a script has worked in.
+    const first = observation.sessions.find((s) => !s.automated);
+    if (booted && !projectRef.current && first)
+      void switchProject(first.projectPath, undefined, { keepView: true });
   }, [booted, observation.sessions]);
   useEffect(() => {
     if (booted) localStorage.setItem('pixel.overview', String(view === 'overview'));
