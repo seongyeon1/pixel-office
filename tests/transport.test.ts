@@ -1,11 +1,48 @@
-import {expect,test} from 'vitest';
-import {createStore} from '../src/server/store.js';
-import {createServer} from '../src/server/transport.js';
-import type {Adapter} from '../src/shared/contracts.js';
-import {createOrchestrator} from '../src/server/orchestrator.js';
-test('rejects foreign origins and unauthenticated actions; bootstrap grants a session',async()=>{const store=createStore(':memory:');const a:Adapter={probe:async()=>({installed:true,authenticated:true,detail:'test'}),execute:async()=>({outcome:'completed',text:''}),close:async()=>{}};const adapters={codex:a,claude:a};const o=createOrchestrator({store,adapters,dataDir:'/tmp/pixel-transport-test'});const {app}=await createServer({store,adapters,orchestrator:o,token:'test-token',port:4317});
- expect((await app.inject({method:'POST',url:'/api/runs',headers:{host:'127.0.0.1:4317',origin:'https://foreign.example'},payload:{}})).statusCode).toBe(403);
- expect((await app.inject({url:'/api/runs',headers:{host:'127.0.0.1:4317'}})).statusCode).toBe(401);
- const r=await app.inject({method:'POST',url:'/api/session',headers:{host:'127.0.0.1:4317',origin:'http://127.0.0.1:4317'},payload:{token:'test-token'}});expect(r.statusCode).toBe(200);const cookie=r.headers['set-cookie'] as string;
- expect((await app.inject({url:'/api/runs',headers:{host:'127.0.0.1:4317',cookie}})).json()).toEqual([]);
- await app.close();store.close();});
+import { expect, test } from 'vitest';
+import { createStore } from '../src/server/store.js';
+import { createServer } from '../src/server/transport.js';
+import type { Adapter } from '../src/shared/contracts.js';
+import { createOrchestrator } from '../src/server/orchestrator.js';
+test('rejects foreign origins and unauthenticated actions; bootstrap grants a session', async () => {
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-transport-test' });
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: o,
+    token: 'test-token',
+    port: 4317,
+  });
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/runs',
+        headers: { host: '127.0.0.1:4317', origin: 'https://foreign.example' },
+        payload: {},
+      })
+    ).statusCode,
+  ).toBe(403);
+  expect(
+    (await app.inject({ url: '/api/runs', headers: { host: '127.0.0.1:4317' } })).statusCode,
+  ).toBe(401);
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/session',
+    headers: { host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317' },
+    payload: { token: 'test-token' },
+  });
+  expect(r.statusCode).toBe(200);
+  const cookie = r.headers['set-cookie'] as string;
+  expect(
+    (await app.inject({ url: '/api/runs', headers: { host: '127.0.0.1:4317', cookie } })).json(),
+  ).toEqual([]);
+  await app.close();
+  store.close();
+});
