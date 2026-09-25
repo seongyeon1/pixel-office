@@ -2225,25 +2225,27 @@ nav button.active svg {
   font-weight: 600;
 }
 .desk-art {
-  height: 83px;
+  height: 138px;
   position: relative;
-  width: 100px;
+  width: 116px;
   margin: 0 auto;
   max-width: 100%;
 }
 .pixel-worker {
-  width: 64px;
-  height: 69px;
+  width: 96px;
+  height: 128px;
+  image-rendering: pixelated;
+  flex-shrink: 0;
 }
 .desk-art .pixel-worker {
   position: absolute;
-  left: calc(50% - 32px);
+  left: calc(50% - 48px);
   top: 0;
 }
 .pixel-table {
   position: absolute;
   bottom: 11px;
-  width: 86px;
+  width: 104px;
   max-width: 90%;
   height: 14px;
   left: 5%;
@@ -2259,7 +2261,7 @@ nav button.active svg {
   background: #465355;
   border: 4px solid #667571;
   bottom: 23px;
-  left: calc(50% - 15px);
+  left: calc(50% + 6px);
   z-index: 1;
   box-shadow: 0 4px 0 -1px #465355;
 }
@@ -2481,8 +2483,8 @@ nav button.active svg {
   padding: 18px 20px 16px;
 }
 .session-profile-heading > .pixel-worker {
-  width: 56px;
-  height: 64px;
+  width: 96px;
+  height: 128px;
   background: #edf0e5;
   border-radius: 10px;
 }

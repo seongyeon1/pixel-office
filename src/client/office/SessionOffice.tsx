@@ -1,30 +1,8 @@
 import { useEffect, useState } from 'react';
+import { PixelWorker } from './PixelWorker';
 import { ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
 import { activityLabels, type ChatMessage, type ObservedSession } from '../../shared/contracts';
 const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude');
-export function PixelWorker({ provider }: { provider: ObservedSession['provider'] }) {
-  return (
-    <svg
-      viewBox="0 0 80 86"
-      aria-hidden="true"
-      className={`pixel-worker ${provider}`}
-      shapeRendering="crispEdges"
-    >
-      <ellipse cx="40" cy="78" rx="23" ry="5" fill="#58644a" opacity=".16" />
-      <path
-        d="M25 10h30v5h5v24h-5v8H25v-8h-5V15h5z"
-        fill={provider === 'claude' ? '#624a36' : '#384a50'}
-      />
-      <path d="M25 22h30v19h-5v7H30v-7h-5z" fill="#f0c59c" />
-      <path d="M29 29h5v5h-5zm17 0h5v5h-5z" fill="#333e3f" />
-      <path d="M36 39h8v3h-8z" fill="#b87967" />
-      <path d="M25 48h30v7h6v17H19V55h6z" fill={provider === 'claude' ? '#c67753' : '#537e80'} />
-      <path d="M35 48h10v10H35z" fill="#f4ecdc" />
-      <path d="M19 59h7v11h-7zm35 0h7v11h-7z" fill="#edbe98" />
-      <path d="M27 71h11v9H24v-5h3zm15 0h11v4h3v5H42z" fill="#3f4948" />
-    </svg>
-  );
-}
 export function SessionOffice({
   sessions,
   selected,
@@ -93,7 +71,7 @@ export function SessionOffice({
                     : '최근 활동 확인'}
               </span>
               <div className="desk-art">
-                <PixelWorker provider={s.provider} />
+                <PixelWorker provider={s.provider} identity={s.sessionId} />
                 <span className="pixel-monitor">
                   <i />
                 </span>

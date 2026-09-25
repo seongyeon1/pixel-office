@@ -1,5 +1,22 @@
+import { workerSprite, SPRITE_WIDTH, SPRITE_HEIGHT } from './workerSprite';
 import type { Provider, Activity } from '../../shared/contracts';
 import { seniorityLabels, activityLabels, type TeamConfig } from '../../shared/contracts';
+// Rasterize once at the native pixel grid. Scaling individual rectangles at
+// fractional zoom leaves antialiased seams between rows on Canvas.
+const workerImages: Partial<Record<Provider, HTMLCanvasElement>> = {};
+function workerImage(provider: Provider) {
+  if (workerImages[provider]) return workerImages[provider];
+  const canvas = document.createElement('canvas');
+  canvas.width = SPRITE_WIDTH;
+  canvas.height = SPRITE_HEIGHT;
+  const context = canvas.getContext('2d')!;
+  for (const [x, y, width, color] of workerSprite(provider)) {
+    context.fillStyle = color;
+    context.fillRect(x, y, width, 1);
+  }
+  workerImages[provider] = canvas;
+  return canvas;
+}
 export const positions: Record<Provider, { x: number; y: number }> = {
   claude: { x: 342, y: 270 },
   codex: { x: 580, y: 270 },
@@ -199,46 +216,26 @@ export function drawOffice(
     const a = agents[id];
     const x = a.x,
       y = a.y;
-    const tint = id === 'claude' ? '#c08465' : '#598d90';
     const bob = !reduced && a.activity !== 'idle' ? Math.round(Math.sin(time / 220) * 1.5) : 0;
     if (selected === id) {
       r(x - 25, y + 28, 50, 5, '#a4b797');
       r(x - 30, y + 24, 5, 4, '#a4b797');
       r(x + 25, y + 24, 5, 4, '#a4b797');
     }
-    r(x - 16, y + 23, 32, 6, '#b7ad98');
-    ctx.save();
-    ctx.translate(x, y + bob);
-    r(-11, -21, 22, 6, '#594737');
-    r(-15, -15, 30, 22, '#ebc2a0');
-    r(-15, -16, 7, 15, '#685243');
-    r(-13, -23, 25, 10, '#685243');
-    r(7, -17, 8, 8, '#685243');
-    r(-5, -5, 3, 3, '#483e37');
-    r(7, -5, 3, 3, '#483e37');
-    r(0, 3, 5, 2, '#c49377');
-    r(-14, 8, 28, 18, tint);
-    r(-19, 11, 5, 13, '#e5b998');
-    r(14, 11, 5, 13, '#e5b998');
-    r(-12, 26, 10, 9, '#515e67');
-    r(3, 26, 10, 9, '#515e67');
-    r(-14, 33, 12, 4, '#434e57');
-    r(3, 33, 13, 4, '#434e57');
-    r(-4, 11, 7, 5, id === 'claude' ? '#e4ba9b' : '#a8cecb');
-    ctx.restore();
+    ctx.drawImage(workerImage(id), Math.round(x - 30), Math.round(y - 38 + bob), 60, 80);
     r(x - 51, y + 45, 102, 24, '#fbfaf2');
     r(x - 51, y + 69, 102, 2, '#c7c7b6');
     txt(id === 'claude' ? 'Claude' : 'Codex', x - 40, y + 61, 12, '#425146');
     txt(external ? '외부' : seniorityLabels[team[id].seniority], x + 19, y + 61, 10, '#858b77');
     if (a.waiting) {
-      r(x - 17, y - 59, 34, 26, '#fff4d6');
-      r(x - 3, y - 33, 6, 5, '#fff4d6');
-      txt('!', x, y - 40, 20, '#b47f2d', 'center');
+      r(x - 17, y - 76, 34, 26, '#fff4d6');
+      r(x - 3, y - 50, 6, 5, '#fff4d6');
+      txt('!', x, y - 57, 20, '#b47f2d', 'center');
     } else if (a.activity !== 'idle') {
       const label = activityLabels[a.activity];
-      r(x - 42, y - 55, 84, 23, '#ffffff');
-      r(x - 3, y - 32, 6, 5, '#ffffff');
-      txt(label, x, y - 39, 11, '#5d7565', 'center');
+      r(x - 42, y - 72, 84, 23, '#ffffff');
+      r(x - 3, y - 49, 6, 5, '#ffffff');
+      txt(label, x, y - 56, 11, '#5d7565', 'center');
     }
   }
 }

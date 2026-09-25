@@ -9,7 +9,8 @@ import {
   type Provider,
 } from '../../shared/contracts';
 import { api } from '../api';
-import { SessionOffice, PixelWorker } from '../office/SessionOffice';
+import { SessionOffice } from '../office/SessionOffice';
+import { PixelWorker } from '../office/PixelWorker';
 import { SessionChat } from './SessionChat';
 import { repositoryName } from './RepositoryList';
 export const observedStatus = {
@@ -223,7 +224,7 @@ export function ObservedOffice({
         {selected ? (
           <>
             <div className="session-profile-heading">
-              <PixelWorker provider={selected.provider} />
+              <PixelWorker provider={selected.provider} identity={selected.sessionId} />
               <div>
                 <h2>{name(selected.provider)}</h2>
                 <span>{selected.label || selected.sessionId.slice(0, 8)}</span>
