@@ -241,3 +241,27 @@ test('connected projects stay on the floor when empty; folders only seen in logs
   const shown = rooms.filter(shownOnFloor).map((r) => r.root);
   expect(shown).toEqual(['/work/busy', '/work/connected', '/work/ran']);
 });
+
+test('an open but quiet terminal keeps its desk as away; closing it or an unknown process sends it home', () => {
+  const now = Date.parse('2026-09-26T00:30:00Z');
+  const yesterday = '2026-09-25T02:59:21Z';
+  const rows: ObservedSession[] = [
+    { ...session('open', '/r', 'idle'), processAlive: true, updatedAt: yesterday },
+    { ...session('closed', '/r', 'idle'), processAlive: false, updatedAt: yesterday },
+    { ...session('unknown', '/r', 'idle'), processAlive: null, updatedAt: yesterday },
+    {
+      ...session('fresh', '/r', 'idle'),
+      processAlive: true,
+      updatedAt: new Date(now - 60000).toISOString(),
+    },
+  ];
+  const [room] = projectRooms([], rows, { now });
+  const open = room.workers.find((w) => w.id === 'observed:open')!;
+  expect(open).toMatchObject({ away: true, mark: null });
+  expect(open.caption).toMatch(/^자리 비움 · 어제 /);
+  expect(room.workers.find((w) => w.id === 'observed:fresh')).toMatchObject({
+    away: false,
+    mark: 'report',
+  });
+  expect(room.offDuty.map((w) => w.id).sort()).toEqual(['observed:closed', 'observed:unknown']);
+});

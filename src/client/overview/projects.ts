@@ -7,7 +7,7 @@ import {
   type Provider,
   type Run,
 } from '../../shared/contracts';
-import { hasReport, onDuty, type Seen } from '../floor/roster';
+import { hasReport, isAway, onDuty, type Seen } from '../floor/roster';
 import { modelFamily, type ModelFamily } from '../models/family';
 export type WorkerMark = 'question' | 'approval' | 'report' | null;
 export interface ProjectWorker {
@@ -18,6 +18,8 @@ export interface ProjectWorker {
   caption: string;
   prompt: string;
   active: boolean;
+  // Terminal still open but quiet for a while: stays at the desk, dimmed.
+  away?: boolean;
   waiting: boolean;
   stale: boolean;
   root: string;
@@ -63,8 +65,19 @@ const markCaption: Record<Exclude<WorkerMark, null>, string> = {
   approval: '승인 기다려요',
   report: '보고할 게 있어요',
 };
-function observedWorker(s: ObservedSession, seen: Seen): ProjectWorker {
-  const mark: WorkerMark = s.attention?.kind ?? (hasReport(s, seen) ? 'report' : null);
+// When an away coworker was last active: today's time, 어제, or the date.
+function lastSeen(iso: string, now: number) {
+  const at = new Date(iso);
+  const day = (d: Date) => d.toDateString();
+  const time = at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  if (day(at) === day(new Date(now))) return time;
+  if (day(at) === day(new Date(now - 86400000))) return `어제 ${time}`;
+  return `${at.getMonth() + 1}/${at.getDate()}`;
+}
+function observedWorker(s: ObservedSession, seen: Seen, now: number): ProjectWorker {
+  const away = isAway(s, now);
+  // An old unread turn on an idle open terminal is not news; the dimmed desk says enough.
+  const mark: WorkerMark = s.attention?.kind ?? (!away && hasReport(s, seen) ? 'report' : null);
   return {
     id: `observed:${s.id}`,
     provider: s.provider,
@@ -75,12 +88,15 @@ function observedWorker(s: ObservedSession, seen: Seen): ProjectWorker {
       ? s.attention && !s.attention.certain
         ? '승인 대기 중일 수 있어요'
         : markCaption[mark]
-      : s.status === 'active'
-        ? activityLabels[s.activity]
-        : s.status === 'idle'
-          ? '응답 완료 · 대기'
-          : '상태 확인 필요',
+      : away
+        ? `자리 비움 · ${lastSeen(s.updatedAt, now)}`
+        : s.status === 'active'
+          ? activityLabels[s.activity]
+          : s.status === 'idle'
+            ? '응답 완료 · 대기'
+            : '상태 확인 필요',
     active: s.status === 'active',
+    away,
     waiting: mark === 'question' || mark === 'approval',
     stale: s.status === 'stale',
     root: s.projectPath,
@@ -130,14 +146,14 @@ export function projectRooms(
   for (const s of sessions) {
     if (s.automated) continue;
     const room = get(s.projectPath);
-    if (onDuty(s, now)) room.workers.push(observedWorker(s, seen));
-    else room.offDuty.push(observedWorker(s, seen));
+    if (onDuty(s, now)) room.workers.push(observedWorker(s, seen, now));
+    else room.offDuty.push(observedWorker(s, seen, now));
   }
   // Automated sessions never take a desk or open a room of their own (e.g. smoke-test repos);
   // running ones are listed with a room that people or a connection already opened.
   for (const s of sessions)
     if (s.automated && s.status === 'active' && s.processAlive !== false)
-      rooms.get(s.projectPath)?.automations.push(observedWorker(s, seen));
+      rooms.get(s.projectPath)?.automations.push(observedWorker(s, seen, now));
   for (const room of rooms.values()) {
     const parts = room.root.split(/[\\/]/).filter(Boolean);
     let length = Math.min(3, parts.length);
