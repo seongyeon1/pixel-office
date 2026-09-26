@@ -349,6 +349,7 @@ export async function createServer({
   app.post('/api/hook/questions', async (req) => {
     const body = z
       .object({
+        id: z.string().uuid().optional(),
         sessionId: z.string().max(200),
         cwd: z.string().max(4096),
         questions: z.array(z.unknown()).min(1).max(10),

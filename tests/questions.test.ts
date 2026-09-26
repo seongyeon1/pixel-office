@@ -26,3 +26,11 @@ test('an unanswered wait comes back pending; released and expired questions go b
   expect(await desk.wait(b.id, 10)).toEqual({ status: 'expired' });
   expect(await desk.wait('unknown', 10)).toEqual({ status: 'expired' });
 });
+test('the hook may name its question, but an id is never taken twice', () => {
+  const desk = createQuestionDesk();
+  const id = '6f1c2a4e-8b3d-4c5e-9f70-1a2b3c4d5e6f';
+  expect(desk.ask({ ...ask, id }).id).toBe(id);
+  expect(() => desk.ask({ ...ask, id })).toThrow('이미 받은 질문이에요.');
+  desk.release(id);
+  expect(() => desk.ask({ ...ask, id })).toThrow('이미 받은 질문이에요.');
+});

@@ -2,6 +2,7 @@
 // PreToolUse hook for AskUserQuestion: hands the question to Pixel Office and waits for an answer.
 // Anything unexpected (app not running, no answer in time, "answer in the terminal") ends quietly
 // with no output, so Claude shows its own question in the terminal as usual.
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 const GIVE_UP_MS = Number(process.env.PIXEL_HOOK_GIVE_UP_MS ?? 570_000);
 const quietly = () => process.exit(0);
@@ -13,20 +14,20 @@ try {
   const file = process.env.PIXEL_HOOK_FILE ?? new URL('../.pixel/hook.json', import.meta.url);
   const { url, token } = JSON.parse(await readFile(file, 'utf8'));
   const headers = { 'content-type': 'application/json', 'x-pixel-hook': token };
+  // The hook names the question, so nothing from a response ends up in a URL.
+  const id = randomUUID();
+  const question = `${url}/api/hook/questions/${id}`;
   const opened = await fetch(`${url}/api/hook/questions`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
+      id,
       sessionId: input.session_id ?? '',
       cwd: input.cwd ?? '',
       questions: input.tool_input?.questions ?? [],
     }),
   });
   if (!opened.ok) quietly();
-  const { id } = await opened.json();
-  // Only a question id the app issued goes into a URL path.
-  if (typeof id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) quietly();
-  const question = `${url}/api/hook/questions/${encodeURIComponent(id)}`;
   const deadline = Date.now() + GIVE_UP_MS;
   while (Date.now() < deadline) {
     const wait = Math.min(25_000, Math.max(1, deadline - Date.now()));
