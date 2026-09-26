@@ -437,9 +437,6 @@ nav button.active svg {
   grid-template-columns: minmax(0, 1fr) 298px;
   min-height: calc(100vh - 73px);
 }
-.office-page.inspector-hidden {
-  grid-template-columns: 1fr;
-}
 .main-column {
   padding: 28px 28px 20px;
   min-width: 0;
@@ -451,27 +448,9 @@ nav button.active svg {
   margin-bottom: 23px;
   gap: 15px;
 }
-.overline {
-  font-size: 10px;
-  color: #8d9888;
-  margin-bottom: 8px;
-  display: flex;
-  gap: 7px;
-  align-items: center;
-}
-.tiny-square {
-  width: 5px;
-  height: 5px;
-  background: #94a58b;
-  border-radius: 1px;
-}
 .page-heading h1 {
   font-size: 25px;
   font-weight: 700;
-}
-.soft-dot {
-  color: #7b9572;
-  margin-left: 3px;
 }
 .page-heading p {
   font-size: 11px;
@@ -486,115 +465,12 @@ nav button.active svg {
   padding: 8px 12px;
   white-space: nowrap;
 }
-.office-card {
-  background: #fff;
-  border: 1px solid #dde3da;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 4px 16px #56654a05;
-}
-.office-toolbar {
-  height: 44px;
-  padding: 0 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #e6eae1;
-  color: #85917d;
-  font-size: 10px;
-}
-.office-toolbar > span,
-.office-toolbar > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .small-tag {
   border: 1px solid #e9ece5;
   font-size: 9px;
   border-radius: 4px;
   padding: 3px 6px;
   color: #9ba492;
-}
-.office-scene {
-  position: relative;
-  background: #edf0ed;
-  overflow: hidden;
-  padding: 16px 0 8px;
-}
-.office-scene canvas {
-  width: 100%;
-  height: auto;
-  display: block;
-  image-rendering: pixelated;
-  cursor: pointer;
-}
-.scene-label {
-  position: absolute;
-  top: 15px;
-  left: 16px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 9px;
-  color: #8f9b88;
-  background: #f9fcf5c9;
-  border: 1px solid #dfe7d9;
-  border-radius: 4px;
-  padding: 5px 7px;
-}
-.scene-label > span:last-child {
-  border-left: 1px solid #d9e1d1;
-  padding-left: 6px;
-  font-size: 8px;
-  color: #a2aa9a;
-}
-.pixel-dot {
-  width: 6px;
-  height: 6px;
-  background: #91a886;
-  box-shadow: 2px 2px 0 #c7d2bf;
-}
-.zoom-controls {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  position: absolute;
-  right: 14px;
-  bottom: 13px;
-  background: #fafcf8;
-  border: 1px solid #e0e7dc;
-  border-radius: 6px;
-  height: 25px;
-  padding: 0 2px;
-  color: #8c9984;
-  font-size: 9px;
-}
-.zoom-controls button {
-  border: 0;
-  background: none;
-  padding: 0 6px;
-  font-size: 16px;
-  color: #95a18c;
-}
-.office-footer {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  padding: 13px 17px;
-  font-size: 9px;
-  color: #a0a89a;
-  border-top: 1px solid #e3e9dd;
-}
-.office-footer > span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.office-footer small {
-  margin-left: auto;
-  font-size: 9px;
-  color: #a3ac9c;
 }
 .task-composer {
   background: #fff;
@@ -1344,9 +1220,6 @@ nav button.active svg {
   .office-page {
     grid-template-columns: minmax(0, 1fr) 320px;
   }
-  .office-scene {
-    padding: 22px 15px 10px;
-  }
   .page-heading {
     margin-bottom: 28px;
   }
@@ -1365,12 +1238,6 @@ nav button.active svg {
   }
   .office-page {
     grid-template-columns: minmax(0, 1fr) 260px;
-  }
-  .office-footer {
-    gap: 10px;
-  }
-  .office-footer small {
-    display: none;
   }
   .workflow-note {
     display: none;
@@ -1473,9 +1340,6 @@ nav button.active svg {
     gap: 5px;
     font-size: 9px;
   }
-  .office-scene {
-    padding: 40px 0;
-  }
   .composer-bottom select {
     max-width: 90px;
   }
@@ -1573,39 +1437,6 @@ nav button.active svg {
   }
   .page-heading p {
     font-size: 10px;
-  }
-  .overline {
-    font-size: 9px;
-  }
-  .office-toolbar {
-    padding: 0 12px;
-    font-size: 9px;
-    height: 39px;
-  }
-  .office-scene {
-    padding: 27px 0 15px;
-  }
-  .office-footer {
-    font-size: 8px;
-    padding: 11px 12px;
-  }
-  .office-footer small {
-    display: block;
-    font-size: 7px;
-  }
-  .scene-label {
-    top: 9px;
-    left: 10px;
-    font-size: 8px;
-  }
-  .scene-label > span:last-child {
-    font-size: 7px;
-  }
-  .zoom-controls {
-    height: 22px;
-    font-size: 8px;
-    bottom: 8px;
-    right: 9px;
   }
   .task-composer {
     margin-top: 16px;
@@ -1742,7 +1573,6 @@ nav button.active svg {
   color: #7b8b6f;
 }
 .composer-bottom select,
-.office-footer,
 .inspector-bottom {
   color: #7d8c72;
 }
@@ -1887,12 +1717,6 @@ nav button.active svg {
   border: 0;
   color: #4e6744;
   font-weight: 600;
-}
-.scene-label {
-  max-width: 75%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .modal {
   max-height: calc(100dvh - 32px);
@@ -2059,11 +1883,6 @@ nav button.active svg {
   margin: 10px 0 0;
   max-height: 280px;
   overflow-y: auto;
-}
-.observed-page .office-toolbar > span {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 @media (max-width: 760px) {
   .office-source {
@@ -3386,4 +3205,9 @@ nav button.active svg {
   background: #f7f8f2;
   font-size: 12px;
   color: #5b6a52;
+}
+.small-tag.waiting-tag {
+  color: #7a4e07;
+  background: #ffe7a6;
+  border-color: #e6c35a;
 }

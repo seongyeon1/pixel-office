@@ -234,7 +234,7 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
     await page.getByLabel('전체 맵 프로젝트 검색').fill(parent.split('/').at(-1)!);
     // Opening a coworker reads the report.
     await worker(roots[0], 'campus-a4').click();
-    await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
     await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
       'title',
       roots[0],

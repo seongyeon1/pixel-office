@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import {
   Activity as ActivityIcon,
   FileCode2,
@@ -8,6 +8,7 @@ import {
   TerminalSquare,
   LogOut,
   ScrollText,
+  Users,
 } from 'lucide-react';
 import {
   activityLabels,
@@ -17,6 +18,8 @@ import {
   type ObservedSession,
   type Provider,
   type RetiredSession,
+  type Run,
+  terminal,
 } from '../../shared/contracts';
 import { api } from '../api';
 import { SessionOffice } from '../office/SessionOffice';
@@ -54,7 +57,22 @@ export function ObservedOffice({
   onRestore,
   automatedCount = 0,
   onRecords,
+  run,
+  runFocus,
+  onFocusRun,
+  onFocusSession,
+  appComposer,
+  appInspector,
+  onTeam,
 }: {
+  run?: Run | null;
+  // True while the inspector shows the app run's coworker instead of an observed session.
+  runFocus: boolean;
+  onFocusRun: (provider: Provider) => void;
+  onFocusSession: () => void;
+  appComposer: ReactNode;
+  appInspector: ReactNode;
+  onTeam: () => void;
   automatedCount?: number;
   onRecords?: () => void;
   sessions: ObservedSession[];
@@ -94,7 +112,9 @@ export function ObservedOffice({
       sessions.find((s) => s.id === initialSessionId) ??
       sessions.find((s) => s.status === 'active') ??
       sessions[0];
-    if (initial) {
+    // A live app run takes the inspector first, unless a specific session was asked for.
+    if (run && !terminal(run.status) && !initialSessionId) onFocusRun(selectedProvider);
+    else if (initial) {
       setSelectedId(initial.id);
       onProviderChange(initial.provider);
     }
@@ -106,7 +126,7 @@ export function ObservedOffice({
   const selected =
     sessions.find((s) => s.id === selectedId && s.provider === selectedProvider) ?? preferred;
   // Only a coworker the person picked counts as read; the automatic fallback does not.
-  const picked = selected?.id === selectedId ? selected : undefined;
+  const picked = !runFocus && selected?.id === selectedId ? selected : undefined;
   useEffect(() => {
     if (picked) markSeen(picked);
   }, [picked?.id, picked?.updatedAt]);
@@ -119,6 +139,7 @@ export function ObservedOffice({
   const choose = (s: ObservedSession) => {
     setSelectedId(s.id);
     onProviderChange(s.provider);
+    onFocusSession();
   };
   useEffect(() => {
     let stopped = false;
@@ -169,22 +190,26 @@ export function ObservedOffice({
       <div className="main-column">
         <div className="page-heading">
           <div>
-            <h1>외부 세션 오피스</h1>
-            <p>{repositoryName(root)} · 동료별 작업을 확인하고 질문해보세요.</p>
+            <h1>{root ? `${repositoryName(root)} 오피스` : '우리 팀 오피스'}</h1>
+            <p>터미널에서 일하는 동료와 앱에 맡긴 작업을 한곳에서 살펴보세요.</p>
           </div>
-          <span className="small-tag">
-            <Radio size={12} /> 실시간 기록
-          </span>
+          <button className="subtle-button" onClick={onTeam}>
+            <Users size={16} />팀 구성
+          </button>
         </div>
         <SessionOffice
           root={root}
           sessions={sessions}
-          selected={selected}
+          run={run}
+          selected={runFocus ? undefined : selected}
+          selectedRunProvider={runFocus ? selectedProvider : undefined}
           onSelect={choose}
+          onSelectRun={onFocusRun}
           reply={reply}
           onChat={openChat}
         />
-        {selected && (
+        {appComposer}
+        {selected && !runFocus && (
           <section className="session-task-card">
             <div>
               <span className="section-eyebrow">선택한 동료의 최근 작업</span>
@@ -321,174 +346,180 @@ export function ObservedOffice({
         </section>
         <RetiredSessions sessions={retired} onRestore={onRestore} />
       </div>
-      <aside className="inspector observed-inspector">
-        <div className="inspector-heading">
-          <span>동료 살펴보기</span>
-          <span className="small-tag">기록 · 이어가기</span>
-        </div>
-        {selected ? (
-          <>
-            <div className="session-profile-heading">
-              <PixelWorker provider={selected.provider} identity={selected.sessionId} />
-              <div>
-                <h2>{name(selected.provider)}</h2>
-                <span>{selected.label || selected.sessionId.slice(0, 8)}</span>
-                <p>
-                  <span className={`presence ${selected.status === 'active' ? 'working' : ''}`} />
-                  {observedStatus[selected.status]}
-                </p>
+      {/* With no observed session to show, the app's own run is what this office is about. */}
+      {runFocus || !selected ? (
+        appInspector
+      ) : (
+        <aside className="inspector observed-inspector">
+          <div className="inspector-heading">
+            <span>동료 살펴보기</span>
+            <span className="small-tag">기록 · 이어가기</span>
+          </div>
+          {selected ? (
+            <>
+              <div className="session-profile-heading">
+                <PixelWorker provider={selected.provider} identity={selected.sessionId} />
+                <div>
+                  <h2>{name(selected.provider)}</h2>
+                  <span>{selected.label || selected.sessionId.slice(0, 8)}</span>
+                  <p>
+                    <span className={`presence ${selected.status === 'active' ? 'working' : ''}`} />
+                    {observedStatus[selected.status]}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="session-tabs" role="tablist" aria-label="동료 상세 보기">
-              {(
-                [
-                  ['summary', '요약'],
-                  ['history', '작업 내역'],
-                  ['chat', '대화'],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  role="tab"
-                  id={`session-tab-${id}`}
-                  aria-controls={`session-panel-${id}`}
-                  aria-selected={tab === id}
-                  onClick={() => setTab(id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-                      e.preventDefault();
-                      const tabs = ['summary', 'history', 'chat'] as const;
-                      const next = tabs[(tabs.indexOf(id) + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
-                      setTab(next);
-                      document.getElementById(`session-tab-${next}`)?.focus();
-                    }
-                  }}
-                  tabIndex={tab === id ? 0 : -1}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {error && (
-              <p role="alert" className="inline-error">
-                {error}
-              </p>
-            )}
-            <section
-              role="tabpanel"
-              id="session-panel-summary"
-              aria-labelledby="session-tab-summary"
-              hidden={tab !== 'summary'}
-              className="observed-profile"
-            >
-              <h3>작업 요청</h3>
-              <p className="session-request">
-                {selected.prompt || '이 세션의 작업 요청을 아직 확인하지 못했어요.'}
-              </p>
-              <h3>최근 활동</h3>
-              <p>{latest ? eventTitle(latest) : '기록을 불러오고 있어요.'}</p>
-              <p className="session-latest-text">{latest ? eventSummary(latest) : ''}</p>
-              <dl>
-                <dt>모델</dt>
-                <dd>{selected.model || '로그에서 확인되지 않음'}</dd>
-                <dt>작업 폴더</dt>
-                <dd>{selected.cwd}</dd>
-                <dt>프로세스</dt>
-                <dd>
-                  {selected.processAlive === true
-                    ? '실행 확인'
-                    : selected.processAlive === false
-                      ? '종료 확인'
-                      : '로그 기반 관측'}
-                </dd>
-                <dt>마지막 활동</dt>
-                <dd>
-                  {selected.updatedAt
-                    ? new Date(selected.updatedAt).toLocaleString('ko-KR')
-                    : '기록 없음'}
-                </dd>
-                <dt>최근 기록</dt>
-                <dd>
-                  {events.length}개{current?.truncated ? ' · 일부 구간만 불러옴' : ''}
-                </dd>
-              </dl>
-              <p className="observed-note">
-                대화 탭은 기록을 참고한 별도 답변입니다. 원래 대화를 불러와 직접 일을 시키려면
-                이어서 작업을 열어 주세요.
-              </p>
-              <button className="session-ask" onClick={() => onResume(selected)}>
-                <TerminalSquare size={16} />
-                터미널에서 이어서 작업
-              </button>
-              <button className="session-ask" onClick={openChat}>
-                <MessageCircle size={16} />
-                작업에 대해 질문하기
-              </button>
-            </section>
-            <section
-              role="tabpanel"
-              id="session-panel-history"
-              aria-labelledby="session-tab-history"
-              hidden={tab !== 'history'}
-              className="observed-events"
-            >
-              <p className="observed-note">
-                최근 기록부터 표시해요. 도구 사용은 실행 시도이며 성공 여부를 의미하지 않습니다.
-              </p>
-              {current?.truncated && (
-                <p className="observed-note">큰 로그는 최근 구간만 불러왔어요.</p>
+              <div className="session-tabs" role="tablist" aria-label="동료 상세 보기">
+                {(
+                  [
+                    ['summary', '요약'],
+                    ['history', '작업 내역'],
+                    ['chat', '대화'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    role="tab"
+                    id={`session-tab-${id}`}
+                    aria-controls={`session-panel-${id}`}
+                    aria-selected={tab === id}
+                    onClick={() => setTab(id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        const tabs = ['summary', 'history', 'chat'] as const;
+                        const next =
+                          tabs[(tabs.indexOf(id) + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
+                        setTab(next);
+                        document.getElementById(`session-tab-${next}`)?.focus();
+                      }
+                    }}
+                    tabIndex={tab === id ? 0 : -1}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {error && (
+                <p role="alert" className="inline-error">
+                  {error}
+                </p>
               )}
-              {events
-                .slice()
-                .reverse()
-                .map((e) => (
-                  <article key={e.id}>
-                    <div>
-                      {e.kind === 'tool' ? <FileCode2 size={15} /> : <ActivityIcon size={15} />}
-                      <strong>{eventTitle(e)}</strong>
-                      <time>{clock(e.timestamp)}</time>
-                    </div>
-                    {e.detail &&
-                      (e.kind === 'tool' ? (
-                        <>
-                          <p className="tool-preview">
-                            {eventSummary(e).slice(0, 140)}
-                            {eventSummary(e).length > 140 ? '…' : ''}
-                          </p>
+              <section
+                role="tabpanel"
+                id="session-panel-summary"
+                aria-labelledby="session-tab-summary"
+                hidden={tab !== 'summary'}
+                className="observed-profile"
+              >
+                <h3>작업 요청</h3>
+                <p className="session-request">
+                  {selected.prompt || '이 세션의 작업 요청을 아직 확인하지 못했어요.'}
+                </p>
+                <h3>최근 활동</h3>
+                <p>{latest ? eventTitle(latest) : '기록을 불러오고 있어요.'}</p>
+                <p className="session-latest-text">{latest ? eventSummary(latest) : ''}</p>
+                <dl>
+                  <dt>모델</dt>
+                  <dd>{selected.model || '로그에서 확인되지 않음'}</dd>
+                  <dt>작업 폴더</dt>
+                  <dd>{selected.cwd}</dd>
+                  <dt>프로세스</dt>
+                  <dd>
+                    {selected.processAlive === true
+                      ? '실행 확인'
+                      : selected.processAlive === false
+                        ? '종료 확인'
+                        : '로그 기반 관측'}
+                  </dd>
+                  <dt>마지막 활동</dt>
+                  <dd>
+                    {selected.updatedAt
+                      ? new Date(selected.updatedAt).toLocaleString('ko-KR')
+                      : '기록 없음'}
+                  </dd>
+                  <dt>최근 기록</dt>
+                  <dd>
+                    {events.length}개{current?.truncated ? ' · 일부 구간만 불러옴' : ''}
+                  </dd>
+                </dl>
+                <p className="observed-note">
+                  대화 탭은 기록을 참고한 별도 답변입니다. 원래 대화를 불러와 직접 일을 시키려면
+                  이어서 작업을 열어 주세요.
+                </p>
+                <button className="session-ask" onClick={() => onResume(selected)}>
+                  <TerminalSquare size={16} />
+                  터미널에서 이어서 작업
+                </button>
+                <button className="session-ask" onClick={openChat}>
+                  <MessageCircle size={16} />
+                  작업에 대해 질문하기
+                </button>
+              </section>
+              <section
+                role="tabpanel"
+                id="session-panel-history"
+                aria-labelledby="session-tab-history"
+                hidden={tab !== 'history'}
+                className="observed-events"
+              >
+                <p className="observed-note">
+                  최근 기록부터 표시해요. 도구 사용은 실행 시도이며 성공 여부를 의미하지 않습니다.
+                </p>
+                {current?.truncated && (
+                  <p className="observed-note">큰 로그는 최근 구간만 불러왔어요.</p>
+                )}
+                {events
+                  .slice()
+                  .reverse()
+                  .map((e) => (
+                    <article key={e.id}>
+                      <div>
+                        {e.kind === 'tool' ? <FileCode2 size={15} /> : <ActivityIcon size={15} />}
+                        <strong>{eventTitle(e)}</strong>
+                        <time>{clock(e.timestamp)}</time>
+                      </div>
+                      {e.detail &&
+                        (e.kind === 'tool' ? (
+                          <>
+                            <p className="tool-preview">
+                              {eventSummary(e).slice(0, 140)}
+                              {eventSummary(e).length > 140 ? '…' : ''}
+                            </p>
+                            <details>
+                              <summary>실행 내용 보기</summary>
+                              <pre>{e.detail}</pre>
+                            </details>
+                          </>
+                        ) : e.detail.length > 450 ? (
                           <details>
-                            <summary>실행 내용 보기</summary>
+                            <summary>{e.detail.slice(0, 180)}…</summary>
                             <pre>{e.detail}</pre>
                           </details>
-                        </>
-                      ) : e.detail.length > 450 ? (
-                        <details>
-                          <summary>{e.detail.slice(0, 180)}…</summary>
-                          <pre>{e.detail}</pre>
-                        </details>
-                      ) : (
-                        <p className="timeline-message">{e.detail}</p>
-                      ))}
-                  </article>
-                ))}
-              {!events.length && (
-                <p className="observed-note">표시할 메시지와 도구 기록을 기다리고 있어요.</p>
-              )}
-            </section>
-            <section
-              role="tabpanel"
-              id="session-panel-chat"
-              aria-labelledby="session-tab-chat"
-              hidden={tab !== 'chat'}
-            >
-              <SessionChat key={selected.id} session={selected} onReply={setReply} />
-            </section>
-          </>
-        ) : (
-          <div className="empty-activity">
-            <p>확인할 세션을 선택해주세요.</p>
-          </div>
-        )}
-      </aside>
+                        ) : (
+                          <p className="timeline-message">{e.detail}</p>
+                        ))}
+                    </article>
+                  ))}
+                {!events.length && (
+                  <p className="observed-note">표시할 메시지와 도구 기록을 기다리고 있어요.</p>
+                )}
+              </section>
+              <section
+                role="tabpanel"
+                id="session-panel-chat"
+                aria-labelledby="session-tab-chat"
+                hidden={tab !== 'chat'}
+              >
+                <SessionChat key={selected.id} session={selected} onReply={setReply} />
+              </section>
+            </>
+          ) : (
+            <div className="empty-activity">
+              <p>확인할 세션을 선택해주세요.</p>
+            </div>
+          )}
+        </aside>
+      )}
     </main>
   );
 }
