@@ -148,6 +148,10 @@ const { app } = await createServer({
   terminalShell: '/bin/sh',
   port: 4318,
   demo: true,
+  launchCommands: {
+    claude: `sh -c 'echo FAKE-SY "$@"; while IFS= read -r line; do echo "GOT:$line"; done' fake-sy`,
+    codex: `sh -c 'echo FAKE-SYC "$@"; while IFS= read -r line; do echo "GOT:$line"; done' fake-syc`,
+  },
   observation,
   chat,
   questions: createQuestionDesk(),

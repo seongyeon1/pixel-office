@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import { createWorkspaceReader } from './workspace.js';
 import { createTerminals } from './terminals.js';
+import { createLauncher } from './launcher.js';
+import { launchSchema } from '../shared/launcher.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -37,6 +39,7 @@ export async function createServer({
   observation,
   chat,
   agentCommands,
+  launchCommands,
   harnessCatalog: injectedCatalog,
   questions,
   hookToken,
@@ -52,6 +55,7 @@ export async function createServer({
   observation?: Observation;
   chat?: ChatService;
   agentCommands?: AgentCommands;
+  launchCommands?: AgentCommands;
   harnessCatalog?: () => Promise<HarnessCatalog>;
   // Terminal Claude questions arriving through the AskUserQuestion hook.
   questions?: QuestionDesk;
@@ -60,6 +64,7 @@ export async function createServer({
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const terminals = createTerminals({ shell: terminalShell });
+  const launcher = createLauncher({ terminals, commands: launchCommands });
   const sessionLocks = new Map<string, Promise<void>>();
   const withSession = async <T>(id: string, action: () => Promise<T>): Promise<T> => {
     const previous = sessionLocks.get(id);
@@ -159,6 +164,15 @@ export async function createServer({
       .parse(req.body);
     return terminals.create(await workspace.authorize(root), cols, rows);
   });
+  app.get('/api/agents', async (req) => {
+    const { root } = z.object({ root: z.string().min(1) }).parse(req.query);
+    return launcher.list(await workspace.authorize(root));
+  });
+  app.post('/api/agents', async (req, reply) => {
+    const input = launchSchema.parse(req.body);
+    const root = await workspace.authorize(input.root);
+    return reply.code(201).send(launcher.start({ ...input, root }));
+  });
   app.get<{ Params: { id: string } }>('/api/terminals/:id', async (req, reply) => {
     return (
       terminals.get(req.params.id) ??
@@ -228,6 +242,7 @@ export async function createServer({
     }),
   );
   app.get('/api/health', async () => ({
+    features: { agentLauncher: true },
     providers: { codex: await adapters.codex.probe(), claude: await adapters.claude.probe() },
     demo,
     activeId: orchestrator.activeId ?? null,

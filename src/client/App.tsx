@@ -56,6 +56,7 @@ import { HarnessPanel } from './components/HarnessPanel';
 import { RecordsPage } from './records/RecordsPage';
 import type { ProjectWorker } from './overview/projects';
 import { ResumeDock } from './components/SessionResume';
+import { AgentLauncher } from './components/AgentLauncher';
 import { ObservedOffice } from './components/ObservedOffice';
 import { RepositoryList, repositoryName } from './components/RepositoryList';
 const WorkspacePanel = lazy(() => import('./workspace/WorkspacePanel'));
@@ -69,7 +70,12 @@ type Project = {
   repositories?: RepositoryEntry[];
 };
 type Snapshot = { run: Run; events: OfficeEvent[]; interactions: Interaction[]; sequence: number };
-type Health = { providers: Record<Provider, Connection>; activeId: string | null; demo: boolean };
+type Health = {
+  providers: Record<Provider, Connection>;
+  activeId: string | null;
+  demo: boolean;
+  features?: { agentLauncher?: boolean };
+};
 const providerName = (id: Provider) => (id === 'claude' ? 'Claude' : 'Codex');
 function Avatar({ id, small = false }: { id: Provider; small?: boolean }) {
   return (
@@ -121,6 +127,7 @@ export function App() {
   const [changes, setChanges] = useState<Change[]>([]);
   const [inspector, setInspector] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [launcherOpen, setLauncherOpen] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string>();
   const resumeSession = observation.sessions.find((s) => s.id === resumeSessionId);
   const busy =
@@ -1040,6 +1047,19 @@ export function App() {
             </strong>
           </div>
           <div className="topbar-right">
+            {health?.features?.agentLauncher && (
+              <button
+                className="open-workspace"
+                disabled={!project || view === 'overview' || view === 'records'}
+                onClick={() => {
+                  setWorkspaceOpen(false);
+                  setResumeSessionId(undefined);
+                  setLauncherOpen((v) => !v);
+                }}
+              >
+                <Plus size={16} /> 새 동료
+              </button>
+            )}
             <button
               className="open-workspace"
               aria-expanded={workspaceOpen}
@@ -1050,6 +1070,7 @@ export function App() {
                   : undefined
               }
               onClick={() => {
+                setLauncherOpen(false);
                 setResumeSessionId(undefined);
                 setWorkspaceOpen((v) => !v);
               }}
@@ -1080,6 +1101,13 @@ export function App() {
             <span className="user-avatar">나</span>
           </div>
         </header>
+        {launcherOpen && project && (
+          <AgentLauncher
+            key={project.root}
+            root={project.root}
+            onClose={() => setLauncherOpen(false)}
+          />
+        )}
         {workspaceOpen && project && (
           <Suspense fallback={<p role="status">작업 공간을 여는 중…</p>}>
             <WorkspacePanel
