@@ -9,6 +9,8 @@ import { createClaudeAdapter } from './adapters/claude.js';
 import { createOrchestrator } from './orchestrator.js';
 import { createServer } from './transport.js';
 import { createObservation } from './observation/observer.js';
+import { dropParentSession } from './env.js';
+dropParentSession();
 const dataDir = resolve(process.env.PIXEL_DATA_DIR ?? '.pixel');
 await mkdir(dataDir, { recursive: true });
 const port = Number(process.env.PORT ?? 4317);

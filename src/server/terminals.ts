@@ -4,6 +4,7 @@ import { spawn, type IPty } from 'node-pty';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
 import type { TerminalInfo, TerminalMessage } from '../shared/workspace.js';
+import { withoutParentSession } from './env.js';
 
 const input = z.discriminatedUnion('type', [
   z.object({ type: z.literal('input'), data: z.string().max(32768) }),
@@ -95,7 +96,11 @@ export function createTerminals({
         cwd: root,
         cols,
         rows,
-        env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+        env: {
+          ...withoutParentSession(process.env),
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+        },
       });
       const info: TerminalInfo = {
         id: randomUUID(),
