@@ -47,6 +47,7 @@ import {
 import { api, bootstrap, ApiError } from './api';
 import { applyEvent, emptyState, type OfficeState } from './state';
 import { TeamPanel } from './components/TeamPanel';
+import { TerminalHookSettings } from './components/TerminalQuestion';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
 import { compareFamilies, modelFamily, type ModelFamily } from './models/family';
@@ -1082,6 +1083,7 @@ export function App() {
               onRoleChange={setImplementer}
               disabled={busy}
             />
+            <TerminalHookSettings />
             <button className="primary" onClick={() => setView('office')}>
               <Check size={16} />
               오피스로 돌아가기
@@ -1208,6 +1210,7 @@ export function App() {
                   onRoleChange={setImplementer}
                   disabled={busy}
                 />
+                <TerminalHookSettings />
                 <button className="primary full" onClick={() => setModal(null)}>
                   설정 완료
                 </button>

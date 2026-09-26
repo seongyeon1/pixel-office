@@ -29,6 +29,12 @@ import { PixelWorker } from '../office/PixelWorker';
 import { SessionChat } from './SessionChat';
 import { RetiredSessions } from './RetiredSessions';
 import { repositoryName } from './RepositoryList';
+import {
+  TerminalHookHint,
+  TerminalQuestionCard,
+  useTerminalHook,
+  useTerminalQuestions,
+} from './TerminalQuestion';
 export const observedStatus = {
   active: '활동 관측',
   idle: '응답 완료·대기',
@@ -95,6 +101,8 @@ export function ObservedOffice({
   const [retiring, setRetiring] = useState<string>();
   const [retirePending, setRetirePending] = useState(false);
   const [retireError, setRetireError] = useState('');
+  const terminalQuestions = useTerminalQuestions();
+  const terminalHook = useTerminalHook();
   const retire = async (id: string) => {
     setRetirePending(true);
     setRetireError('');
@@ -368,6 +376,22 @@ export function ObservedOffice({
                   </p>
                 </div>
               </div>
+              {(() => {
+                const asked = terminalQuestions.questions.find(
+                  (q) => selected.provider === 'claude' && q.sessionId === selected.sessionId,
+                );
+                if (asked)
+                  return (
+                    <TerminalQuestionCard
+                      key={asked.id}
+                      question={asked}
+                      onDone={terminalQuestions.refresh}
+                    />
+                  );
+                return selected.provider === 'claude' && selected.attention?.kind === 'question' ? (
+                  <TerminalHookHint hook={terminalHook} />
+                ) : null;
+              })()}
               <div className="session-tabs" role="tablist" aria-label="동료 상세 보기">
                 {(
                   [

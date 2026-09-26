@@ -558,3 +558,99 @@ test('departments are named folders, stored by their real path, one per folder',
   await app.close();
   store.close();
 });
+
+test('terminal questions: the hook needs its own token, answering needs the browser session', async () => {
+  const { createQuestionDesk } = await import('../src/server/questions.js');
+  const { mkdtemp, readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const claudeHome = await mkdtemp(join(tmpdir(), 'pixel-claude-home-'));
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-transport-test' }),
+    token: 'test-token',
+    port: 4317,
+    questions: createQuestionDesk(),
+    hookToken: 'hook-secret',
+    hookSetup: { claudeHome, command: 'node /opt/pixel/scripts/ask-hook.mjs' },
+  });
+  const host = { host: '127.0.0.1:4317' };
+  const payload = { sessionId: 's-1', cwd: '/work', questions: [{ question: 'Q?' }] };
+  const ask = (headers: Record<string, string>) =>
+    app.inject({ method: 'POST', url: '/api/hook/questions', headers, payload });
+  try {
+    expect((await ask(host)).statusCode).toBe(403);
+    expect((await ask({ ...host, 'x-pixel-hook': 'wrong' })).statusCode).toBe(403);
+    // The browser session is not a hook token.
+    const browser = { ...host, origin: 'http://127.0.0.1:4317' };
+    const session = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: browser,
+      payload: { token: 'test-token' },
+    });
+    const authed = { ...browser, cookie: session.headers['set-cookie'] as string };
+    expect((await ask(authed)).statusCode).toBe(403);
+    const opened = await ask({ ...host, 'x-pixel-hook': 'hook-secret' });
+    expect(opened.statusCode).toBe(200);
+    const { id } = opened.json();
+
+    // The hook token cannot read or answer questions as the browser.
+    expect(
+      (
+        await app.inject({
+          url: '/api/questions',
+          headers: { ...host, 'x-pixel-hook': 'hook-secret' },
+        })
+      ).statusCode,
+    ).toBe(401);
+    const list = await app.inject({ url: '/api/questions', headers: authed });
+    expect(list.json()).toMatchObject([{ id, sessionId: 's-1', questions: payload.questions }]);
+    const answer = (headers: Record<string, string>) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/questions/${id}/answer`,
+        headers,
+        payload: { answers: { 'Q?': ['yes'] } },
+      });
+    expect((await answer({ ...authed, origin: 'https://foreign.example' })).statusCode).toBe(403);
+    expect((await answer(authed)).statusCode).toBe(200);
+    expect((await answer(authed)).statusCode).toBe(400);
+    const outcome = await app.inject({
+      url: `/api/hook/questions/${id}?wait=0`,
+      headers: { ...host, 'x-pixel-hook': 'hook-secret' },
+    });
+    expect(outcome.json()).toEqual({ status: 'answered', answers: { 'Q?': 'yes' } });
+
+    const hook = (path: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/terminal-hook${path}`,
+        headers: authed,
+        payload: {},
+      });
+    expect((await app.inject({ url: '/api/terminal-hook', headers: authed })).json()).toMatchObject(
+      {
+        available: true,
+        installed: false,
+      },
+    );
+    expect((await hook('/install')).json()).toMatchObject({ installed: true });
+    const settings = JSON.parse(await readFile(join(claudeHome, 'settings.json'), 'utf8'));
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe(
+      'node /opt/pixel/scripts/ask-hook.mjs',
+    );
+    expect((await hook('/uninstall')).json()).toMatchObject({ installed: false });
+  } finally {
+    await app.close();
+    store.close();
+  }
+});

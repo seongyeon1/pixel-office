@@ -508,3 +508,94 @@ test('one office seats app-run and observed coworkers together, each with its ow
     await rm(f.codex, { force: true });
   }
 });
+
+test('a question from a terminal Claude is answered in the office and handed back', async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  const { writeFile, rm } = await import('node:fs/promises');
+  const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  const timestamp = new Date().toISOString();
+  const line = (o: unknown) => JSON.stringify(o) + '\n';
+  const question = {
+    question: '어느 브랜치에 올릴까요?',
+    header: '브랜치',
+    options: [{ label: 'main' }, { label: 'develop' }],
+    multiSelect: false,
+  };
+  const hook = { 'x-pixel-hook': 'e2e-hook' };
+  try {
+    await writeFile(
+      f.claude,
+      line({
+        timestamp,
+        type: 'user',
+        sessionId: 'asking-claude',
+        cwd: f.project,
+        message: { content: '배포 준비' },
+      }) +
+        line({
+          timestamp,
+          type: 'assistant',
+          sessionId: 'asking-claude',
+          message: {
+            model: 'claude-external',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'ask-1',
+                name: 'AskUserQuestion',
+                input: { questions: [question] },
+              },
+            ],
+          },
+        }),
+    );
+    await page.goto('/#token=e2e-token');
+    const coworker = page.getByRole('button', { name: /^세션 선택 Claude/ });
+    await expect(coworker).toHaveCount(1, { timeout: 20000 });
+    await coworker.click();
+    // Before the question reaches the app, the inspector explains how to connect terminals.
+    await expect(page.locator('.terminal-hook-hint')).toContainText('질문 연결을 켜면');
+    await page.getByRole('button', { name: '팀 구성', exact: true }).click();
+    await expect(page.locator('.terminal-hook-settings')).toContainText('꺼짐');
+    await page.getByRole('button', { name: '설정 완료' }).click();
+
+    const opened = await page.request.post('/api/hook/questions', {
+      headers: hook,
+      data: { sessionId: 'asking-claude', cwd: f.project, questions: [question] },
+    });
+    expect(opened.ok()).toBe(true);
+    const { id } = await opened.json();
+    await page.getByRole('button', { name: /^세션 선택 Claude/ }).click();
+    const card = page.locator('.terminal-question');
+    await expect(card).toContainText('어느 브랜치에 올릴까요?', { timeout: 10000 });
+    await card.getByRole('radio', { name: /develop/ }).check();
+    await card.getByRole('button', { name: '답변 보내기', exact: true }).click();
+    await expect(card).toHaveCount(0);
+    const outcome = await page.request.get(`/api/hook/questions/${id}?wait=0`, { headers: hook });
+    expect(await outcome.json()).toEqual({
+      status: 'answered',
+      answers: { '어느 브랜치에 올릴까요?': 'develop' },
+    });
+
+    // "Answer in the terminal" gives the next question back to the hook.
+    const next = await page.request.post('/api/hook/questions', {
+      headers: hook,
+      data: { sessionId: 'asking-claude', cwd: f.project, questions: [question] },
+    });
+    const nextId = (await next.json()).id;
+    await page
+      .locator('.terminal-question')
+      .getByRole('button', { name: '터미널에서 답할게요' })
+      .click({ timeout: 10000 });
+    await expect(page.locator('.terminal-question')).toHaveCount(0);
+    expect(
+      await (
+        await page.request.get(`/api/hook/questions/${nextId}?wait=0`, { headers: hook })
+      ).json(),
+    ).toEqual({ status: 'released' });
+  } finally {
+    await rm(f.claude, { force: true });
+  }
+});
