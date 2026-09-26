@@ -3211,3 +3211,32 @@ nav button.active svg {
   background: #ffe7a6;
   border-color: #e6c35a;
 }
+.terminal-question {
+  margin-bottom: 12px;
+}
+.terminal-question > .subtle-button {
+  margin-top: -8px;
+}
+.terminal-hook-hint {
+  background: #fff6e4;
+  border: 1px solid #ebd7a6;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 10px;
+  color: #9a825b;
+}
+.terminal-hook-hint p {
+  display: flex;
+  gap: 6px;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.terminal-hook-settings {
+  margin: 16px 0;
+}
+.terminal-hook-settings p {
+  font-size: 10px;
+  line-height: 1.8;
+  margin-bottom: 8px;
+}

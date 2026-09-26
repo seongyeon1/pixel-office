@@ -8,6 +8,7 @@ import { createChatService } from '../src/server/chat.js';
 import { createStore } from '../src/server/store.js';
 import { createOrchestrator } from '../src/server/orchestrator.js';
 import { createServer } from '../src/server/transport.js';
+import { createQuestionDesk } from '../src/server/questions.js';
 import type { Adapter, Provider } from '../src/shared/contracts.js';
 const dir = await mkdtemp(join(tmpdir(), 'pixel-e2e-'));
 const project = join(dir, 'sample');
@@ -139,6 +140,9 @@ const { app } = await createServer({
   demo: true,
   observation,
   chat,
+  questions: createQuestionDesk(),
+  hookToken: 'e2e-hook',
+  hookSetup: { claudeHome: join(dir, 'hook-claude'), command: 'node ask-hook.mjs' },
   harnessCatalog: async () => ({
     claude: {
       plugins: [

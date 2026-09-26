@@ -1,5 +1,6 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { createChatService } from './chat.js';
 import { createNativeChatResponder } from './adapters/chat.js';
@@ -10,6 +11,7 @@ import { createOrchestrator } from './orchestrator.js';
 import { createServer } from './transport.js';
 import { createObservation } from './observation/observer.js';
 import { dropParentSession } from './env.js';
+import { createQuestionDesk } from './questions.js';
 dropParentSession();
 const dataDir = resolve(process.env.PIXEL_DATA_DIR ?? '.pixel');
 await mkdir(dataDir, { recursive: true });
@@ -28,6 +30,17 @@ const chat = createChatService({
   getSession: observation.get,
   respond: createNativeChatResponder(resolve(dataDir, 'chat')),
 });
+// The AskUserQuestion hook finds the app through this file; its token survives restarts so an
+// installed hook keeps working, while the URL follows the current port.
+const hookFile = resolve(dataDir, 'hook.json');
+const hookToken =
+  (await readFile(hookFile, 'utf8')
+    .then((t) => JSON.parse(t).token as string)
+    .catch(() => '')) || randomBytes(24).toString('hex');
+await writeFile(hookFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token: hookToken }), {
+  mode: 0o600,
+});
+const q = (path: string) => `"${path.replace(/(["\\$`])/g, '\\$1')}"`;
 const { app, origin } = await createServer({
   store,
   adapters,
@@ -36,6 +49,12 @@ const { app, origin } = await createServer({
   port,
   observation,
   chat,
+  questions: createQuestionDesk(),
+  hookToken,
+  hookSetup: {
+    claudeHome: process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+    command: `PIXEL_HOOK_FILE=${q(hookFile)} node ${q(resolve('scripts/ask-hook.mjs'))}`,
+  },
 });
 const production = process.argv[1]?.endsWith('.js');
 if (production) {

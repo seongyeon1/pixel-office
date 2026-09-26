@@ -21,6 +21,8 @@ import type { Orchestrator } from './orchestrator.js';
 import { inspectProject, collectChanges } from './projects.js';
 import { listModels } from './models.js';
 import { harnessCatalog } from './harness.js';
+import type { QuestionDesk } from './questions.js';
+import { hookStatus, installHook, uninstallHook } from './hook-install.js';
 import type { ChatService } from './chat.js';
 import type { Observation } from './observation/observer.js';
 import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
@@ -36,6 +38,9 @@ export async function createServer({
   chat,
   agentCommands,
   harnessCatalog: injectedCatalog,
+  questions,
+  hookToken,
+  hookSetup,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -48,6 +53,10 @@ export async function createServer({
   chat?: ChatService;
   agentCommands?: AgentCommands;
   harnessCatalog?: () => Promise<HarnessCatalog>;
+  // Terminal Claude questions arriving through the AskUserQuestion hook.
+  questions?: QuestionDesk;
+  hookToken?: string;
+  hookSetup?: { claudeHome: string; command: string };
 }) {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const terminals = createTerminals({ shell: terminalShell });
@@ -106,6 +115,13 @@ export async function createServer({
   };
   app.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/api/')) return;
+    // The hook is a local process, not a browser: it proves itself with its own token.
+    if (req.url.startsWith('/api/hook/')) {
+      const token = String(req.headers['x-pixel-hook'] ?? '');
+      if (!trusted(req.raw) || !hookToken || !same(token, hookToken))
+        reply.code(403).send({ error: '허용되지 않은 요청입니다.' });
+      return;
+    }
     if (!trusted(req.raw) || (req.method !== 'GET' && req.headers.origin !== origin)) {
       reply.code(403).send({ error: '허용되지 않은 출처입니다.' });
       return;
@@ -325,6 +341,59 @@ export async function createServer({
     const project = await inspectProject(body.root);
     store.setHarness(project.root, body.harness);
     return store.getHarness(project.root);
+  });
+  const desk = () => {
+    if (!questions) throw new Error('질문 연결을 쓸 수 없어요.');
+    return questions;
+  };
+  app.post('/api/hook/questions', async (req) => {
+    const body = z
+      .object({
+        sessionId: z.string().max(200),
+        cwd: z.string().max(4096),
+        questions: z.array(z.unknown()).min(1).max(10),
+      })
+      .parse(req.body);
+    return { id: desk().ask(body).id };
+  });
+  app.get<{ Params: { id: string }; Querystring: { wait?: string } }>(
+    '/api/hook/questions/:id',
+    async (req) =>
+      desk().wait(
+        z.string().uuid().parse(req.params.id),
+        Math.min(25000, Math.max(0, Number(req.query.wait ?? 0) || 0)),
+      ),
+  );
+  app.post<{ Params: { id: string } }>('/api/hook/questions/:id/release', async (req) => {
+    desk().release(z.string().uuid().parse(req.params.id));
+    return { ok: true };
+  });
+  app.get('/api/questions', async () => (questions ? questions.list() : []));
+  app.post<{ Params: { id: string } }>('/api/questions/:id/answer', async (req) => {
+    const { answers } = z
+      .object({ answers: z.record(z.string(), z.array(z.string().max(10000)).min(1)) })
+      .parse(req.body);
+    desk().answer(z.string().uuid().parse(req.params.id), answers);
+    return { ok: true };
+  });
+  app.post<{ Params: { id: string } }>('/api/questions/:id/release', async (req) => {
+    desk().release(z.string().uuid().parse(req.params.id));
+    return { ok: true };
+  });
+  app.get('/api/terminal-hook', async () =>
+    hookSetup
+      ? { available: true, ...(await hookStatus(hookSetup.claudeHome)) }
+      : { available: false },
+  );
+  app.post('/api/terminal-hook/install', async () => {
+    if (!hookSetup) throw new Error('질문 연결을 쓸 수 없어요.');
+    await installHook(hookSetup.claudeHome, hookSetup.command);
+    return hookStatus(hookSetup.claudeHome);
+  });
+  app.post('/api/terminal-hook/uninstall', async () => {
+    if (!hookSetup) throw new Error('질문 연결을 쓸 수 없어요.');
+    await uninstallHook(hookSetup.claudeHome);
+    return hookStatus(hookSetup.claudeHome);
   });
   app.get('/api/departments', async () => store.listDepartments());
   app.post('/api/departments', async (req) => {
