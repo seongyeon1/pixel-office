@@ -30,9 +30,12 @@ export function createQuestionDesk({ now = Date.now }: { now?: () => number } = 
       if (now() - Date.parse(q.createdAt) > EXPIRE_MS) settle(q.id, { status: 'expired' });
   };
   return {
-    ask(input: Omit<TerminalQuestion, 'id' | 'createdAt'>): TerminalQuestion {
+    // The hook may pick the id itself so it never has to trust one from a response.
+    ask(input: Omit<TerminalQuestion, 'id' | 'createdAt'> & { id?: string }): TerminalQuestion {
       sweep();
-      const q = { ...input, id: randomUUID(), createdAt: new Date(now()).toISOString() };
+      const id = input.id ?? randomUUID();
+      if (open.has(id) || done.has(id)) throw new Error('이미 받은 질문이에요.');
+      const q = { ...input, id, createdAt: new Date(now()).toISOString() };
       open.set(q.id, q);
       return q;
     },
