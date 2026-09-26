@@ -12,6 +12,7 @@ import {
   type Interaction,
   type EventInput,
   type RunRepo,
+  type PhaseResult,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
 import {
@@ -22,6 +23,7 @@ import {
 } from './projects.js';
 import { phasePrompt } from './prompts.js';
 import { harnessDirFor } from './harness.js';
+import { isUsageLimit } from './adapters/usage-limit.js';
 export const nextAfterReview = (
   review: Review,
   revision: number,
@@ -75,6 +77,10 @@ export function createOrchestrator({
   async function execute(run: Run, controller: AbortController) {
     let previous = '';
     let review: Review | undefined;
+    const exhausted = new Map<Provider, string>();
+    const availableProvider = (preferred: Provider): Provider =>
+      exhausted.has(preferred) ? (preferred === 'codex' ? 'claude' : 'codex') : preferred;
+    let continuation = '';
     const interact = (req: Omit<Interaction, 'id' | 'resolved'>): Promise<Answer> => {
       if (controller.signal.aborted) return Promise.reject(new Error('작업 중단'));
       const interaction = { ...req, id: randomUUID(), resolved: false };
@@ -95,8 +101,9 @@ export function createOrchestrator({
         run = store.getRun(run.id)!;
         const reviewer: Provider = run.implementer === 'codex' ? 'claude' : 'codex';
         const isReview = run.phase === 'review';
-        const provider =
+        const preferred =
           run.mode === 'collaborate' ? (isReview ? reviewer : run.implementer) : run.mode;
+        const provider = availableProvider(preferred);
         const changes = await collectRunChanges(run);
         if (controller.signal.aborted) break;
         change(run.id, { status: 'running' });
@@ -110,27 +117,30 @@ export function createOrchestrator({
             activity: isReview ? 'reviewing' : 'responding',
           },
         });
-        const result = await adapters[provider].execute(
-          {
-            runId: run.id,
-            cwd: run.worktreePath,
-            prompt: phasePrompt(
-              run,
-              provider,
-              isReview ? 'reviewer' : 'implementer',
-              previous,
-              changes,
-              review,
-            ),
-            role: isReview ? 'reviewer' : 'implementer',
-            profile: run.team[provider],
-            harness: run.harness?.[provider],
-            harnessDir: harnessDirFor(dataDir, run.projectPath),
-            signal: controller.signal,
-          },
-          emit,
-          interact,
-        );
+        const result = await adapters[provider]
+          .execute(
+            {
+              runId: run.id,
+              cwd: run.worktreePath,
+              prompt:
+                phasePrompt(
+                  run,
+                  provider,
+                  isReview ? 'reviewer' : 'implementer',
+                  previous,
+                  changes,
+                  review,
+                ) + continuation,
+              role: isReview ? 'reviewer' : 'implementer',
+              profile: run.team[provider],
+              harness: run.harness?.[provider],
+              harnessDir: harnessDirFor(dataDir, run.projectPath),
+              signal: controller.signal,
+            },
+            emit,
+            interact,
+          )
+          .catch((e: Error): PhaseResult => ({ outcome: 'failed', text: '', error: e.message }));
         clearPending(run.id);
         if (controller.signal.aborted || result.outcome === 'cancelled') break;
         emit({
@@ -140,6 +150,42 @@ export function createOrchestrator({
           payload: { text: result.text, outcome: result.outcome, review: result.review },
         });
         if (result.outcome === 'failed') {
+          if (result.failureKind === 'usage_limit' || isUsageLimit(result.error)) {
+            const reason = result.error || '사용량 한도를 모두 사용했습니다.';
+            exhausted.set(provider, reason);
+            const other: Provider = provider === 'codex' ? 'claude' : 'codex';
+            const name = (p: Provider) => (p === 'codex' ? 'Codex' : 'Claude');
+            let unavailable = exhausted.get(other);
+            if (!unavailable) {
+              const connection = await adapters[other].probe().catch((e: Error) => ({
+                installed: false,
+                authenticated: false,
+                detail: e.message,
+              }));
+              if (!connection.installed || connection.authenticated === false)
+                unavailable = connection.detail;
+            }
+            if (controller.signal.aborted) break;
+            if (unavailable) {
+              const text = `${name(provider)} 사용량 한도가 소진되었습니다. ${name(other)}도 현재 사용할 수 없어 작업을 멈췄어요. 작업 파일은 보존됩니다.\n${name(provider)}: ${reason}\n${name(other)}: ${unavailable}`;
+              emit({ runId: run.id, agentId: provider, type: 'provider.limit', payload: { text } });
+              change(run.id, {
+                status: 'needs_attention',
+                error: text,
+                summary: result.text || previous,
+              });
+              return;
+            }
+            const text = `${name(provider)} 사용량 한도가 소진되어 ${name(other)}로 전환합니다. 같은 작업 폴더에서 ${isReview ? '검토' : '구현'}를 이어갑니다.${run.mode === 'collaborate' ? ' 이번 작업의 구현과 검토는 사용 가능한 동료가 담당합니다.' : ''}`;
+            emit({
+              runId: run.id,
+              agentId: provider,
+              type: 'provider.fallback',
+              payload: { from: provider, to: other, phase: run.phase, text, reason },
+            });
+            continuation = `\n\n이전 실행기 ${name(provider)}가 사용량 한도로 중단되어 같은 단계를 이어받았습니다. 작업 폴더의 기존 변경을 보존하고 현재 상태를 먼저 확인하세요. 완료 여부가 불분명한 명령은 결과를 확인한 뒤 실행하세요.\n중단 전 진행 내용:\n${result.text.slice(-30000)}`;
+            continue;
+          }
           change(run.id, {
             status: 'failed',
             error: result.error || '에이전트 실행 실패',
@@ -147,6 +193,7 @@ export function createOrchestrator({
           });
           return;
         }
+        continuation = '';
         previous = result.text;
         if (run.mode !== 'collaborate') {
           change(run.id, { status: 'completed', phase: 'done', summary: previous });
@@ -158,7 +205,10 @@ export function createOrchestrator({
             runId: run.id,
             agentId: provider,
             type: 'handoff',
-            payload: { to: reviewer, text: '구현 결과를 검토자에게 전달했습니다.' },
+            payload: {
+              to: availableProvider(reviewer),
+              text: '구현 결과를 검토자에게 전달했습니다.',
+            },
           });
           continue;
         }
@@ -186,7 +236,10 @@ export function createOrchestrator({
           runId: run.id,
           agentId: provider,
           type: 'handoff',
-          payload: { to: run.implementer, text: '검토 의견을 구현자에게 전달했습니다.' },
+          payload: {
+            to: availableProvider(run.implementer),
+            text: '검토 의견을 구현자에게 전달했습니다.',
+          },
         });
       }
       change(run.id, { status: 'cancelled' });

@@ -495,6 +495,9 @@ export function App() {
       </div>
     );
   const selectedAgent = state.agents[selected];
+  const providerNotice = [...state.events]
+    .reverse()
+    .find((e) => e.type === 'provider.fallback' || e.type === 'provider.limit');
   const relevant = state.events
     .filter(
       (e) =>
@@ -508,6 +511,14 @@ export function App() {
   // The app's own run: its task composer and inspector slot into the repository office.
   const appComposer = (
     <>
+      {providerNotice && (
+        <div className="provider-notice" role="status" aria-label="사용량 한도 안내">
+          <strong>{String(providerNotice.payload.text)}</strong>
+          {typeof providerNotice.payload.reason === 'string' && (
+            <p>{providerNotice.payload.reason}</p>
+          )}
+        </div>
+      )}
       {/* Phones collapse the sidebar; this row is how they reach the app's two coworkers. */}
       <div className="mobile-agents">
         {(['claude', 'codex'] as const).map((id) => (

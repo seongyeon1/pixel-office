@@ -151,6 +151,7 @@ export interface PhaseResult {
   text: string;
   review?: Review;
   error?: string;
+  failureKind?: 'usage_limit';
 }
 export interface Connection {
   installed: boolean;

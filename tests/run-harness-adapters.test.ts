@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest';
 const calls = vi.hoisted(() => [] as { method: string; params: any }[]);
+const failure = vi.hoisted(() => ({ message: '', code: '' }));
 const queries = vi.hoisted(() => [] as any[]);
 vi.mock('node:child_process', async (real) => ({
   ...((await real()) as object),
@@ -9,7 +10,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: (args: any) => {
     queries.push(args);
     const stream = (async function* () {
-      yield { type: 'result', subtype: 'success', result: 'done', session_id: 's' };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: !!failure.message,
+        result: failure.message || 'done',
+        session_id: 's',
+      };
     })();
     return Object.assign(stream, { close() {}, interrupt: async () => {} });
   },
@@ -39,7 +46,14 @@ vi.mock('../src/server/adapters/codex-rpc.js', async () => {
           setTimeout(() =>
             this.emit('message', {
               method: 'turn/completed',
-              params: { turn: { status: 'completed' } },
+              params: {
+                turn: {
+                  status: failure.code ? 'failed' : 'completed',
+                  error: failure.code
+                    ? { message: 'Provider unavailable', codexErrorInfo: failure.code }
+                    : undefined,
+                },
+              },
             }),
           );
           return { turn: { id: 'turn' } };
@@ -120,4 +134,40 @@ test('a Claude app run gets the project instructions and no plugins unless chose
   expect(queries[0].options).toMatchObject({ settingSources: [], plugins: [] });
   expect(queries[1].prompt).toBe('task');
   expect(queries[1].options.plugins).toEqual([]);
+});
+
+test('Claude preserves the session-limit result as a classified failure instead of a generic error', async () => {
+  failure.message = "You've hit your session limit · resets 5:20pm (Asia/Seoul)";
+  try {
+    const result = await createClaudeAdapter().execute(
+      base('/repo'),
+      () => {},
+      async () => ({ decision: 'deny' }),
+    );
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      error: failure.message,
+      failureKind: 'usage_limit',
+    });
+  } finally {
+    failure.message = '';
+  }
+});
+
+test('Codex recognizes a structured usage-limit error even without an English error message', async () => {
+  failure.code = 'usageLimitExceeded';
+  try {
+    const result = await createCodexAdapter().execute(
+      base('/repo'),
+      () => {},
+      async () => ({ decision: 'deny' }),
+    );
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      error: 'Provider unavailable',
+      failureKind: 'usage_limit',
+    });
+  } finally {
+    failure.code = '';
+  }
 });

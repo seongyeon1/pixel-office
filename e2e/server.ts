@@ -28,6 +28,16 @@ const make = (id: Provider): Adapter => ({
   probe: async () => ({ installed: true, authenticated: true, detail: '데모 fixture' }),
   close: async () => {},
   execute: async (input, emit, interact) => {
+    if (
+      input.prompt.includes('모두 한도 테스트') ||
+      (input.prompt.includes('구현 한도 테스트') && id === 'codex') ||
+      (input.prompt.includes('검토 한도 테스트') && id === 'claude')
+    )
+      return {
+        outcome: 'failed',
+        text: '진행 중이던 작업',
+        error: "You've hit your session limit · resets 5:20pm (Asia/Seoul)",
+      };
     emit({
       runId: input.runId,
       agentId: id,

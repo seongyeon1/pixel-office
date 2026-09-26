@@ -1684,6 +1684,21 @@ nav button.active svg {
 .unavailable-note {
   padding-top: 8px;
 }
+.provider-notice {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #d3b8a5;
+  border-radius: 10px;
+  background: #f8f5f1;
+  color: #715541;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.provider-notice p {
+  margin: 6px 0 0;
+}
 .bundle-picker {
   margin: 10px 0 0;
   padding: 10px 12px;

@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { reviewSchema, reviewJsonSchema, type Adapter } from '../../shared/contracts.js';
 import { isWithin } from '../projects.js';
 import { normalizeClaude, activityForTool } from './normalize.js';
+import { isUsageLimit } from './usage-limit.js';
 const exec = promisify(execFile);
 export async function allowedFile(cwd: string, path: string) {
   let target = resolve(cwd, path);
@@ -57,6 +58,8 @@ export function createClaudeAdapter({
       if (input.signal.aborted) abort();
       let text = '';
       let stderr = '';
+      let providerError = '';
+      let limited = false;
       try {
         // Nothing chosen keeps the run fully isolated: no plugins, no project instructions.
         const harness = input.harness
@@ -168,6 +171,12 @@ export function createClaudeAdapter({
         active = stream;
         for await (const m of stream) {
           for (const e of normalizeClaude(input.runId, m)) emit(e);
+          if (m.type === 'assistant' && m.error) {
+            providerError = m.message.content
+              .flatMap((b) => (b.type === 'text' ? [b.text] : []))
+              .join('\n');
+            limited = isUsageLimit(m.error) || isUsageLimit(providerError);
+          }
           if (m.type === 'system' && m.subtype === 'init')
             emit({
               runId: input.runId,
@@ -183,12 +192,18 @@ export function createClaudeAdapter({
             text += m.event.delta.text;
           if (m.type === 'result') {
             if (input.signal.aborted) return { outcome: 'cancelled', text };
-            if (m.is_error || m.subtype !== 'success')
+            if (m.is_error || m.subtype !== 'success') {
+              const error =
+                ('errors' in m ? m.errors.join('\n') : m.result) ||
+                providerError ||
+                'Claude 실행 실패';
               return {
                 outcome: 'failed',
                 text,
-                error: 'errors' in m ? m.errors.join('\n') : 'Claude 실행 실패',
+                error,
+                failureKind: limited || isUsageLimit(error) ? 'usage_limit' : undefined,
               };
+            }
             const parsed =
               input.role === 'reviewer' ? reviewSchema.safeParse(m.structured_output) : undefined;
             return {
@@ -202,13 +217,16 @@ export function createClaudeAdapter({
         return {
           outcome: input.signal.aborted ? 'cancelled' : 'failed',
           text,
-          error: 'Claude가 최종 결과 없이 종료되었습니다. ' + stderr.slice(-1000),
+          error: providerError || 'Claude가 최종 결과 없이 종료되었습니다. ' + stderr.slice(-1000),
+          failureKind: limited || isUsageLimit(stderr) ? 'usage_limit' : undefined,
         };
       } catch (e) {
         return {
           outcome: input.signal.aborted ? 'cancelled' : 'failed',
           text,
           error: (e as Error).message + ' ' + stderr.slice(-1000),
+          failureKind:
+            limited || isUsageLimit((e as Error).message + stderr) ? 'usage_limit' : undefined,
         };
       } finally {
         input.signal.removeEventListener('abort', abort);

@@ -11,6 +11,7 @@ import {
 import { RpcClient } from './codex-rpc.js';
 import { codexHarnessConfig } from '../harness.js';
 import { normalizeCodex } from './normalize.js';
+import { isUsageLimit } from './usage-limit.js';
 const exec = promisify(execFile);
 export function createCodexAdapter(): Adapter {
   let active: RpcClient | undefined;
@@ -77,6 +78,7 @@ export function createCodexAdapter(): Adapter {
                   : 'failed',
             text,
             error: t.error?.message,
+            failureKind: isUsageLimit(t.error) ? 'usage_limit' : undefined,
           });
         }
         if (m.id !== undefined && m.method) {
@@ -177,6 +179,7 @@ export function createCodexAdapter(): Adapter {
           outcome: input.signal.aborted ? 'cancelled' : 'failed',
           text,
           error: (e as Error).message,
+          failureKind: isUsageLimit((e as Error).message) ? 'usage_limit' : undefined,
         };
       } finally {
         input.signal.removeEventListener('abort', abort);
