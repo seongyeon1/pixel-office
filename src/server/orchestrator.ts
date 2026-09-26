@@ -11,9 +11,15 @@ import {
   type Provider,
   type Interaction,
   type EventInput,
+  type RunRepo,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
-import { inspectProject, createWorkspace, collectChanges } from './projects.js';
+import {
+  inspectProject,
+  createWorkspace,
+  createBundleWorkspace,
+  collectRunChanges,
+} from './projects.js';
 import { phasePrompt } from './prompts.js';
 import { harnessDirFor } from './harness.js';
 export const nextAfterReview = (
@@ -91,7 +97,7 @@ export function createOrchestrator({
         const isReview = run.phase === 'review';
         const provider =
           run.mode === 'collaborate' ? (isReview ? reviewer : run.implementer) : run.mode;
-        const changes = await collectChanges(run.worktreePath, run.baseCommit);
+        const changes = await collectRunChanges(run);
         if (controller.signal.aborted) break;
         change(run.id, { status: 'running' });
         emit({
@@ -209,7 +215,16 @@ export function createOrchestrator({
           if (!s.installed || s.authenticated === false) throw new Error(`${p}: ${s.detail}`);
         }
         const id = randomUUID();
-        const workspace = await createWorkspace(project.root, id, dataDir);
+        // A folder of repositories runs as a bundle: one worktree per chosen repository.
+        if (project.repositories && !input.repositories?.length)
+          throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
+        let workspace: { path: string; branch: string; baseCommit: string };
+        let bundle: RunRepo[] | undefined;
+        if (project.repositories) {
+          const w = await createBundleWorkspace(project.root, input.repositories!, id, dataDir);
+          workspace = w;
+          bundle = w.repos;
+        } else workspace = await createWorkspace(project.root, id, dataDir);
         const run: Run = {
           ...input,
           team: structuredClone(input.team),
@@ -219,6 +234,7 @@ export function createOrchestrator({
           worktreePath: workspace.path,
           branch: workspace.branch,
           baseCommit: workspace.baseCommit,
+          ...(bundle ? { repos: bundle } : {}),
           status: 'queued',
           phase: 'implement',
           revision: 0,

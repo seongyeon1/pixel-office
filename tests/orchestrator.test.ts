@@ -140,3 +140,44 @@ test('a run keeps the repository harness it started with and hands each provider
   await o.shutdown();
   store.close();
 });
+test('a bundle run works in one folder holding a worktree per chosen repository', async () => {
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const both = fake(async (i) => {
+    inputs.push(i);
+    if (i.role === 'implementer') await writeFile(join(i.cwd, 'api', 'b.txt'), 'b');
+    return i.role === 'reviewer'
+      ? { outcome: 'completed', text: 'ok', review: pass }
+      : { outcome: 'completed', text: 'done' };
+  });
+  const dataDir = await mkdtemp(join(tmpdir(), 'pixel-data-'));
+  const o = createOrchestrator({ store, adapters: { codex: both, claude: both }, dataDir });
+  const { mkdir, rename } = await import('node:fs/promises');
+  const folder = await mkdtemp(join(tmpdir(), 'pixel-folder-'));
+  await rename(await project(), join(folder, 'api'));
+  await mkdir(join(folder, 'apps'));
+  await rename(await project(), join(folder, 'apps', 'web'));
+  const base = {
+    projectPath: folder,
+    prompt: 'task',
+    mode: 'collaborate' as const,
+    implementer: 'codex' as const,
+    team: defaultTeam(),
+  };
+  // A folder of repositories needs a chosen bundle.
+  await expect(o.start(base)).rejects.toThrow('저장소');
+  const run = await o.start({
+    ...base,
+    repositories: [join(folder, 'api'), join(folder, 'apps', 'web')],
+  });
+  expect(run.repos!.map((r) => r.name)).toEqual(['api', 'web']);
+  expect(run.worktreePath).toBe(join(dataDir, 'workspaces', run.id));
+  await wait(() => store.getRun(run.id)?.status === 'completed');
+  expect(inputs[0].cwd).toBe(run.worktreePath);
+  expect(inputs[0].prompt).toContain('api/');
+  expect(inputs[0].prompt).toContain('web/');
+  // The reviewer sees the change under its repository folder.
+  expect(inputs[1].prompt).toContain('api/b.txt');
+  await o.shutdown();
+  store.close();
+});

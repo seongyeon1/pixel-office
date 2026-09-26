@@ -1667,6 +1667,79 @@ nav button.active svg {
   background: #eff3ed;
   border-color: #a5b39b;
 }
+.repository-list > button.unavailable {
+  border-style: dashed;
+  background: #f8f5f1;
+}
+.repository-list > button.unavailable > svg,
+.repository-status.warning,
+.project-chip.warning {
+  color: #aa7c63;
+}
+.repository-list > button.unavailable:hover,
+.repository-list > button.unavailable.selected {
+  background: #f3ece5;
+  border-color: #d3b8a5;
+}
+.unavailable-note {
+  padding-top: 8px;
+}
+.bundle-picker {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.bundle-picker legend {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+.bundle-picker legend small {
+  display: block;
+  font-weight: 400;
+  color: #77856e;
+  font-size: 9px;
+  line-height: 1.7;
+}
+.bundle-picker label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 10px;
+  text-align: left;
+}
+.bundle-picker label > span {
+  flex: 1;
+  min-width: 0;
+}
+.bundle-picker label strong {
+  display: block;
+  font-weight: 600;
+}
+.bundle-picker label.worktree {
+  opacity: 0.72;
+}
+.bundle-picker label.bundle-toggle {
+  color: #77856e;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--line);
+}
+.bundle-picker label input {
+  margin: 0;
+}
+.bundle-picker label small {
+  display: block;
+  color: #77856e;
+  font-size: 9px;
+}
 .repository-list > button > svg {
   flex-shrink: 0;
 }

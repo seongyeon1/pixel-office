@@ -18,7 +18,7 @@ import {
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
 import type { Orchestrator } from './orchestrator.js';
-import { inspectProject, collectChanges } from './projects.js';
+import { inspectProject, collectRunChanges } from './projects.js';
 import { listModels } from './models.js';
 import { harnessCatalog } from './harness.js';
 import type { QuestionDesk } from './questions.js';
@@ -280,6 +280,21 @@ export async function createServer({
     chat?.cancel(req.params.id);
     return { ok: true };
   });
+  // A listed folder may be no repository at all (the parent folder of several clones seen in
+  // session logs, or a remembered path that has since moved); the list says so, so nobody picks
+  // it and gets refused at 작업 시작.
+  type Probe = { unavailable?: string; repositoryCount?: number };
+  const probeCache = new Map<string, { at: number; value: Promise<Probe> }>();
+  const probeFor = (root: string) => {
+    const hit = probeCache.get(root);
+    if (hit && Date.now() - hit.at < 30_000) return hit.value;
+    const value: Promise<Probe> = inspectProject(root).then(
+      (p) => (p.repositories ? { repositoryCount: p.repositories.length } : {}),
+      (e: Error) => ({ unavailable: e.message }),
+    );
+    probeCache.set(root, { at: Date.now(), value });
+    return value;
+  };
   app.get('/api/projects', async () => {
     const aliases = store.roomAliases();
     const projects = new Map<string, ProjectSummary>(
@@ -299,6 +314,9 @@ export async function createServer({
       p.observedActive = (p.observedActive ?? 0) + (session.status === 'active' ? 1 : 0);
       projects.set(p.root, p);
     }
+    await Promise.all(
+      [...projects.values()].map(async (p) => Object.assign(p, await probeFor(p.root))),
+    );
     return [...projects.values()];
   });
   app.get<{ Querystring: { projectPath?: string } }>('/api/runs', async (req) => {
@@ -470,7 +488,7 @@ export async function createServer({
   app.get<{ Params: { id: string } }>('/api/runs/:id/changes', async (req, reply) => {
     const run = store.getRun(req.params.id);
     if (!run) return reply.code(404).send({ error: '실행 기록이 없습니다.' });
-    return collectChanges(run.worktreePath, run.baseCommit);
+    return collectRunChanges(run);
   });
   app.post<{ Params: { id: string } }>('/api/runs/:id/cancel', async (req) => {
     await orchestrator.cancel(req.params.id);

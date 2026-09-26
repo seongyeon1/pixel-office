@@ -23,12 +23,35 @@ export const defaultTeam = (): TeamConfig => ({
   codex: { seniority: 'junior', personaVersion: '1' },
   claude: { seniority: 'senior', personaVersion: '1' },
 });
-export interface Run {
-  id: string;
-  projectPath: string;
+// One repository found inside a folder: what the bundle picker lists.
+export interface RepositoryEntry {
+  path: string;
+  // Folder path relative to the chosen folder, e.g. "c-agent/c-agent".
+  name: string;
+  // Repository name from the origin URL, when there is one.
+  remote: string | null;
+  branch: string;
+  kind: 'clone' | 'worktree';
+  head: string;
+}
+// One repository's worktree inside a bundle run's workspace.
+export interface RunRepo {
+  root: string;
+  // Folder name inside the workspace; change paths are prefixed with it.
+  name: string;
   worktreePath: string;
   branch: string;
   baseCommit: string;
+}
+export interface Run {
+  id: string;
+  projectPath: string;
+  // The folder the coworkers work in: one repository's worktree, or, for a bundle run, the
+  // folder holding one worktree per repository (then `repos` lists them and baseCommit is '').
+  worktreePath: string;
+  branch: string;
+  baseCommit: string;
+  repos?: RunRepo[];
   prompt: string;
   mode: Mode;
   implementer: Provider;
@@ -51,6 +74,11 @@ export interface Department {
 export interface ProjectSummary {
   // Connected on purpose (or used for app runs), as opposed to only seen in session logs.
   connected?: boolean;
+  // Why the app cannot start a run here (a folder that is not a Git repository, e.g. the parent
+  // folder of several clones seen in session logs); absent when runs can start.
+  unavailable?: string;
+  // How many repositories a folder holds, when it is a bundle folder rather than a repository.
+  repositoryCount?: number;
   observedCount?: number;
   observedActive?: number;
   root: string;
@@ -151,6 +179,8 @@ const profileSchema = z.object({
 });
 export const startSchema = z.object({
   projectPath: z.string().min(1),
+  // For a folder of repositories: the repositories (absolute paths inside it) to bundle.
+  repositories: z.array(z.string().min(1)).max(50).optional(),
   prompt: z.string().trim().min(1).max(20000),
   mode: z.enum(['collaborate', 'codex', 'claude']),
   implementer: z.enum(['codex', 'claude']),

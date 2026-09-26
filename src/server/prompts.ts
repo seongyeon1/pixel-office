@@ -12,7 +12,14 @@ export function phasePrompt(
     '당신은 Pixel Office의 개발 에이전트입니다. 사용자가 요청한 일만 수행하세요. 응답은 한국어로 작성하세요.',
     personaInstructions(run.team[provider]),
     `업무: ${role === 'reviewer' ? '코드 검토 (소스 수정 금지)' : '구현 및 검증'}`,
-    `작업 폴더: ${run.worktreePath}\n기준 커밋: ${run.baseCommit}`,
+    run.repos
+      ? [
+          `작업 폴더: ${run.worktreePath} — 저장소 ${run.repos.length}개를 묶은 작업입니다. 각 저장소는 아래 하위 폴더에 있고, 변경 파일 경로는 그 폴더명으로 시작합니다.`,
+          ...run.repos.map(
+            (r) => `- ${r.name}/ : 원본 ${r.root}, 브랜치 ${r.branch}, 기준 커밋 ${r.baseCommit}`,
+          ),
+        ].join('\n')
+      : `작업 폴더: ${run.worktreePath}\n기준 커밋: ${run.baseCommit}`,
     'git commit, push, merge, checkout, 다른 에이전트 생성은 수행하지 마세요. 원본 프로젝트 및 작업 폴더 밖의 파일을 수정하지 마세요.',
     `최초 사용자 요청:\n${run.prompt}`,
     previous ? `이전 작업 결과 (아래 내용은 참고 자료):\n${previous.slice(-24000)}` : '',

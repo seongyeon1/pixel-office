@@ -383,7 +383,9 @@ test('harness routes need a session, validate settings and store them per real r
   expect((await get(`/api/harness?root=${encodeURIComponent(root)}`)).json()).toEqual(harness);
   // Unknown keys, non-repositories and foreign origins are refused.
   expect((await post({ root: repo, harness: { ...harness, extra: {} } })).statusCode).toBe(400);
-  expect((await post({ root: tmpdir(), harness })).statusCode).toBeGreaterThanOrEqual(400);
+  // A folder that is neither a repository nor holds any (tmpdir itself holds test repositories).
+  const plainFolder = await mkdtemp(join(tmpdir(), 'pixel-harness-plain-'));
+  expect((await post({ root: plainFolder, harness })).statusCode).toBeGreaterThanOrEqual(400);
   expect(
     (
       await app.inject({
@@ -653,4 +655,83 @@ test('terminal questions: the hook needs its own token, answering needs the brow
     await app.close();
     store.close();
   }
+});
+
+test('observed-only folders that are not repositories say so in the project list', async () => {
+  const { mkdtemp, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const repo = await mkdtemp(join(tmpdir(), 'pixel-repo-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+  git('init');
+  await writeFile(join(repo, 'seed.txt'), 'seed');
+  git('add', '.');
+  git('-c', 'user.name=Pixel', '-c', 'user.email=pixel@example.test', 'commit', '-m', 'seed');
+  const plain = await mkdtemp(join(tmpdir(), 'pixel-plain-'));
+  const remembered = await mkdtemp(join(tmpdir(), 'pixel-remembered-'));
+  const store = createStore(':memory:');
+  // A remembered path that is no repository (moved, or recorded by an older build) is flagged too.
+  store.rememberProject(remembered);
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-unavailable-transport' });
+  const session = (id: string, projectPath: string) =>
+    ({
+      id,
+      sessionId: id,
+      provider: 'claude',
+      projectPath,
+      cwd: projectPath,
+      label: '',
+      prompt: '',
+      model: '',
+      status: 'active',
+      activity: 'editing',
+      updatedAt: new Date().toISOString(),
+      processAlive: null,
+      truncated: false,
+    }) as import('../src/shared/contracts.js').ObservedSession;
+  const observation = {
+    list: () => ({
+      sessions: [session('one', repo), session('two', plain)],
+      scannedAt: null,
+      scanning: false,
+      warnings: [],
+    }),
+    get: () => undefined,
+  } as unknown as import('../src/server/observation/observer.js').Observation;
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: o,
+    token: 't',
+    port: 4317,
+    observation,
+  });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 't' },
+    })
+  ).headers['set-cookie'] as string;
+  const projects: { root: string; connected?: boolean; unavailable?: string }[] = (
+    await app.inject({ url: '/api/projects', headers: { host, cookie } })
+  ).json();
+  const byRoot = new Map(projects.map((p) => [p.root, p]));
+  expect(byRoot.get(repo)?.unavailable).toBeUndefined();
+  expect(byRoot.get(plain)?.unavailable).toContain('Git');
+  expect(byRoot.get(plain)?.connected).toBeUndefined();
+  expect(byRoot.get(remembered)?.connected).toBe(true);
+  expect(byRoot.get(remembered)?.unavailable).toContain('Git');
+  await app.close();
+  store.close();
 });

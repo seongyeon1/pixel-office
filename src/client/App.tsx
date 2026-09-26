@@ -39,6 +39,7 @@ import {
   type Provider,
   type Run,
   type ProjectSummary,
+  type RepositoryEntry,
   type ObservationSnapshot,
   type TeamConfig,
   type OfficeEvent,
@@ -58,7 +59,15 @@ import { ResumeDock } from './components/SessionResume';
 import { ObservedOffice } from './components/ObservedOffice';
 import { RepositoryList, repositoryName } from './components/RepositoryList';
 const WorkspacePanel = lazy(() => import('./workspace/WorkspacePanel'));
-type Project = { root: string; head: string; dirty: boolean };
+// `unavailable` carries why no run can start here (not a repository, no commit, missing path).
+// `repositories` is set for a folder holding several repositories (a bundle folder).
+type Project = {
+  root: string;
+  head: string;
+  dirty: boolean;
+  unavailable?: string;
+  repositories?: RepositoryEntry[];
+};
 type Snapshot = { run: Run; events: OfficeEvent[]; interactions: Interaction[]; sequence: number };
 type Health = { providers: Record<Provider, Connection>; activeId: string | null; demo: boolean };
 const providerName = (id: Provider) => (id === 'claude' ? 'Claude' : 'Codex');
@@ -86,6 +95,10 @@ export function App() {
   // Which kind of coworker the office inspector shows: the app's own run, or an observed session.
   const [runFocus, setRunFocus] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
+  // Repositories chosen for a bundle run (paths inside the bundle folder), remembered per folder.
+  const [bundle, setBundle] = useState<string[]>([]);
+  // Worktrees are feature branches of a clone already listed; hidden unless asked for.
+  const [showWorktrees, setShowWorktrees] = useState(false);
   const projectRef = useRef<string | null>(null);
   const selectionVersion = useRef(0);
   const snapshotVersion = useRef(0);
@@ -191,6 +204,7 @@ export function App() {
     snapshotVersion.current++;
     projectRef.current = root;
     setProject(inspected ?? { root, head: '', dirty: false });
+    setBundle([]);
     localStorage.setItem('pixel.project', root);
     setPath(root);
     const empty = emptyState();
@@ -213,12 +227,27 @@ export function App() {
         api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}`),
         inspected
           ? Promise.resolve(inspected)
-          : api<Project>('/projects/inspect', { path: root }).catch(() => null),
+          : api<Project>('/projects/inspect', { path: root }).catch((e: Error) => e.message),
       ]);
       if (version !== selectionVersion.current) return;
       setRuns(list);
-      if (metadata) setProject(metadata);
-      else setError('레포 경로를 확인할 수 없습니다. 보관된 작업 기록은 계속 볼 수 있어요.');
+      // A folder that is no repository stays selectable for its sessions and records; the
+      // composer shows the reason instead of letting 작업 시작 be refused by the server.
+      if (typeof metadata === 'string')
+        setProject({ root, head: '', dirty: false, unavailable: metadata });
+      else {
+        setProject(metadata);
+        if (metadata.repositories) {
+          const known = new Set(metadata.repositories.map((r) => r.path));
+          let remembered: string[] = [];
+          try {
+            remembered = JSON.parse(localStorage.getItem(`pixel.bundle.${root}`) ?? '[]');
+          } catch {
+            // A broken remembered list just means nothing is preselected.
+          }
+          setBundle(remembered.filter((p) => known.has(p)));
+        }
+      }
       if (options?.worker?.run) await selectRun(options.worker.run.id);
       else if (list[0]) await selectRun(list[0].id);
     } catch (e) {
@@ -385,17 +414,25 @@ export function App() {
       setPending(false);
     }
   };
+  const toggleRepository = (path: string) => {
+    if (!project) return;
+    const next = bundle.includes(path) ? bundle.filter((p) => p !== path) : [...bundle, path];
+    setBundle(next);
+    localStorage.setItem(`pixel.bundle.${project.root}`, JSON.stringify(next));
+  };
+  const bundleMissing = !!project?.repositories && bundle.length === 0;
   const start = async () => {
-    if (!project) {
+    if (!project || project.unavailable) {
       setModal('project');
       return;
     }
-    if (!prompt.trim() || loadingProject || busy) return;
+    if (!prompt.trim() || loadingProject || busy || bundleMissing) return;
     setPending(true);
     setError('');
     try {
       const run = await api<Run>('/runs', {
         projectPath: project.root,
+        ...(project.repositories ? { repositories: bundle } : {}),
         prompt,
         mode,
         implementer,
@@ -514,8 +551,11 @@ export function App() {
           rows={3}
         />
         <div className="composer-bottom">
-          <button className="project-chip" onClick={() => setModal('project')}>
-            <Folder size={14} />
+          <button
+            className={`project-chip ${project?.unavailable ? 'warning' : ''}`}
+            onClick={() => setModal('project')}
+          >
+            {project?.unavailable ? <AlertCircle size={14} /> : <Folder size={14} />}
             {project ? repositoryName(project.root) : '프로젝트 연결'}
             <ChevronDown size={12} />
           </button>
@@ -537,7 +577,14 @@ export function App() {
           ) : (
             <button
               className="primary start-button"
-              disabled={pending || loadingProject || busy || !prompt.trim()}
+              disabled={
+                pending ||
+                loadingProject ||
+                busy ||
+                !prompt.trim() ||
+                !!project?.unavailable ||
+                bundleMissing
+              }
               onClick={() => void start()}
             >
               {pending ? <LoaderCircle size={15} className="spin" /> : <ArrowUp size={17} />}
@@ -545,6 +592,55 @@ export function App() {
             </button>
           )}
         </div>
+        {project?.repositories && (
+          <fieldset className="bundle-picker" disabled={!!active}>
+            <legend>
+              함께 작업할 저장소
+              <small>
+                {bundle.length ? `${bundle.length}개 선택` : '하나 이상 골라 주세요'} · 저장소마다
+                작업 폴더가 따로 생기고 동료들은 그 상위 폴더에서 일해요.
+              </small>
+            </legend>
+            {project.repositories.some((r) => r.kind === 'worktree') && (
+              <label className="bundle-toggle">
+                <input
+                  type="checkbox"
+                  checked={showWorktrees}
+                  onChange={(e) => setShowWorktrees(e.target.checked)}
+                />
+                <span>
+                  worktree {project.repositories.filter((r) => r.kind === 'worktree').length}개도
+                  보기
+                </span>
+              </label>
+            )}
+            {project.repositories
+              .filter((r) => showWorktrees || r.kind === 'clone' || bundle.includes(r.path))
+              .map((r) => (
+                <label key={r.path} className={r.kind === 'worktree' ? 'worktree' : ''}>
+                  <input
+                    type="checkbox"
+                    checked={bundle.includes(r.path)}
+                    onChange={() => toggleRepository(r.path)}
+                  />
+                  <span>
+                    <strong>{r.name}</strong>
+                    <small>
+                      {r.remote ? `${r.remote} · ` : ''}
+                      {r.branch}
+                      {r.kind === 'worktree' ? ' · worktree' : ''}
+                    </small>
+                  </span>
+                </label>
+              ))}
+          </fieldset>
+        )}
+        {project?.unavailable && (
+          <p className="inline-error unavailable-note" role="status">
+            {project.unavailable} 이 폴더에서는 작업을 시작할 수 없어요. 프로젝트 칩을 눌러 실제
+            레포(하위 클론)를 골라 주세요. 세션과 기록은 계속 볼 수 있어요.
+          </p>
+        )}
         {project?.dirty && (
           <p className="hint dirty-note">
             커밋되지 않은 변경은 포함하지 않고, 마지막 커밋에서 새 작업을 시작해요.
@@ -734,6 +830,12 @@ export function App() {
                     {state.run.worktreePath}
                     <br />
                     {state.run.branch}
+                    {state.run.repos?.map((r) => (
+                      <span key={r.name}>
+                        <br />
+                        {r.name}/ ← {r.root}
+                      </span>
+                    ))}
                   </code>
                 </details>
               </div>
@@ -791,7 +893,15 @@ export function App() {
           </span>
           <span>
             {project ? repositoryName(project.root) : '내 워크스페이스'}
-            <small>{project ? '프로젝트 연결됨' : '프로젝트를 연결해주세요'}</small>
+            <small>
+              {!project
+                ? '프로젝트를 연결해주세요'
+                : project.unavailable
+                  ? 'Git 저장소 아님 · 세션만 관측'
+                  : project.repositories
+                    ? `저장소 ${project.repositories.length}개 묶음`
+                    : '프로젝트 연결됨'}
+            </small>
           </span>
           <ChevronDown size={14} />
         </button>
