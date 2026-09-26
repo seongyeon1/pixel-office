@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import { MessageCircle } from 'lucide-react';
-import { type ChatMessage, type ObservedSession } from '../../shared/contracts';
+import {
+  type ChatMessage,
+  type ObservedSession,
+  type Provider,
+  type Run,
+  terminal,
+} from '../../shared/contracts';
 import { FloorMap } from '../floor/FloorMap';
 import { useClock } from '../floor/clock';
 import { useSeenReports } from '../floor/seen';
@@ -11,15 +17,23 @@ const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' :
 export function SessionOffice({
   root,
   sessions,
+  run,
   selected,
+  selectedRunProvider,
   onSelect,
+  onSelectRun,
   reply,
   onChat,
 }: {
   root: string;
   sessions: ObservedSession[];
+  // The app's own run in this repository; its coworkers sit on the same floor.
+  run?: Run | null;
   selected?: ObservedSession;
+  // Set while the inspector shows the app run's coworker of this provider.
+  selectedRunProvider?: Provider;
   onSelect: (s: ObservedSession) => void;
+  onSelectRun: (provider: Provider) => void;
   reply?: ChatMessage;
   onChat: () => void;
 }) {
@@ -27,12 +41,15 @@ export function SessionOffice({
   const clock = useClock();
   const rooms = useMemo(
     () =>
-      projectRooms(root ? [{ root, latestRun: null, runCount: 0 }] : [], sessions, {
-        now: clock,
-        seen,
-      }).filter((r) => r.root === root),
-    [root, sessions, clock, seen],
+      projectRooms(
+        root ? [{ root, latestRun: run ?? null, runCount: run ? 1 : 0, connected: true }] : [],
+        sessions,
+        { now: clock, seen },
+      ).filter((r) => r.root === root),
+    [root, sessions, run, clock, seen],
   );
+  const live = !!run && !terminal(run.status);
+  const waiting = rooms.reduce((n, r) => n + r.waitingCount, 0);
   const roster = useMemo(() => rooms.flatMap((r) => r.workers.map((w) => w.id)), [rooms]);
   const offDuty = rooms.reduce((n, r) => n + r.offDuty.length, 0);
   const speech =
@@ -48,8 +65,13 @@ export function SessionOffice({
           <span className="presence working" />{' '}
           {sessions.filter((s) => s.status === 'active').length}명 활동 관측{' '}
           <small>· 전체 {sessions.length}명</small>
+          {live && <small> · 앱 작업 진행 중</small>}
         </span>
-        <span className="small-tag">세션마다 한 명</span>
+        {waiting > 0 ? (
+          <span className="small-tag waiting-tag">응답 필요 {waiting}</span>
+        ) : (
+          <span className="small-tag">세션마다 한 명</span>
+        )}
       </div>
       {speech && (
         <button className="agent-speech" onClick={onChat} aria-label="말풍선 전체 답변 보기">
@@ -66,9 +88,19 @@ export function SessionOffice({
           clock={clock}
           office
           label="에이전트 이동 맵"
-          selectedId={selected && `observed:${selected.id}`}
-          nameOf={(w) => `캐릭터 ${providerName(w.session!)} ${w.session!.sessionId}`}
-          onOpen={(_root, w) => w.session && onSelect(w.session)}
+          selectedId={
+            selectedRunProvider
+              ? rooms
+                  .flatMap((r) => r.workers)
+                  .find((w) => w.run && w.provider === selectedRunProvider)?.id
+              : selected && `observed:${selected.id}`
+          }
+          nameOf={(w) =>
+            w.session
+              ? `캐릭터 ${providerName(w.session)} ${w.session.sessionId}`
+              : `앱 동료 ${w.provider === 'codex' ? 'Codex' : 'Claude'}`
+          }
+          onOpen={(_root, w) => (w.session ? onSelect(w.session) : onSelectRun(w.provider))}
         />
       )}
       <div className="session-office-bottom">

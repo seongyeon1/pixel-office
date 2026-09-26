@@ -2,8 +2,9 @@ import { test, expect } from '@playwright/test';
 import { readFile, mkdir } from 'node:fs/promises';
 async function connect(page: import('@playwright/test').Page) {
   await page.goto('/#token=e2e-token');
-  await expect(page.getByRole('heading', { name: '오늘의 오피스.' })).toBeVisible();
-  await page.getByRole('button', { name: '프로젝트 연결', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
+  // The top bar's switch always exists; the composer chip shows a project name once one is open.
+  await page.getByRole('button', { name: '레포 전환', exact: true }).click();
   await page
     .getByLabel('프로젝트 경로', { exact: true })
     .fill((await readFile('.pixel/e2e-project.txt', 'utf8')).trim());
@@ -15,7 +16,7 @@ async function connect(page: import('@playwright/test').Page) {
 }
 test('office fits the viewport and supports model/persona selection', async ({ page }, info) => {
   await page.goto('/#token=e2e-token');
-  await expect(page.getByRole('heading', { name: '오늘의 오피스.' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -103,7 +104,7 @@ test('single-agent mode shows the actual implementer instead of a reviewer role'
   page,
 }) => {
   await page.goto('/#token=e2e-token');
-  await expect(page.getByRole('heading', { name: '오늘의 오피스.' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
   await page.getByLabel('실행 방식').selectOption('claude');
   await expect(page.getByText('구현과 테스트를 담당해요', { exact: true })).toBeVisible();
   await expect(page.getByText('Claude가 단독으로 작업해요', { exact: true })).toBeVisible();
@@ -216,9 +217,9 @@ test('existing sessions are discovered by repo and show live tools without execu
         }),
     );
     await page.goto('/#token=e2e-token');
-    await expect(page.getByRole('button', { name: /외부 세션 2/ })).toBeVisible({ timeout: 20000 });
-    await page.getByRole('button', { name: /외부 세션 2/ }).click();
-    await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+    // One office shows observed sessions directly; wait for both to be discovered.
+    await expect(page.locator('.observed-sessions > button')).toHaveCount(2, { timeout: 20000 });
+    await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
     // The list is grouped by model family; an unrecognised model id keeps its own group.
     await expect(
       page.locator('.family-heading', { hasText: 'Claude · claude-external' }),
@@ -287,7 +288,7 @@ test('existing sessions are discovered by repo and show live tools without execu
       .click();
     await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
     await page.reload();
-    await expect(page.getByRole('heading', { name: '외부 세션 오피스' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
     await page
       .getByRole('button', { name: '세션 선택 Claude external-claude', exact: true })
       .click();
@@ -342,8 +343,8 @@ test('separate Codex characters keep independent chats and expose failure and ca
           .join('\n') + '\n',
       );
     await page.goto('/#token=e2e-token');
-    await expect(page.getByRole('button', { name: /외부 세션 2/ })).toBeVisible({ timeout: 20000 });
-    await page.getByRole('button', { name: /외부 세션 2/ }).click();
+    // One office shows observed sessions directly; wait for both to be discovered.
+    await expect(page.locator('.observed-sessions > button')).toHaveCount(2, { timeout: 20000 });
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex chat-codex-0', exact: true }),
     ).toBeVisible();
@@ -463,5 +464,47 @@ test('office workspace reads code and provides a real terminal with reconnect an
     await expect(page.getByRole('button', { name: '터미널 시작', exact: true })).toBeVisible();
   } finally {
     await rm(second, { recursive: true, force: true });
+  }
+});
+
+test('one office seats app-run and observed coworkers together, each with its own controls', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const { writeFile, rm } = await import('node:fs/promises');
+  const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  const timestamp = new Date().toISOString();
+  const line = (o: unknown) => JSON.stringify(o) + '\n';
+  try {
+    await writeFile(
+      f.codex,
+      line({ timestamp, type: 'session_meta', payload: { id: 'shared-floor', cwd: f.project } }) +
+        line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } }),
+    );
+    await connect(page);
+    await page.getByLabel('작업 내용').fill('같은 층 테스트');
+    await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+    const appCoworker = page.getByRole('button', { name: '앱 동료 Codex', exact: true });
+    const observed = page.getByRole('button', { name: '캐릭터 Codex shared-floor', exact: true });
+    await expect(appCoworker).toBeVisible({ timeout: 20000 });
+    await expect(observed).toBeVisible({ timeout: 20000 });
+    await expect(appCoworker).toHaveAttribute('data-mark', 'approval');
+    if (test.info().project.name === 'desktop')
+      await page.screenshot({ path: 'docs/images/office-unified-desktop.png', fullPage: true });
+    // An observed session can be read and resumed, never approved or stopped from here.
+    await observed.click();
+    await expect(page.locator('.observed-inspector')).toBeVisible();
+    await expect(page.getByRole('button', { name: '승인', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '작업 중단', exact: true })).toHaveCount(1);
+    await expect(
+      page.locator('.observed-inspector').getByRole('button', { name: /중단/ }),
+    ).toHaveCount(0);
+    // The app's coworker opens the approval panel.
+    await appCoworker.click();
+    await expect(page.getByRole('heading', { name: '승인 필요' })).toBeVisible();
+    await page.getByRole('button', { name: '승인', exact: true }).click();
+    await expect(page.locator('.run-result.success')).toBeVisible({ timeout: 20000 });
+  } finally {
+    await rm(f.codex, { force: true });
   }
 });

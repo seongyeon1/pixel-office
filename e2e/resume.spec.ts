@@ -52,7 +52,6 @@ for (const provider of ['claude', 'codex'] as const) {
     let observedId = '';
     try {
       await page.goto('/#token=e2e-token');
-      await page.getByRole('button', { name: /외부 세션 \d+/ }).click();
       await expect(
         page.getByRole('button', { name: `캐릭터 ${name} ${sessionId}`, exact: true }),
       ).toBeVisible({ timeout: 20000 });

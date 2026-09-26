@@ -14,7 +14,6 @@ import {
   LayoutGrid,
   LoaderCircle,
   MessageSquare,
-  PanelRightClose,
   Plus,
   Settings2,
   Square,
@@ -47,7 +46,6 @@ import {
 } from '../shared/contracts';
 import { api, bootstrap, ApiError } from './api';
 import { applyEvent, emptyState, type OfficeState } from './state';
-import { Office } from './office/Office';
 import { TeamPanel } from './components/TeamPanel';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
@@ -84,7 +82,8 @@ export function App() {
     scanning: false,
     warnings: [],
   });
-  const [officeSource, setOfficeSource] = useState<'auto' | 'app' | 'external'>('auto');
+  // Which kind of coworker the office inspector shows: the app's own run, or an observed session.
+  const [runFocus, setRunFocus] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
   const projectRef = useRef<string | null>(null);
   const selectionVersion = useRef(0);
@@ -107,7 +106,6 @@ export function App() {
   const [socketStatus, setSocketStatus] = useState('');
   const [changes, setChanges] = useState<Change[]>([]);
   const [inspector, setInspector] = useState(true);
-  const [zoom, setZoom] = useState(1);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string>();
   const resumeSession = observation.sessions.find((s) => s.id === resumeSessionId);
@@ -141,11 +139,7 @@ export function App() {
   const retiredSessions = (observation.retired ?? []).filter(
     (s) => s.projectPath === project?.root,
   );
-  const observing =
-    officeSource === 'external' ||
-    (officeSource === 'auto' &&
-      (observedSessions.length > 0 || retiredSessions.length > 0) &&
-      !(state.run && !terminal(state.run.status)));
+  const observing = !runFocus && observedSessions.length > 0;
   const actualTeam = state.run?.team ?? team;
   const displayedMode = state.run?.mode ?? mode;
   const displayedImplementer =
@@ -211,7 +205,7 @@ export function App() {
     setResumeSessionId(undefined);
     setTargetSessionId(options?.worker?.session?.id);
     if (options?.worker) setSelected(options.worker.provider);
-    setOfficeSource(options?.worker?.session ? 'external' : options?.worker?.run ? 'app' : 'auto');
+    setRunFocus(!!options?.worker?.run);
     setLoadingProject(true);
     try {
       const [list, metadata] = await Promise.all([
@@ -407,9 +401,11 @@ export function App() {
         team,
       });
       await selectRun(run.id);
+      // Show the coworker who just got the task.
+      setSelected(mode === 'collaborate' ? implementer : mode);
       await refreshRuns();
       setView('office');
-      setOfficeSource('app');
+      setRunFocus(true);
       setInspector(true);
     } catch (e) {
       setError((e as Error).message);
@@ -471,6 +467,302 @@ export function App() {
     )
     .slice(-30)
     .reverse();
+  // The app's own run: its task composer and inspector slot into the repository office.
+  const appComposer = (
+    <>
+      {/* Phones collapse the sidebar; this row is how they reach the app's two coworkers. */}
+      <div className="mobile-agents">
+        {(['claude', 'codex'] as const).map((id) => (
+          <button
+            key={id}
+            aria-label={`${providerName(id)} 선택`}
+            className={runFocus && selected === id ? 'selected' : ''}
+            onClick={() => {
+              setSelected(id);
+              setRunFocus(true);
+              setInspector(true);
+            }}
+          >
+            <Avatar id={id} small />
+            <span>
+              {providerName(id)}
+              <small>
+                {seniorityLabels[actualTeam[id].seniority]} ·{' '}
+                {state.agents[id].waiting ? '응답 필요' : activityLabels[state.agents[id].activity]}
+              </small>
+            </span>
+          </button>
+        ))}
+      </div>
+      <section className="task-composer">
+        <div className="composer-title">
+          <MessageSquare size={17} />
+          <strong>{active ? '동료들이 작업하고 있어요' : '어떤 일을 함께 해볼까요?'}</strong>
+          {state.run && (
+            <button className="text-button" disabled={!!active} onClick={newTask}>
+              <Plus size={14} />새 작업
+            </button>
+          )}
+        </div>
+        <textarea
+          aria-label="작업 내용"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          disabled={!!active}
+          placeholder="예: 로그인 화면을 만들어줘. Codex가 구현하고 Claude가 검토해줘."
+          rows={3}
+        />
+        <div className="composer-bottom">
+          <button className="project-chip" onClick={() => setModal('project')}>
+            <Folder size={14} />
+            {project ? repositoryName(project.root) : '프로젝트 연결'}
+            <ChevronDown size={12} />
+          </button>
+          <select
+            aria-label="실행 방식"
+            value={mode}
+            onChange={(e) => setMode(e.target.value as Mode)}
+            disabled={!!active}
+          >
+            <option value="collaborate">함께 협업</option>
+            <option value="codex">Codex 단독</option>
+            <option value="claude">Claude 단독</option>
+          </select>
+          {active ? (
+            <button className="stop-button" disabled={pending} onClick={() => void stop()}>
+              <Square size={13} />
+              {pending ? '중단하는 중' : '작업 중단'}
+            </button>
+          ) : (
+            <button
+              className="primary start-button"
+              disabled={pending || loadingProject || busy || !prompt.trim()}
+              onClick={() => void start()}
+            >
+              {pending ? <LoaderCircle size={15} className="spin" /> : <ArrowUp size={17} />}
+              작업 시작
+            </button>
+          )}
+        </div>
+        {project?.dirty && (
+          <p className="hint dirty-note">
+            커밋되지 않은 변경은 포함하지 않고, 마지막 커밋에서 새 작업을 시작해요.
+          </p>
+        )}
+      </section>
+      {displayedMode === 'collaborate' ? (
+        <section className="workflow-strip">
+          <div>
+            <span className={`step-dot ${state.run?.phase === 'implement' ? 'current' : ''}`}>
+              1
+            </span>
+            <span>
+              구현<small>{providerName(displayedImplementer)}</small>
+            </span>
+          </div>
+          <span className="step-line" />
+          <div>
+            <span className={`step-dot ${state.run?.phase === 'review' ? 'current' : ''}`}>2</span>
+            <span>
+              검토
+              <small>{providerName(displayedImplementer === 'codex' ? 'claude' : 'codex')}</small>
+            </span>
+          </div>
+          <span className="step-line" />
+          <div>
+            <span className={`step-dot ${state.run?.phase === 'revise' ? 'current' : ''}`}>3</span>
+            <span>
+              수정·완료
+              <small>{state.run ? statusLabels[state.run.status] : '함께 마무리'}</small>
+            </span>
+          </div>
+          <span className="workflow-note">서로의 결과를 이어받아요</span>
+        </section>
+      ) : (
+        <section className="workflow-strip">
+          <span className="step-dot current">1</span>
+          <span>{providerName(displayedMode)}가 단독으로 작업해요</span>
+        </section>
+      )}
+    </>
+  );
+  const appInspector = (
+    <aside className="inspector">
+      <div className="inspector-heading">
+        <span>동료 살펴보기</span>
+        <button className="icon-button" aria-label="상세 닫기" onClick={() => setRunFocus(false)}>
+          <X size={16} />
+        </button>
+      </div>
+      <div className="agent-profile">
+        <Avatar id={selected} />
+        <h2>
+          {providerName(selected)}
+          <span>{seniorityLabels[actualTeam[selected].seniority]}</span>
+        </h2>
+        <p>
+          {displayedImplementer === selected
+            ? '구현과 테스트를 담당해요'
+            : displayedMode === 'collaborate'
+              ? '코드 검토와 피드백을 담당해요'
+              : '이번 작업에는 참여하지 않아요'}
+        </p>
+        <div className="agent-status">
+          <span
+            className={`presence ${selectedAgent.waiting ? 'waiting' : selectedAgent.activity === 'idle' ? 'online' : 'working'}`}
+          />
+          {selectedAgent.waiting
+            ? '응답을 기다리고 있어요'
+            : activityLabels[selectedAgent.activity]}
+        </div>
+      </div>
+      <dl className="agent-facts">
+        <div>
+          <dt>모델</dt>
+          <dd title={selectedAgent.model || actualTeam[selected].model}>
+            {selectedAgent.model || actualTeam[selected].model || '공급자 기본 모델'}
+          </dd>
+        </div>
+        <div>
+          <dt>연결</dt>
+          <dd className={health?.providers[selected].authenticated ? 'green-text' : ''}>
+            {health?.providers[selected].authenticated ? '연결됨' : '설정 필요'}
+          </dd>
+        </div>
+        <div>
+          <dt>현재 업무</dt>
+          <dd>{selectedAgent.tool || '새 작업 기다리기'}</dd>
+        </div>
+      </dl>
+      {!health?.providers[selected].authenticated && (
+        <p className="connection-warning">{health?.providers[selected].detail}</p>
+      )}
+      <div className="inspector-tabs">
+        <button className={tab === 'activity' ? 'active' : ''} onClick={() => setTab('activity')}>
+          <Radio size={14} />
+          활동
+        </button>
+        <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>
+          <FileCode2 size={14} />
+          변경 파일
+        </button>
+      </div>
+      <div className="inspector-content">
+        {state.interactions
+          .filter((i) => i.agentId === selected)
+          .map((req) => (
+            <InteractionPanel
+              key={req.id}
+              request={req}
+              onAnswer={async (a) => {
+                await api(`/interactions/${req.id}/answer`, a);
+              }}
+            />
+          ))}
+        {tab === 'activity' ? (
+          <>
+            {state.run && (
+              <div className="current-task">
+                <span>지금 맡은 일</span>
+                <p>{state.run.prompt}</p>
+                <small>{socketStatus || statusLabels[state.run.status]}</small>
+              </div>
+            )}
+            {selectedAgent.text && (
+              <div className="agent-output">
+                <div>
+                  <MessageSquare size={13} />
+                  작업 메시지
+                </div>
+                <pre>{selectedAgent.text}</pre>
+              </div>
+            )}
+            {relevant.length ? (
+              <div className="activity-list">
+                {relevant.map((e) => (
+                  <div className="activity-item" key={e.eventId}>
+                    <span className="activity-node" />
+                    <div>
+                      <strong>
+                        {e.type === 'phase.started'
+                          ? '업무를 시작했어요'
+                          : e.type === 'phase.completed'
+                            ? '업무를 마쳤어요'
+                            : e.type === 'handoff'
+                              ? '결과를 전달했어요'
+                              : e.type === 'tool.completed'
+                                ? '도구 실행 완료'
+                                : String(e.payload.tool ?? '작업 중')}
+                      </strong>
+                      <small>
+                        {new Date(e.timestamp).toLocaleTimeString('ko-KR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </small>
+                      <details>
+                        <summary>내용 보기</summary>
+                        <pre>{JSON.stringify(e.payload, null, 2)}</pre>
+                      </details>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-activity">
+                <span className="empty-icon">
+                  <Armchair size={27} />
+                </span>
+                <strong>자리를 준비했어요</strong>
+                <p>
+                  작업을 맡기면 이곳에서
+                  <br />
+                  진행 상황을 볼 수 있어요.
+                </p>
+              </div>
+            )}
+            {state.run && terminal(state.run.status) && (
+              <div className={`run-result ${state.run.status === 'completed' ? 'success' : ''}`}>
+                <strong>{statusLabels[state.run.status]}</strong>
+                <p>
+                  {state.run.error || state.run.summary || '작업 기록과 변경 파일을 확인해 주세요.'}
+                </p>
+                <details>
+                  <summary>작업 폴더·브랜치</summary>
+                  <code>
+                    {state.run.worktreePath}
+                    <br />
+                    {state.run.branch}
+                  </code>
+                </details>
+              </div>
+            )}
+          </>
+        ) : changes.length ? (
+          changes.map((c) => (
+            <details className="file-change" key={c.path}>
+              <summary>
+                <FileCode2 size={14} />
+                {c.path}
+              </summary>
+              <pre>{c.diff}</pre>
+              {c.truncated && <small>일부 내용만 표시합니다.</small>}
+            </details>
+          ))
+        ) : (
+          <div className="empty-activity">
+            <FileCode2 size={25} />
+            <strong>변경 파일이 없어요</strong>
+            <p>작업에서 수정한 파일이 여기에 표시돼요.</p>
+          </div>
+        )}
+      </div>
+      <div className="inspector-bottom">
+        <span className="presence online" />
+        실제 실행 상태를 보여드려요
+      </div>
+    </aside>
+  );
   return (
     <div
       className={`app-shell ${(workspaceOpen && project) || resumeSession ? 'workspace-is-open' : ''}`}
@@ -542,6 +834,7 @@ export function App() {
               className={`colleague ${selected === id ? 'selected' : ''}`}
               onClick={() => {
                 setSelected(id);
+                setRunFocus(true);
                 setInspector(true);
                 setView('office');
               }}
@@ -706,16 +999,7 @@ export function App() {
           </div>
         )}
         {view === 'office' && (
-          <div className="office-source" aria-label="작업 출처">
-            <button
-              className={observing ? 'selected' : ''}
-              onClick={() => setOfficeSource('external')}
-            >
-              외부 세션 {observedSessions.length}
-            </button>
-            <button className={!observing ? 'selected' : ''} onClick={() => setOfficeSource('app')}>
-              앱 작업
-            </button>
+          <div className="office-source" aria-label="세션 감지 상태">
             <span>
               {observation.scanning
                 ? '세션 찾는 중'
@@ -747,12 +1031,23 @@ export function App() {
           />
         ) : view === 'records' ? (
           <RecordsPage sessions={observation.sessions} />
-        ) : view === 'office' && observing ? (
+        ) : view === 'office' ? (
           <ObservedOffice
             key={project?.root ?? 'none'}
             sessions={observedSessions}
             automatedCount={automatedHere}
             onRecords={() => setView('records')}
+            run={state.run}
+            runFocus={runFocus}
+            onFocusRun={(id) => {
+              setSelected(id);
+              setRunFocus(true);
+              setInspector(true);
+            }}
+            onFocusSession={() => setRunFocus(false)}
+            appComposer={appComposer}
+            appInspector={appInspector}
+            onTeam={() => setModal('team')}
             initialSessionId={targetSessionId}
             root={project?.root ?? ''}
             selectedProvider={selected}
@@ -772,417 +1067,6 @@ export function App() {
               await refreshRuns();
             }}
           />
-        ) : view === 'office' ? (
-          <main className={`office-page ${inspector ? '' : 'inspector-hidden'}`}>
-            <div className="main-column">
-              <div className="page-heading">
-                <div>
-                  <div className="overline">
-                    <span className="tiny-square" />
-                    {project
-                      ? `${repositoryName(project.root)}의 작업 공간`
-                      : '우리 팀의 작업 공간'}
-                  </div>
-                  <h1>
-                    오늘의 오피스<span className="soft-dot">.</span>
-                  </h1>
-                  <p>
-                    {active
-                      ? '각자의 자리에서, 하나의 목표를 향해 일하고 있어요.'
-                      : '아이디어를 건네면, 동료들이 함께 만들어가요.'}
-                  </p>
-                </div>
-                <button className="subtle-button" onClick={() => setModal('team')}>
-                  <Users size={16} />팀 구성
-                </button>
-              </div>
-              <section className="office-card">
-                <div className="office-toolbar">
-                  <span>
-                    <span className={`presence ${active ? 'working' : 'online'}`} />
-                    {active ? '업무 진행 중' : '업무를 시작할 준비가 됐어요'}
-                  </span>
-                  <div>
-                    <span className="small-tag">2명의 동료</span>
-                    <button
-                      className="icon-button"
-                      title="상세 패널 토글"
-                      aria-label="상세 패널 토글"
-                      onClick={() => setInspector(!inspector)}
-                    >
-                      <PanelRightClose size={16} />
-                    </button>
-                  </div>
-                </div>
-                <div className="office-scene">
-                  <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}>
-                    <Office
-                      agents={state.agents}
-                      selected={selected}
-                      team={actualTeam}
-                      onSelect={(id) => {
-                        setSelected(id);
-                        setInspector(true);
-                      }}
-                    />
-                  </div>
-                  <div className="scene-label">
-                    <span className="pixel-dot" />{' '}
-                    {project ? repositoryName(project.root) : 'Pixel HQ'} <span>1F</span>
-                  </div>
-                  <div className="zoom-controls">
-                    <button
-                      aria-label="축소"
-                      onClick={() => setZoom((z) => Math.max(0.8, z - 0.1))}
-                    >
-                      −
-                    </button>
-                    <span>{Math.round(zoom * 100)}%</span>
-                    <button
-                      aria-label="확대"
-                      onClick={() => setZoom((z) => Math.min(1.2, z + 0.1))}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-                <div className="office-footer">
-                  <span>
-                    <span className="presence online" />
-                    대기
-                  </span>
-                  <span>
-                    <span className="presence working" />
-                    작업 중
-                  </span>
-                  <span>
-                    <span className="presence waiting" />
-                    응답 필요
-                  </span>
-                  <small>캐릭터를 눌러 작업을 살펴보세요</small>
-                </div>
-              </section>
-              <div className="mobile-agents">
-                {(['claude', 'codex'] as const).map((id) => (
-                  <button
-                    key={id}
-                    aria-label={`${providerName(id)} 선택`}
-                    className={selected === id ? 'selected' : ''}
-                    onClick={() => {
-                      setSelected(id);
-                      setInspector(true);
-                    }}
-                  >
-                    <Avatar id={id} small />
-                    <span>
-                      {providerName(id)}
-                      <small>
-                        {seniorityLabels[actualTeam[id].seniority]} ·{' '}
-                        {state.agents[id].waiting
-                          ? '응답 필요'
-                          : activityLabels[state.agents[id].activity]}
-                      </small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <section className="task-composer">
-                <div className="composer-title">
-                  <MessageSquare size={17} />
-                  <strong>
-                    {active ? '동료들이 작업하고 있어요' : '어떤 일을 함께 해볼까요?'}
-                  </strong>
-                  {state.run && (
-                    <button className="text-button" disabled={!!active} onClick={newTask}>
-                      <Plus size={14} />새 작업
-                    </button>
-                  )}
-                </div>
-                <textarea
-                  aria-label="작업 내용"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  disabled={!!active}
-                  placeholder="예: 로그인 화면을 만들어줘. Codex가 구현하고 Claude가 검토해줘."
-                  rows={3}
-                />
-                <div className="composer-bottom">
-                  <button className="project-chip" onClick={() => setModal('project')}>
-                    <Folder size={14} />
-                    {project ? repositoryName(project.root) : '프로젝트 연결'}
-                    <ChevronDown size={12} />
-                  </button>
-                  <select
-                    aria-label="실행 방식"
-                    value={mode}
-                    onChange={(e) => setMode(e.target.value as Mode)}
-                    disabled={!!active}
-                  >
-                    <option value="collaborate">함께 협업</option>
-                    <option value="codex">Codex 단독</option>
-                    <option value="claude">Claude 단독</option>
-                  </select>
-                  {active ? (
-                    <button className="stop-button" disabled={pending} onClick={() => void stop()}>
-                      <Square size={13} />
-                      {pending ? '중단하는 중' : '작업 중단'}
-                    </button>
-                  ) : (
-                    <button
-                      className="primary start-button"
-                      disabled={pending || loadingProject || busy || !prompt.trim()}
-                      onClick={() => void start()}
-                    >
-                      {pending ? (
-                        <LoaderCircle size={15} className="spin" />
-                      ) : (
-                        <ArrowUp size={17} />
-                      )}
-                      작업 시작
-                    </button>
-                  )}
-                </div>
-                {project?.dirty && (
-                  <p className="hint dirty-note">
-                    커밋되지 않은 변경은 포함하지 않고, 마지막 커밋에서 새 작업을 시작해요.
-                  </p>
-                )}
-              </section>
-              {displayedMode === 'collaborate' ? (
-                <section className="workflow-strip">
-                  <div>
-                    <span
-                      className={`step-dot ${state.run?.phase === 'implement' ? 'current' : ''}`}
-                    >
-                      1
-                    </span>
-                    <span>
-                      구현<small>{providerName(displayedImplementer)}</small>
-                    </span>
-                  </div>
-                  <span className="step-line" />
-                  <div>
-                    <span className={`step-dot ${state.run?.phase === 'review' ? 'current' : ''}`}>
-                      2
-                    </span>
-                    <span>
-                      검토
-                      <small>
-                        {providerName(displayedImplementer === 'codex' ? 'claude' : 'codex')}
-                      </small>
-                    </span>
-                  </div>
-                  <span className="step-line" />
-                  <div>
-                    <span className={`step-dot ${state.run?.phase === 'revise' ? 'current' : ''}`}>
-                      3
-                    </span>
-                    <span>
-                      수정·완료
-                      <small>{state.run ? statusLabels[state.run.status] : '함께 마무리'}</small>
-                    </span>
-                  </div>
-                  <span className="workflow-note">서로의 결과를 이어받아요</span>
-                </section>
-              ) : (
-                <section className="workflow-strip">
-                  <span className="step-dot current">1</span>
-                  <span>{providerName(displayedMode)}가 단독으로 작업해요</span>
-                </section>
-              )}
-            </div>
-            {inspector && (
-              <aside className="inspector">
-                <div className="inspector-heading">
-                  <span>동료 살펴보기</span>
-                  <button
-                    className="icon-button"
-                    aria-label="상세 닫기"
-                    onClick={() => setInspector(false)}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                <div className="agent-profile">
-                  <Avatar id={selected} />
-                  <h2>
-                    {providerName(selected)}
-                    <span>{seniorityLabels[actualTeam[selected].seniority]}</span>
-                  </h2>
-                  <p>
-                    {displayedImplementer === selected
-                      ? '구현과 테스트를 담당해요'
-                      : displayedMode === 'collaborate'
-                        ? '코드 검토와 피드백을 담당해요'
-                        : '이번 작업에는 참여하지 않아요'}
-                  </p>
-                  <div className="agent-status">
-                    <span
-                      className={`presence ${selectedAgent.waiting ? 'waiting' : selectedAgent.activity === 'idle' ? 'online' : 'working'}`}
-                    />
-                    {selectedAgent.waiting
-                      ? '응답을 기다리고 있어요'
-                      : activityLabels[selectedAgent.activity]}
-                  </div>
-                </div>
-                <dl className="agent-facts">
-                  <div>
-                    <dt>모델</dt>
-                    <dd title={selectedAgent.model || actualTeam[selected].model}>
-                      {selectedAgent.model || actualTeam[selected].model || '공급자 기본 모델'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>연결</dt>
-                    <dd className={health?.providers[selected].authenticated ? 'green-text' : ''}>
-                      {health?.providers[selected].authenticated ? '연결됨' : '설정 필요'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>현재 업무</dt>
-                    <dd>{selectedAgent.tool || '새 작업 기다리기'}</dd>
-                  </div>
-                </dl>
-                {!health?.providers[selected].authenticated && (
-                  <p className="connection-warning">{health?.providers[selected].detail}</p>
-                )}
-                <div className="inspector-tabs">
-                  <button
-                    className={tab === 'activity' ? 'active' : ''}
-                    onClick={() => setTab('activity')}
-                  >
-                    <Radio size={14} />
-                    활동
-                  </button>
-                  <button
-                    className={tab === 'files' ? 'active' : ''}
-                    onClick={() => setTab('files')}
-                  >
-                    <FileCode2 size={14} />
-                    변경 파일
-                  </button>
-                </div>
-                <div className="inspector-content">
-                  {state.interactions
-                    .filter((i) => i.agentId === selected)
-                    .map((req) => (
-                      <InteractionPanel
-                        key={req.id}
-                        request={req}
-                        onAnswer={async (a) => {
-                          await api(`/interactions/${req.id}/answer`, a);
-                        }}
-                      />
-                    ))}
-                  {tab === 'activity' ? (
-                    <>
-                      {state.run && (
-                        <div className="current-task">
-                          <span>지금 맡은 일</span>
-                          <p>{state.run.prompt}</p>
-                          <small>{socketStatus || statusLabels[state.run.status]}</small>
-                        </div>
-                      )}
-                      {selectedAgent.text && (
-                        <div className="agent-output">
-                          <div>
-                            <MessageSquare size={13} />
-                            작업 메시지
-                          </div>
-                          <pre>{selectedAgent.text}</pre>
-                        </div>
-                      )}
-                      {relevant.length ? (
-                        <div className="activity-list">
-                          {relevant.map((e) => (
-                            <div className="activity-item" key={e.eventId}>
-                              <span className="activity-node" />
-                              <div>
-                                <strong>
-                                  {e.type === 'phase.started'
-                                    ? '업무를 시작했어요'
-                                    : e.type === 'phase.completed'
-                                      ? '업무를 마쳤어요'
-                                      : e.type === 'handoff'
-                                        ? '결과를 전달했어요'
-                                        : e.type === 'tool.completed'
-                                          ? '도구 실행 완료'
-                                          : String(e.payload.tool ?? '작업 중')}
-                                </strong>
-                                <small>
-                                  {new Date(e.timestamp).toLocaleTimeString('ko-KR', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </small>
-                                <details>
-                                  <summary>내용 보기</summary>
-                                  <pre>{JSON.stringify(e.payload, null, 2)}</pre>
-                                </details>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="empty-activity">
-                          <span className="empty-icon">
-                            <Armchair size={27} />
-                          </span>
-                          <strong>자리를 준비했어요</strong>
-                          <p>
-                            작업을 맡기면 이곳에서
-                            <br />
-                            진행 상황을 볼 수 있어요.
-                          </p>
-                        </div>
-                      )}
-                      {state.run && terminal(state.run.status) && (
-                        <div
-                          className={`run-result ${state.run.status === 'completed' ? 'success' : ''}`}
-                        >
-                          <strong>{statusLabels[state.run.status]}</strong>
-                          <p>
-                            {state.run.error ||
-                              state.run.summary ||
-                              '작업 기록과 변경 파일을 확인해 주세요.'}
-                          </p>
-                          <details>
-                            <summary>작업 폴더·브랜치</summary>
-                            <code>
-                              {state.run.worktreePath}
-                              <br />
-                              {state.run.branch}
-                            </code>
-                          </details>
-                        </div>
-                      )}
-                    </>
-                  ) : changes.length ? (
-                    changes.map((c) => (
-                      <details className="file-change" key={c.path}>
-                        <summary>
-                          <FileCode2 size={14} />
-                          {c.path}
-                        </summary>
-                        <pre>{c.diff}</pre>
-                        {c.truncated && <small>일부 내용만 표시합니다.</small>}
-                      </details>
-                    ))
-                  ) : (
-                    <div className="empty-activity">
-                      <FileCode2 size={25} />
-                      <strong>변경 파일이 없어요</strong>
-                      <p>작업에서 수정한 파일이 여기에 표시돼요.</p>
-                    </div>
-                  )}
-                </div>
-                <div className="inspector-bottom">
-                  <span className="presence online" />
-                  실제 실행 상태를 보여드려요
-                </div>
-              </aside>
-            )}
-          </main>
         ) : view === 'team' ? (
           <main className="secondary-page">
             <div className="page-heading">
@@ -1222,7 +1106,7 @@ export function App() {
                     key={r.id}
                     onClick={() => {
                       void selectRun(r.id);
-                      setOfficeSource('app');
+                      setRunFocus(true);
                       setView('office');
                       setInspector(true);
                     }}
