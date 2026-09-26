@@ -261,3 +261,9 @@ test('each department starts its own band and bands never mix departments', () =
     expect(path.at(-1)!.cell).toBe('/o1');
   }
 });
+test('away coworkers never wander to the lounge', () => {
+  const L = floorLayout([{ root: '/r', lanes: [lane('/r', ['idle'])] }], 1400);
+  const away = [worker('idle', '/r', { active: false, away: true })];
+  for (let clock = 0; clock < LOUNGE_CYCLE * 20; clock += 5000)
+    expect(placements(away, L, clock).get('idle')!.kind).toBe('desk');
+});

@@ -599,3 +599,12 @@
   font-weight: 700;
   letter-spacing: 0.02em;
 }
+/* Terminal open but quiet for a while: the coworker stays, faded. */
+.floor-worker.away .floor-sprite {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+}
+.floor-worker.away .floor-caption {
+  color: #8a9282;
+  border-color: #c9cfc2;
+}

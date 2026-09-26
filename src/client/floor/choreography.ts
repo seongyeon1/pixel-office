@@ -22,7 +22,9 @@ export function placements(
 ): Map<string, Placement> {
   const out = new Map<string, Placement>();
   const seat = (id: string) => L.seats.get(id);
-  const free = (w: ProjectWorker) => !w.mark && !w.parentId && !w.visiting && !!w.session;
+  // Away coworkers are not in the building to wander; they keep their dimmed desk.
+  const free = (w: ProjectWorker) =>
+    !w.mark && !w.parentId && !w.visiting && !w.away && !!w.session;
   const meetingSeats = [...L.meeting];
   const byRoom = new Map<string, ProjectWorker[]>();
   for (const w of workers) byRoom.set(w.root, [...(byRoom.get(w.root) ?? []), w]);

@@ -107,7 +107,7 @@ export function FloorWorker({
   const doing = leaving ? '퇴근 중' : placeLabel[kind] || w.caption;
   return (
     <button
-      className={`floor-worker ${w.active ? 'working' : 'resting'} ${walking ? 'walking' : ''} ${w.mark ? `marked ${w.mark}` : ''} ${w.certain ? '' : 'guess'} ${selected ? 'selected' : ''}`}
+      className={`floor-worker ${w.active ? 'working' : 'resting'} ${walking ? 'walking' : ''} ${w.mark ? `marked ${w.mark}` : ''} ${w.certain ? '' : 'guess'} ${selected ? 'selected' : ''} ${w.away ? 'away' : ''}`}
       style={{
         transform: `translate(${pos.x}px, ${pos.y}px)`,
         transitionDuration: `${duration}ms`,
