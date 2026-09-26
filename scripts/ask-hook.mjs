@@ -24,10 +24,13 @@ try {
   });
   if (!opened.ok) quietly();
   const { id } = await opened.json();
+  // Only a question id the app issued goes into a URL path.
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) quietly();
+  const question = `${url}/api/hook/questions/${encodeURIComponent(id)}`;
   const deadline = Date.now() + GIVE_UP_MS;
   while (Date.now() < deadline) {
     const wait = Math.min(25_000, Math.max(1, deadline - Date.now()));
-    const res = await fetch(`${url}/api/hook/questions/${id}?wait=${wait}`, { headers });
+    const res = await fetch(`${question}?wait=${wait}`, { headers });
     if (!res.ok) quietly();
     const outcome = await res.json();
     if (outcome.status === 'answered') {
@@ -46,7 +49,7 @@ try {
     if (outcome.status !== 'pending') quietly();
   }
   // Give the question back to the terminal rather than leaving it stranded in the app.
-  await fetch(`${url}/api/hook/questions/${id}/release`, { method: 'POST', headers, body: '{}' }).catch(() => {});
+  await fetch(`${question}/release`, { method: 'POST', headers, body: '{}' }).catch(() => {});
   quietly();
 } catch {
   quietly();
