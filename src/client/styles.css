@@ -1046,7 +1046,7 @@ nav button.active svg {
   border-radius: 12px;
   overflow: hidden;
 }
-.history-list > button {
+.history-document-row > button:first-child {
   width: 100%;
   border: 0;
   border-bottom: 1px solid var(--line);
@@ -1056,7 +1056,7 @@ nav button.active svg {
   justify-content: flex-start;
   gap: 16px;
 }
-.history-list > button > span:nth-child(2) {
+.history-document-row > button:first-child > span:nth-child(2) {
   flex: 1;
   min-width: 0;
 }
@@ -1528,7 +1528,7 @@ nav button.active svg {
     padding: 15px;
     gap: 12px;
   }
-  .history-list > button {
+  .history-document-row > button:first-child {
     padding: 15px 12px;
     gap: 10px;
   }

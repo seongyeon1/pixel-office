@@ -22,6 +22,7 @@ import {
   terminal,
 } from '../../shared/contracts';
 import { api } from '../api';
+import { TaskDocumentButton } from '../workspace/TaskDocumentButton';
 import { SessionOffice } from '../office/SessionOffice';
 import { markSeen } from '../floor/seen';
 import { compareFamilies, modelFamily, type ModelFamily } from '../models/family';
@@ -232,6 +233,12 @@ export function ObservedOffice({
                 selected.prompt ||
                 '새 작업 기록을 기다리고 있어요.'}
             </p>
+            <div className="task-documents-entry">
+              <TaskDocumentButton
+                key={selected.id}
+                source={{ kind: 'session', session: selected }}
+              />
+            </div>
             <footer>
               <span>
                 {clock(selected.updatedAt)} 기준 · {observedStatus[selected.status]}

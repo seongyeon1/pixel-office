@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 async function connect(page: Page) {
   await page.goto('/#token=e2e-token');
@@ -117,4 +117,120 @@ test('a completed run opens its Markdown artifact in the worktree and shows its 
   });
   await expect(panel.getByRole('button', { name: '파일 REPORT.md', exact: true })).toHaveCount(0);
   await expect(panel.getByRole('heading', { name: '작업 결과 보고서' })).toHaveCount(0);
+});
+
+test('task documents open directly from history and show only this run files', async ({ page }) => {
+  await connect(page);
+  await page.getByLabel('작업 내용').fill('문서 산출물 테스트');
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
+  await page.getByRole('button', { name: '승인', exact: true }).click();
+  await expect(page.locator('.run-result.success')).toBeVisible();
+  await page
+    .locator('.inspector')
+    .getByRole('button', { name: '작업 문서 보기', exact: true })
+    .click();
+  const dialog = page.getByRole('dialog', { name: '이 작업의 문서' });
+  await expect(dialog.getByRole('heading', { name: '작업 결과 보고서' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '파일 README.md' })).toHaveCount(0);
+  await expect(
+    dialog.getByRole('navigation', { name: '작업 문서' }).getByRole('button'),
+  ).toHaveCount(1);
+  await dialog.getByRole('button', { name: '변경 비교' }).click();
+  await expect(dialog.locator('.document-diff')).toContainText('+# 작업 결과 보고서');
+  await page.screenshot({ path: `/tmp/pixel-task-documents-${test.info().project.name}.png` });
+  await dialog.getByRole('button', { name: '작업 문서 닫기' }).click();
+  await page.getByRole('button', { name: /^작업 기록/ }).click();
+  await page
+    .locator('.history-document-row')
+    .first()
+    .getByRole('button', { name: '작업 문서 보기' })
+    .click();
+  await expect(dialog.getByRole('heading', { name: '작업 결과 보고서' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.locator('.history-document-row').first().getByRole('button', { name: '작업 문서 보기' }),
+  ).toBeFocused();
+});
+
+test('a coworker document is opened from its task, with earlier requests kept separate', async ({
+  page,
+}) => {
+  const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  const timestamp = new Date().toISOString();
+  const folder = `task-docs-${test.info().project.name}`;
+  const line = (o: unknown) => JSON.stringify(o) + '\n';
+  await mkdir(join(f.project, folder), { recursive: true });
+  await writeFile(
+    join(f.project, folder, 'latest.md'),
+    '# 이번 설계 보고서\n\n작업에서 바로 열립니다.',
+  );
+  await writeFile(join(f.project, folder, 'older.md'), '# 이전 작업');
+  try {
+    await writeFile(
+      f.claude,
+      line({
+        timestamp,
+        type: 'user',
+        sessionId: 'document-writer',
+        cwd: f.project,
+        message: { content: '이전 작업' },
+      }) +
+        line({
+          timestamp,
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'tool_use', name: 'Write', input: { file_path: `${folder}/older.md` } },
+            ],
+          },
+        }) +
+        line({ timestamp, type: 'user', message: { content: '이번 설계 문서 작성' } }) +
+        line({
+          timestamp,
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'tool_use', name: 'Write', input: { file_path: `${folder}/latest.md` } },
+            ],
+          },
+        }),
+    );
+    await connect(page);
+    await page
+      .getByRole('button', { name: '세션 선택 Claude document-writer', exact: true })
+      .click({ timeout: 20000 });
+    await page
+      .locator('.session-task-card')
+      .getByRole('button', { name: '작업 문서 보기' })
+      .click();
+    const dialog = page.getByRole('dialog', { name: '이 작업의 문서' });
+    await expect(dialog.getByRole('heading', { name: '이번 설계 보고서' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: `파일 ${folder}/older.md` })).toHaveCount(0);
+    await dialog.getByLabel('문서 작업 범위').selectOption('session');
+    await dialog.getByRole('button', { name: `파일 ${folder}/older.md` }).click();
+    await expect(dialog.getByRole('heading', { name: '이전 작업', exact: true })).toBeVisible();
+    await dialog.getByLabel('문서 작업 범위').selectOption('latest');
+    await expect(dialog.getByRole('heading', { name: '이번 설계 보고서' })).toBeVisible();
+    await page.screenshot({ path: `/tmp/pixel-session-documents-${test.info().project.name}.png` });
+    await appendFile(
+      f.claude,
+      line({
+        timestamp: new Date().toISOString(),
+        type: 'user',
+        message: { content: '아직 문서가 없는 새 요청' },
+      }),
+    );
+    await expect(dialog.getByRole('heading', { name: '아직 연결된 문서가 없어요' })).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(dialog.getByRole('heading', { name: '이번 설계 보고서' })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  } finally {
+    await rm(f.claude, { force: true });
+    await rm(join(f.project, folder), { recursive: true, force: true });
+  }
 });

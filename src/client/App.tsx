@@ -47,6 +47,7 @@ import {
 } from '../shared/contracts';
 import { api, bootstrap, ApiError } from './api';
 import { isMarkdown } from '../shared/documents';
+import { TaskDocumentButton } from './workspace/TaskDocumentButton';
 import './workspace/documents.css';
 import type { DocumentTarget } from './workspace/WorkspacePanel';
 import { applyEvent, emptyState, type OfficeState } from './state';
@@ -765,6 +766,11 @@ export function App() {
       {!health?.providers[selected].authenticated && (
         <p className="connection-warning">{health?.providers[selected].detail}</p>
       )}
+      {state.run && (
+        <div className="task-documents-entry">
+          <TaskDocumentButton key={state.run.id} source={{ kind: 'run', run: state.run }} />
+        </div>
+      )}
       <div className="inspector-tabs">
         <button className={tab === 'activity' ? 'active' : ''} onClick={() => setTab('activity')}>
           <Radio size={14} />
@@ -1286,28 +1292,30 @@ export function App() {
             {runs.length ? (
               <div className="history-list">
                 {runs.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => {
-                      void selectRun(r.id);
-                      setRunFocus(true);
-                      setView('office');
-                      setInspector(true);
-                    }}
-                  >
-                    <span className={`history-icon ${r.status === 'completed' ? 'done' : ''}`}>
-                      {r.status === 'completed' ? <Check size={19} /> : <Code2 size={19} />}
-                    </span>
-                    <span>
-                      <strong>{r.prompt}</strong>
-                      <small>
-                        {repositoryName(r.projectPath)} ·{' '}
-                        {new Date(r.createdAt).toLocaleString('ko-KR')}
-                      </small>
-                    </span>
-                    <span className="history-status">{statusLabels[r.status]}</span>
-                    <ChevronRight size={16} />
-                  </button>
+                  <div className="history-document-row" key={r.id}>
+                    <button
+                      onClick={() => {
+                        void selectRun(r.id);
+                        setRunFocus(true);
+                        setView('office');
+                        setInspector(true);
+                      }}
+                    >
+                      <span className={`history-icon ${r.status === 'completed' ? 'done' : ''}`}>
+                        {r.status === 'completed' ? <Check size={19} /> : <Code2 size={19} />}
+                      </span>
+                      <span>
+                        <strong>{r.prompt}</strong>
+                        <small>
+                          {repositoryName(r.projectPath)} ·{' '}
+                          {new Date(r.createdAt).toLocaleString('ko-KR')}
+                        </small>
+                      </span>
+                      <span className="history-status">{statusLabels[r.status]}</span>
+                      <ChevronRight size={16} />
+                    </button>
+                    <TaskDocumentButton source={{ kind: 'run', run: r }} />
+                  </div>
                 ))}
               </div>
             ) : (

@@ -13,8 +13,10 @@ export function CodeBrowser({
   openRequest = 0,
   changes = [],
   onDocument,
+  documentPaths,
 }: {
   root: string;
+  documentPaths?: string[];
   documents?: boolean;
   active?: boolean;
   initialPath?: string;
@@ -41,6 +43,7 @@ export function CodeBrowser({
   const [treeError, setTreeError] = useState('');
   const [loading, setLoading] = useState(false);
   useEffect(() => {
+    if (documentPaths) return;
     let cancelled = false;
     setListing(null);
     setTreeError('');
@@ -69,7 +72,7 @@ export function CodeBrowser({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [root, directory, refresh, documents, live, active]);
+  }, [root, directory, refresh, documents, live, active, !!documentPaths]);
   useEffect(() => {
     let cancelled = false;
     setFile((previous) => (previous?.path === path ? previous : null));
@@ -112,62 +115,95 @@ export function CodeBrowser({
   }, [root, path, refresh, documents, live, active]);
   return (
     <div className={`code-browser ${documents ? 'documents-browser' : ''}`}>
-      <nav className="file-browser" aria-label={documents ? '문서 파일' : '레포 파일'}>
-        <div className="file-browser-toolbar">
-          <button
-            aria-label="상위 폴더"
-            disabled={!directory}
-            onClick={() => setDirectory(directory.split('/').slice(0, -1).join('/'))}
-          >
-            <ArrowUp size={16} />
-          </button>
-          <span title={directory}>{directory || '파일'}</span>
-          <button
-            aria-label={documents ? '문서 새로고침' : '코드 새로고침'}
-            onClick={() => setRefresh((n) => n + 1)}
-          >
-            <RefreshCw size={15} />
-          </button>
-        </div>
-        {treeError ? (
-          <p role="alert" className="workspace-error">
-            {treeError}
-          </p>
-        ) : !listing ? (
-          <p role="status">파일을 불러오는 중…</p>
+      <nav
+        className="file-browser"
+        aria-label={documentPaths ? '작업 문서' : documents ? '문서 파일' : '레포 파일'}
+      >
+        {documentPaths ? (
+          <>
+            <div className="file-browser-toolbar">
+              <span>문서 {documentPaths.length}개</span>
+            </div>
+            <ul>
+              {documentPaths.map((p) => (
+                <li key={p}>
+                  <button
+                    aria-label={`파일 ${p}`}
+                    aria-current={path === p ? 'page' : undefined}
+                    onClick={() => openDocument(p)}
+                  >
+                    <FileCode2 size={15} />
+                    {p}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
         ) : (
           <>
-            <ul>
-              {listing.entries
-                .filter(
-                  (entry) => !documents || entry.kind === 'directory' || isMarkdown(entry.path),
-                )
-                .map((entry) => (
-                  <li key={entry.path}>
-                    <button
-                      title={entry.path}
-                      aria-label={`${entry.kind === 'directory' ? '폴더' : '파일'} ${entry.path}`}
-                      aria-current={path === entry.path ? 'page' : undefined}
-                      onClick={() =>
-                        entry.kind === 'directory'
-                          ? setDirectory(entry.path)
-                          : openDocument(entry.path)
-                      }
-                    >
-                      {entry.kind === 'directory' ? <Folder size={15} /> : <FileCode2 size={15} />}
-                      {entry.name}
-                    </button>
-                  </li>
-                ))}
-            </ul>
-            {!listing.entries.some(
-              (entry) => !documents || entry.kind === 'directory' || isMarkdown(entry.path),
-            ) && (
-              <p>
-                {documents ? '이 폴더에는 Markdown 문서가 없습니다.' : '표시할 파일이 없습니다.'}
+            <div className="file-browser-toolbar">
+              <button
+                aria-label="상위 폴더"
+                disabled={!directory}
+                onClick={() => setDirectory(directory.split('/').slice(0, -1).join('/'))}
+              >
+                <ArrowUp size={16} />
+              </button>
+              <span title={directory}>{directory || '파일'}</span>
+              <button
+                aria-label={documents ? '문서 새로고침' : '코드 새로고침'}
+                onClick={() => setRefresh((n) => n + 1)}
+              >
+                <RefreshCw size={15} />
+              </button>
+            </div>
+            {treeError ? (
+              <p role="alert" className="workspace-error">
+                {treeError}
               </p>
+            ) : !listing ? (
+              <p role="status">파일을 불러오는 중…</p>
+            ) : (
+              <>
+                <ul>
+                  {listing.entries
+                    .filter(
+                      (entry) => !documents || entry.kind === 'directory' || isMarkdown(entry.path),
+                    )
+                    .map((entry) => (
+                      <li key={entry.path}>
+                        <button
+                          title={entry.path}
+                          aria-label={`${entry.kind === 'directory' ? '폴더' : '파일'} ${entry.path}`}
+                          aria-current={path === entry.path ? 'page' : undefined}
+                          onClick={() =>
+                            entry.kind === 'directory'
+                              ? setDirectory(entry.path)
+                              : openDocument(entry.path)
+                          }
+                        >
+                          {entry.kind === 'directory' ? (
+                            <Folder size={15} />
+                          ) : (
+                            <FileCode2 size={15} />
+                          )}
+                          {entry.name}
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+                {!listing.entries.some(
+                  (entry) => !documents || entry.kind === 'directory' || isMarkdown(entry.path),
+                ) && (
+                  <p>
+                    {documents
+                      ? '이 폴더에는 Markdown 문서가 없습니다.'
+                      : '표시할 파일이 없습니다.'}
+                  </p>
+                )}
+                {listing.truncated && <p>처음 500개만 표시합니다.</p>}
+              </>
             )}
-            {listing.truncated && <p>처음 500개만 표시합니다.</p>}
           </>
         )}
       </nav>
