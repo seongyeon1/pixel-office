@@ -46,6 +46,9 @@ import {
   type Interaction,
 } from '../shared/contracts';
 import { api, bootstrap, ApiError } from './api';
+import { isMarkdown } from '../shared/documents';
+import './workspace/documents.css';
+import type { DocumentTarget } from './workspace/WorkspacePanel';
 import { applyEvent, emptyState, type OfficeState } from './state';
 import { TeamPanel } from './components/TeamPanel';
 import { TerminalHookSettings } from './components/TerminalQuestion';
@@ -127,6 +130,14 @@ export function App() {
   const [changes, setChanges] = useState<Change[]>([]);
   const [inspector, setInspector] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [documentTarget, setDocumentTarget] = useState<DocumentTarget>();
+  const openRunDocument = (path: string) => {
+    if (!state.run?.worktreePath) return;
+    setDocumentTarget({ root: state.run.worktreePath, path, request: Date.now() });
+    setWorkspaceOpen(true);
+    setLauncherOpen(false);
+    setResumeSessionId(undefined);
+  };
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string>();
   const resumeSession = observation.sessions.find((s) => s.id === resumeSessionId);
@@ -197,6 +208,7 @@ export function App() {
         for (const a of Object.values(next.agents)) a.activity = 'idle';
       stateRef.current = next;
       setState(next);
+      setDocumentTarget(undefined);
       setChanges([]);
     } catch (e) {
       if (version === snapshotVersion.current) setError((e as Error).message);
@@ -218,6 +230,7 @@ export function App() {
     stateRef.current = empty;
     setState(empty);
     setRuns([]);
+    setDocumentTarget(undefined);
     setChanges([]);
     setPrompt('');
     setSocketStatus('');
@@ -386,7 +399,7 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     setChanges([]);
-    if (tab === 'files' && state.run)
+    if (state.run && (tab === 'files' || workspaceOpen || terminal(state.run.status)))
       api<Change[]>(`/runs/${state.run.id}/changes`)
         .then((files) => {
           if (!cancelled) setChanges(files);
@@ -397,7 +410,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [tab, state.run?.id, state.run?.status]);
+  }, [tab, state.run?.id, state.run?.status, workspaceOpen]);
   useEffect(() => {
     if (!modal) return;
     const key = (e: KeyboardEvent) => {
@@ -842,6 +855,19 @@ export function App() {
                 <p>
                   {state.run.error || state.run.summary || '작업 기록과 변경 파일을 확인해 주세요.'}
                 </p>
+                <div className="document-results">
+                  {changes
+                    .filter((c) => isMarkdown(c.path) && c.status !== 'deleted')
+                    .map((c) => (
+                      <button
+                        key={c.path}
+                        className="document-open"
+                        onClick={() => openRunDocument(c.path)}
+                      >
+                        문서 열기 {c.path}
+                      </button>
+                    ))}
+                </div>
                 <details>
                   <summary>작업 폴더·브랜치</summary>
                   <code>
@@ -866,6 +892,11 @@ export function App() {
                 <FileCode2 size={14} />
                 {c.path}
               </summary>
+              {isMarkdown(c.path) && c.status !== 'deleted' && (
+                <button className="document-open" onClick={() => openRunDocument(c.path)}>
+                  문서 열기 {c.path}
+                </button>
+              )}
               <pre>{c.diff}</pre>
               {c.truncated && <small>일부 내용만 표시합니다.</small>}
             </details>
@@ -1114,6 +1145,8 @@ export function App() {
               key={project.root}
               root={project.root}
               run={state.run}
+              changes={changes}
+              document={documentTarget}
               onClose={() => setWorkspaceOpen(false)}
             />
           </Suspense>

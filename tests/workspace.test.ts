@@ -62,3 +62,28 @@ test('rejects binary, invalid UTF-8, oversized and non-file input; accepts the s
   await expect(reader.read(root, '')).rejects.toThrow('일반 텍스트');
   expect((await reader.read(root, 'limit')).size).toBe(FILE_LIMIT);
 });
+
+test('document images retain project boundaries and reject disguised or oversized content', async () => {
+  const { root, parent, reader } = await setup();
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6WQAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await writeFile(join(root, 'diagram.png'), png);
+  expect(await reader.image(root, 'diagram.png')).toEqual({ bytes: png, contentType: 'image/png' });
+  await writeFile(join(root, 'fake.png'), '<script>alert(1)</script>');
+  await writeFile(join(root, 'large.png'), Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]));
+  await writeFile(join(parent, 'outside.png'), png);
+  await symlink(join(parent, 'outside.png'), join(root, 'linked.png'));
+  await mkdir(join(root, '.env.local'));
+  await writeFile(join(root, '.env.local', 'secret.png'), png);
+  for (const path of [
+    'fake.png',
+    'large.png',
+    '../outside.png',
+    'linked.png',
+    '.env.local/secret.png',
+  ])
+    await expect(reader.image(root, path)).rejects.toThrow();
+  await expect(reader.image(parent, 'outside.png')).rejects.toThrow('연결된');
+});

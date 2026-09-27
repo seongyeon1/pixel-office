@@ -1,24 +1,59 @@
-import { lazy, Suspense, useState } from 'react';
-import { Code2, Terminal, X, Maximize2, Minimize2 } from 'lucide-react';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Code2, BookOpen, Terminal, X, Maximize2, Minimize2 } from 'lucide-react';
 import { CodeBrowser } from './CodeBrowser';
-import type { Run } from '../../shared/contracts';
+import type { Change, Run } from '../../shared/contracts';
 const TerminalPane = lazy(() =>
   import('./TerminalPane').then((m) => ({ default: m.TerminalPane })),
 );
+const tabs = [
+  { id: 'code', label: '코드', icon: Code2 },
+  { id: 'documents', label: '문서·산출물', icon: BookOpen },
+  { id: 'terminal', label: '터미널', icon: Terminal },
+] as const;
+type Tab = (typeof tabs)[number]['id'];
+export interface DocumentTarget {
+  root: string;
+  path: string;
+  request: number;
+}
 export default function WorkspacePanel({
   root,
   run,
+  changes = [],
+  document: target,
   onClose,
 }: {
   root: string;
   run: Run | null;
+  changes?: Change[];
+  document?: DocumentTarget;
   onClose: () => void;
 }) {
   const [folder, setFolder] = useState(root);
-  const [tab, setTab] = useState<'code' | 'terminal'>('code');
+  const [tab, setTab] = useState<Tab>('code');
   const [expanded, setExpanded] = useState(false);
   const [terminalOpened, setTerminalOpened] = useState(false);
+  const [documentsOpened, setDocumentsOpened] = useState(false);
+  const [documentPath, setDocumentPath] = useState('');
+  const [openRequest, setOpenRequest] = useState(0);
   const activeFolder = folder === root || folder === run?.worktreePath ? folder : root;
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    if (next === 'terminal') setTerminalOpened(true);
+    if (next === 'documents') setDocumentsOpened(true);
+  };
+  useEffect(() => {
+    if (!target || (target.root !== root && target.root !== run?.worktreePath)) return;
+    setFolder(target.root);
+    setDocumentPath(target.path);
+    setOpenRequest((n) => n + 1);
+    selectTab('documents');
+  }, [target, root, run?.worktreePath]);
+  const openDocument = (path: string) => {
+    setDocumentPath(path);
+    setOpenRequest((n) => n + 1);
+    selectTab('documents');
+  };
   return (
     <section className={`workspace-dock ${expanded ? 'expanded' : ''}`} aria-label="코드와 터미널">
       <header className="workspace-dock-header">
@@ -28,51 +63,43 @@ export default function WorkspacePanel({
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
+            const index = tabs.findIndex((t) => t.id === tab);
             const next =
-              event.key === 'Home'
-                ? 'code'
-                : event.key === 'End'
-                  ? 'terminal'
-                  : tab === 'code'
-                    ? 'terminal'
-                    : 'code';
-            setTab(next);
-            if (next === 'terminal') setTerminalOpened(true);
+              tabs[
+                event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? tabs.length - 1
+                    : (index + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length
+              ].id;
+            selectTab(next);
             event.currentTarget.querySelector<HTMLButtonElement>(`#workspace-${next}-tab`)?.focus();
           }}
         >
-          <button
-            id="workspace-code-tab"
-            role="tab"
-            aria-controls="workspace-code-panel"
-            aria-selected={tab === 'code'}
-            tabIndex={tab === 'code' ? 0 : -1}
-            onClick={() => setTab('code')}
-          >
-            <Code2 size={17} />
-            코드
-          </button>
-          <button
-            id="workspace-terminal-tab"
-            role="tab"
-            aria-controls="workspace-terminal-panel"
-            aria-selected={tab === 'terminal'}
-            tabIndex={tab === 'terminal' ? 0 : -1}
-            onClick={() => {
-              setTab('terminal');
-              setTerminalOpened(true);
-            }}
-          >
-            <Terminal size={17} />
-            터미널
-          </button>
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              id={`workspace-${id}-tab`}
+              role="tab"
+              aria-controls={`workspace-${id}-panel`}
+              aria-selected={tab === id}
+              tabIndex={tab === id ? 0 : -1}
+              onClick={() => selectTab(id)}
+            >
+              <Icon size={17} />
+              {label}
+            </button>
+          ))}
         </div>
         <label className="workspace-root">
           작업 폴더
           <select
             aria-label="코드·터미널 작업 폴더"
             value={activeFolder}
-            onChange={(e) => setFolder(e.target.value)}
+            onChange={(e) => {
+              setFolder(e.target.value);
+              setDocumentPath('');
+            }}
           >
             <option value={root}>원본 레포 · {root.split('/').at(-1)}</option>
             {run?.worktreePath && (
@@ -99,7 +126,25 @@ export default function WorkspacePanel({
         aria-labelledby="workspace-code-tab"
         hidden={tab !== 'code'}
       >
-        <CodeBrowser key={activeFolder} root={activeFolder} />
+        <CodeBrowser key={activeFolder} root={activeFolder} onDocument={openDocument} />
+      </div>
+      <div
+        id="workspace-documents-panel"
+        role="tabpanel"
+        aria-labelledby="workspace-documents-tab"
+        hidden={tab !== 'documents'}
+      >
+        {documentsOpened && (
+          <CodeBrowser
+            key={activeFolder}
+            root={activeFolder}
+            documents
+            active={tab === 'documents'}
+            initialPath={documentPath}
+            openRequest={openRequest}
+            changes={activeFolder === run?.worktreePath ? changes : []}
+          />
+        )}
       </div>
       <div
         id="workspace-terminal-panel"

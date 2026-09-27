@@ -214,6 +214,22 @@ test('workspace routes and terminal websocket reject foreign origins and unknown
     });
     const cookie = (auth.headers['set-cookie'] as string).split(';')[0];
     const trusted = { ...headers, cookie };
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6WQAAAAASUVORK5CYII=',
+      'base64',
+    );
+    await writeFile(join(root, 'image.png'), png);
+    const imagePath = `/api/workspace/image?root=${encodeURIComponent(root)}&path=image.png`;
+    expect((await app.inject({ url: imagePath, headers })).statusCode).toBe(401);
+    const image = await app.inject({ url: imagePath, headers: trusted });
+    expect(image.statusCode).toBe(200);
+    expect(image.headers['content-type']).toBe('image/png');
+    expect(image.headers['x-content-type-options']).toBe('nosniff');
+    expect(image.rawPayload).toEqual(png);
+    expect(
+      (await app.inject({ url: imagePath.replace('image.png', '../image.png'), headers: trusted }))
+        .statusCode,
+    ).toBe(400);
     expect((await app.inject({ url: path, headers: trusted })).json().text).toBe(
       'workspace fixture',
     );

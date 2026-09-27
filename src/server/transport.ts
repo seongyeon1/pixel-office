@@ -154,6 +154,15 @@ export async function createServer({
     const { root, path } = workspaceQuery.parse(req.query);
     return workspace.read(root, path);
   });
+  app.get('/api/workspace/image', async (req, reply) => {
+    const { root, path } = workspaceQuery.parse(req.query);
+    const image = await workspace.image(root, path);
+    return reply
+      .type(image.contentType)
+      .header('x-content-type-options', 'nosniff')
+      .header('cache-control', 'no-store')
+      .send(image.bytes);
+  });
   app.post('/api/terminals', async (req) => {
     const { root, cols, rows } = z
       .object({

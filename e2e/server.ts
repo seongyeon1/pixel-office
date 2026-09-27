@@ -90,6 +90,11 @@ const make = (id: Provider): Adapter => ({
         throw new Error('질문 응답 전달 실패');
     }
     await writeFile(join(input.cwd, 'hello.txt'), 'hello from the team\n');
+    if (input.prompt.includes('문서 산출물 테스트'))
+      await writeFile(
+        join(input.cwd, 'REPORT.md'),
+        '# 작업 결과 보고서\n\n문서 산출물 미리보기 검증.\n',
+      );
     emit({
       runId: input.runId,
       agentId: id,

@@ -39,6 +39,39 @@ export function createWorkspaceReader(roots: () => string[]) {
   };
   return {
     authorize,
+    async image(root: string, path: string) {
+      const target = await location(root, path);
+      const handle = await open(
+        target,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      const limit = 5 * 1024 * 1024;
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > limit)
+          throw new Error('5 MB 이하의 이미지 파일만 볼 수 있습니다.');
+        const buffer = Buffer.alloc(Math.min(stat.size + 1, limit + 1));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        if (bytesRead > limit) throw new Error('5 MB 이하의 이미지 파일만 볼 수 있습니다.');
+        const bytes = buffer.subarray(0, bytesRead);
+        const contentType = bytes
+          .subarray(0, 8)
+          .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+          ? 'image/png'
+          : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
+            ? 'image/jpeg'
+            : /^GIF8[79]a/.test(bytes.subarray(0, 6).toString('ascii'))
+              ? 'image/gif'
+              : bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+                  bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+                ? 'image/webp'
+                : null;
+        if (!contentType) throw new Error('PNG, JPEG, GIF, WebP 이미지만 미리 볼 수 있습니다.');
+        return { bytes, contentType };
+      } finally {
+        await handle.close();
+      }
+    },
     async list(root: string, path = ''): Promise<WorkspaceListing> {
       const entries = (await readdir(await location(root, path), { withFileTypes: true }))
         .filter((e) => !hidden(e.name) && (e.isFile() || e.isDirectory()))

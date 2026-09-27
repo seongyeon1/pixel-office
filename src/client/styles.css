@@ -2707,6 +2707,9 @@ nav button.active svg {
 .open-workspace[aria-expanded='true'] {
   background: #e6eddf;
 }
+.workspace-is-open .floor-viewport {
+  isolation: isolate;
+}
 .workspace-is-open .workspace {
   padding-bottom: 53vh;
 }
