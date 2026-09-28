@@ -1,0 +1,103 @@
+/* Talking to a coworker: the question / instruction switch, the channel note and approvals. */
+.chat-mode {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #dfe3d6;
+  border-radius: 8px;
+  background: #f5f6f0;
+}
+.chat-mode button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  color: #6b7563;
+}
+.chat-mode button[aria-selected='true'] {
+  background: #fff;
+  color: #34482e;
+  box-shadow: 0 1px 2px #1e2d2414;
+}
+.chat-mode button:disabled {
+  opacity: 0.5;
+}
+.chat-context-say {
+  border-color: #cfd9c4;
+  background: #f1f6ec;
+}
+.chat-context-say details {
+  margin-top: 6px;
+}
+.chat-context-say summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #5b6a52;
+}
+.chat-settings {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #d9dfd0;
+  border-radius: 8px;
+  background: #fff;
+}
+.chat-settings p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6d7a66;
+}
+.chat-settings code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #eef1e8;
+}
+.chat-settings label {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  color: #56604e;
+}
+.chat-settings input {
+  padding: 6px 8px;
+  border: 1px solid #cfd6c5;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.chat-settings > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-settings button {
+  padding: 5px 10px;
+  border: 1px solid #c2ceb7;
+  border-radius: 6px;
+  background: #f8faf4;
+  font-size: 12px;
+  color: #47613b;
+}
+.chat-message.user.terminal,
+.chat-message.user.direct {
+  border-left: 3px solid #8fae80;
+}
+.chat-message.assistant.terminal,
+.chat-message.assistant.direct {
+  border-left: 3px solid #c0b08a;
+}
+.chat-interactions {
+  display: grid;
+  gap: 8px;
+}

@@ -43,7 +43,9 @@ test('each repository keeps its own harness of plugins and skills', async ({ pag
     if (info.project.name === 'desktop')
       await dialog.screenshot({ path: 'docs/images/harness-desktop.png' });
     await dialog.getByRole('button', { name: '저장', exact: true }).click();
-    await expect(dialog.getByRole('status')).toHaveText('저장했어요. 다음 앱 작업부터 적용돼요.');
+    await expect(dialog.getByRole('status')).toHaveText(
+      '저장했어요. 다음 앱 작업(격리 환경)부터 적용돼요.',
+    );
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     // Reloaded and reopened, the choice is still there.
@@ -54,6 +56,9 @@ test('each repository keeps its own harness of plugins and skills', async ({ pag
     await dialog.getByRole('tab', { name: /Codex/ }).click();
     await expect(dialog.getByRole('checkbox', { name: /linear/ })).toBeChecked();
     await expect(dialog.getByRole('checkbox', { name: /AGENTS\.md/ })).toBeChecked();
+    await dialog.getByRole('button', { name: '저장하고 격리 환경으로 작업', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByLabel('실행 환경', { exact: true })).toHaveValue('isolated');
     // Another repository is untouched.
     const response = await page.request.get(`/api/harness?root=${encodeURIComponent(other)}`);
     expect(await response.json()).toEqual({ claude: empty, codex: empty });

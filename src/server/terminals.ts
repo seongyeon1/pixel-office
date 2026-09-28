@@ -143,8 +143,39 @@ export function createTerminals({
       });
       return info;
     },
+    list: () => [...sessions.values()].map((s) => s.info),
     get(id: string) {
       return sessions.get(id)?.info;
+    },
+    // Types a message into the CLI running in this terminal. Several lines go in as one paste so
+    // the CLI does not submit at the first newline; the final return submits.
+    write(id: string, text: string) {
+      const s = sessions.get(id);
+      if (!s || s.exited) throw new Error('이어서 작업 중인 터미널이 없습니다.');
+      const body = text.replace(/\r\n?/g, '\n');
+      s.pty.write(body.includes('\n') ? `\x1b[200~${body}\x1b[201~\r` : `${body}\r`);
+    },
+    // Resolves once the terminal has printed nothing for quietMs, or after maxMs at the latest:
+    // a freshly resumed CLI replays its transcript before it is ready for input.
+    whenQuiet(id: string, quietMs = 1500, maxMs = 20000) {
+      const s = sessions.get(id);
+      if (!s) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        let quiet: ReturnType<typeof setTimeout>;
+        const finish = () => {
+          clearTimeout(quiet);
+          clearTimeout(deadline);
+          dispose.dispose();
+          resolve();
+        };
+        const deadline = setTimeout(finish, maxMs);
+        const arm = () => {
+          clearTimeout(quiet);
+          quiet = setTimeout(finish, quietMs);
+        };
+        const dispose = s.pty.onData(arm);
+        arm();
+      });
     },
     find(tag: string) {
       return [...sessions.values()].find((s) => s.info.tag === tag)?.info;

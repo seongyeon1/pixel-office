@@ -333,11 +333,11 @@ test('whole map shows app approvals and opens the managed task without mixing ex
     const room = page.getByRole('article', { name: `프로젝트 공간 ${root}`, exact: true });
     await expect(room).toContainText('응답 필요 1');
     const manager = page.getByRole('button', {
-      name: `전체 맵 동료 ${root} ${run.id}`,
+      name: `전체 맵 동료 ${root} app-${run.id}-codex-implementer`,
       exact: true,
     });
     await expect(manager).toHaveAttribute('data-mark', 'approval');
-    await expect(manager).toHaveAttribute('title', /앱 작업 · 승인 필요/);
+    await expect(manager).toHaveAttribute('title', /앱 작업[\s\S]*승인 기다려요/);
     await manager.click();
     await expect(page.getByRole('heading', { name: '승인 필요', exact: true })).toBeVisible();
     await expect(page.locator('.current-task')).toContainText('전체 맵 승인 테스트');

@@ -35,11 +35,20 @@ export function createCodexAdapter(): Adapter {
     },
     async execute(input, emit, interact) {
       if (input.signal.aborted) return { outcome: 'cancelled', text: '' };
+      const personal = input.executionMode !== 'isolated';
       const rpc = new RpcClient(
-        spawn('codex', ['app-server', '--stdio'], {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          cwd: input.cwd,
-        }),
+        spawn(
+          personal ? 'syc' : 'codex',
+          [
+            ...(personal && input.approvalMode === 'manual' ? ['--safe'] : []),
+            'app-server',
+            '--stdio',
+          ],
+          {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: input.cwd,
+          },
+        ),
       );
       active = rpc;
       let threadId = '',
@@ -106,7 +115,7 @@ export function createCodexAdapter(): Adapter {
                 agentId: 'codex',
                 kind: 'approval',
                 title: p.command ?? p.reason ?? 'Codex 작업 승인',
-                details: p,
+                details: { ...p, approvalMethod: m.method },
               });
               const allow = 'decision' in a && a.decision === 'approve';
               if (m.method.includes('/permissions/'))
@@ -128,28 +137,49 @@ export function createCodexAdapter(): Adapter {
         });
         rpc.notify('initialized');
         // App runs are isolated like Claude's: only the repository's chosen plugins and skills.
-        const effective = await rpc.request('config/read', {
-          cwd: input.cwd,
-          includeLayers: false,
-        });
-        const skills = await rpc
-          .request('skills/list', { cwds: [input.cwd] })
-          .then((r: any) => (r.data ?? []).flatMap((e: any) => e.skills ?? []))
-          .catch(() => []);
-        const t = await rpc.request('thread/start', {
-          config: codexHarnessConfig(
-            input.harness ?? emptyHarness().codex,
-            Object.keys(effective.config?.plugins ?? {}),
-            skills,
-          ),
-          cwd: input.cwd,
-          model: input.profile.model || undefined,
-          approvalPolicy: 'on-request',
-          sandbox: input.role === 'reviewer' ? 'read-only' : 'workspace-write',
-          ephemeral: true,
-          developerInstructions:
-            'Work only on the user task in the specified working directory. Do not push, merge, change branches, or create other agents. Report actual validation outcomes. Respect the role instructions.',
-        });
+        const effective = !personal
+          ? await rpc.request('config/read', {
+              cwd: input.cwd,
+              includeLayers: false,
+            })
+          : undefined;
+        const skills = !personal
+          ? await rpc
+              .request('skills/list', { cwds: [input.cwd] })
+              .then((r: any) => (r.data ?? []).flatMap((e: any) => e.skills ?? []))
+              .catch(() => [])
+          : [];
+        const t = await rpc.request(
+          input.resumeSessionId
+            ? input.forkSession
+              ? 'thread/fork'
+              : 'thread/resume'
+            : 'thread/start',
+          {
+            ...(input.resumeSessionId ? { threadId: input.resumeSessionId } : {}),
+            ...(!personal
+              ? {
+                  config: codexHarnessConfig(
+                    input.harness ?? emptyHarness().codex,
+                    Object.keys(effective?.config?.plugins ?? {}),
+                    skills,
+                  ),
+                }
+              : {}),
+            cwd: input.cwd,
+            model: input.profile.model || undefined,
+            approvalPolicy: personal && input.approvalMode !== 'manual' ? 'never' : 'on-request',
+            sandbox:
+              personal && input.approvalMode !== 'manual'
+                ? 'danger-full-access'
+                : input.role === 'reviewer'
+                  ? 'read-only'
+                  : 'workspace-write',
+            ...(!input.resumeSessionId ? { ephemeral: !personal } : {}),
+            developerInstructions:
+              'Follow the user request and personal project instructions. Preserve existing work. When the user requests a pull request, complete the necessary commit, push and PR creation, then verify and report its URL. Do not merge, deploy or force-push unless specifically requested. Respect the role instructions and report actual validation outcomes.',
+          },
+        );
         threadId = t.thread.id;
         emit({
           runId: input.runId,

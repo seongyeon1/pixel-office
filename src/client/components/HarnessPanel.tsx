@@ -57,7 +57,17 @@ function Choices({
     </fieldset>
   );
 }
-export function HarnessPanel({ root, onClose }: { root: string; onClose: () => void }) {
+export function HarnessPanel({
+  root,
+  onClose,
+  executionMode = 'personal',
+  onUseIsolated,
+}: {
+  root: string;
+  onClose: () => void;
+  executionMode?: 'personal' | 'isolated';
+  onUseIsolated?: () => void;
+}) {
   const [catalog, setCatalog] = useState<HarnessCatalog>();
   const [harness, setHarness] = useState<RepoHarness>();
   const [tab, setTab] = useState<Provider>('claude');
@@ -94,13 +104,14 @@ export function HarnessPanel({ root, onClose }: { root: string; onClose: () => v
         },
       };
     });
-  const save = async () => {
+  const save = async (use = false) => {
     if (!harness) return;
     setSaving(true);
     setMessage('');
     try {
       setHarness(await api<RepoHarness>('/harness', { root, harness }));
-      setMessage('저장했어요. 다음 앱 작업부터 적용돼요.');
+      setMessage('저장했어요. 다음 앱 작업(격리 환경)부터 적용돼요.');
+      if (use) onUseIsolated?.();
     } catch (e) {
       setMessage((e as Error).message);
     } finally {
@@ -127,9 +138,17 @@ export function HarnessPanel({ root, onClose }: { root: string; onClose: () => v
           </button>
         </div>
         <p className="harness-note">
-          이 레포에서 <strong>앱 작업</strong>을 실행할 때 쓸 플러그인과 스킬을 골라요. 고르지 않은
-          것은 모두 꺼진 채로 실행돼요. 훅과 플러그인의 MCP 서버는 앱 작업에서 항상 꺼지고, 기록
-          기반 답변과 이어가기 터미널에는 적용되지 않아요.
+          이 선택은 <strong>격리 환경 작업</strong>에 적용돼요. 선택하지 않은 항목과 플러그인
+          훅·MCP는 격리 환경에서 꺼져요. 내 환경, 개별 대화, 새 동료의 sy/syc 실행은 터미널의 개인
+          설정을 사용해요.
+        </p>
+        <p className="harness-note">
+          현재 작업 입력창:{' '}
+          <strong>
+            {executionMode === 'personal'
+              ? '내 환경 · 개인 설정 사용'
+              : '격리 환경 · 아래 선택 사용'}
+          </strong>
         </p>
         <div className="harness-tabs" role="tablist" aria-label="공급자">
           {(['claude', 'codex'] as const).map((p) => (
@@ -195,6 +214,11 @@ export function HarnessPanel({ root, onClose }: { root: string; onClose: () => v
         )}
         <div className="harness-actions">
           {message && <span role="status">{message}</span>}
+          {onUseIsolated && (
+            <button disabled={!harness || saving} onClick={() => void save(true)}>
+              저장하고 격리 환경으로 작업
+            </button>
+          )}
           <button className="primary" disabled={!harness || saving} onClick={() => void save()}>
             {saving ? '저장 중…' : '저장'}
           </button>

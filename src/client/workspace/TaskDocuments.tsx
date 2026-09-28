@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { api } from '../api';
-import type { Change, ObservedDetail } from '../../shared/contracts';
-import { isMarkdown } from '../../shared/documents';
-import { sessionDocuments } from '../../shared/task-documents';
+import type { Change, ObservedDetail, OfficeEvent } from '../../shared/contracts';
+import { runDocuments, sessionDocuments } from '../../shared/task-documents';
 import { CodeBrowser } from './CodeBrowser';
 import type { TaskDocumentSource } from './TaskDocumentButton';
 export default function TaskDocuments({
@@ -32,19 +31,24 @@ export default function TaskDocuments({
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
+    const events: OfficeEvent[] = [];
     setData(undefined);
     setError('');
     const poll = async () => {
       try {
         if (source.kind === 'run') {
+          // Read all pages on opening, then only new events on subsequent polls.
+          // Existing servers can supply these records without a service restart.
+          let page: OfficeEvent[];
+          do {
+            page = await api<OfficeEvent[]>(
+              `/runs/${id}/events?after=${events.at(-1)?.sequence ?? 0}`,
+            );
+            if (stopped) return;
+            events.push(...page);
+          } while (page.length === 200);
           const changes = await api<Change[]>(`/runs/${id}/changes`);
-          if (!stopped)
-            setData({
-              paths: changes
-                .filter((c) => c.status !== 'deleted' && isMarkdown(c.path))
-                .map((c) => c.path),
-              changes,
-            });
+          if (!stopped) setData({ paths: runDocuments(source.run, events, changes), changes });
         } else {
           const detail = await api<ObservedDetail>(`/observed/${id}`);
           if (!stopped)
@@ -96,7 +100,9 @@ export default function TaskDocuments({
               </select>
             </label>
           ) : (
-            <span>이 작업에서 추가·수정한 문서 {data ? `${data.paths.length}개` : ''}</span>
+            <span>
+              이 작업에서 변경하거나 답변에 연결한 문서 {data ? `${data.paths.length}개` : ''}
+            </span>
           )}
           <button onClick={() => setRefresh((n) => n + 1)}>목록 새로고침</button>
         </div>
@@ -128,7 +134,7 @@ export default function TaskDocuments({
             <p>
               {session
                 ? '최근 요청의 기록에서 Markdown 문서를 찾지 못했어요. 이전에 작성한 문서는 ‘이 세션 전체’에서 확인하세요.'
-                : '이 작업에서 추가하거나 수정한 Markdown 문서가 생기면 여기에 표시됩니다.'}
+                : '이 작업에서 변경하거나 답변에 연결한 Markdown 문서가 생기면 여기에 표시됩니다.'}
             </p>
           </div>
         )}

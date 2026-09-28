@@ -41,7 +41,8 @@ vi.mock('../src/server/adapters/codex-rpc.js', async () => {
               },
             ],
           };
-        if (method === 'thread/start') return { thread: { id: 'thread' }, model: 'fixture' };
+        if (method === 'thread/start' || method === 'thread/resume' || method === 'thread/fork')
+          return { thread: { id: 'thread' }, model: 'fixture' };
         if (method === 'turn/start') {
           setTimeout(() =>
             this.emit('message', {
@@ -74,6 +75,7 @@ const base = (cwd: string) => ({
   cwd,
   prompt: 'task',
   role: 'implementer' as const,
+  executionMode: 'isolated' as const,
   profile: defaultTeam().codex,
   signal: new AbortController().signal,
 });
@@ -170,4 +172,154 @@ test('Codex recognizes a structured usage-limit error even without an English er
   } finally {
     failure.code = '';
   }
+});
+
+test('personal Codex uses syc, keeps personal configuration and resumes a durable thread', async () => {
+  calls.length = 0;
+  const { spawn } = await import('node:child_process');
+  await createCodexAdapter().execute(
+    {
+      ...base('/repo'),
+      executionMode: 'personal',
+      resumeSessionId: 'saved-thread',
+      approvalMode: 'auto',
+    },
+    () => {},
+    async () => ({ decision: 'approve' }),
+  );
+  expect(spawn).toHaveBeenLastCalledWith(
+    'syc',
+    ['app-server', '--stdio'],
+    expect.objectContaining({ cwd: '/repo' }),
+  );
+  const resumed = calls.find((c) => c.method === 'thread/resume')!.params;
+  expect(resumed.threadId).toBe('saved-thread');
+  expect(resumed).not.toHaveProperty('config');
+  expect(resumed).not.toHaveProperty('ephemeral', true);
+  expect(resumed.sandbox).toBe('danger-full-access');
+  expect(resumed.developerInstructions).not.toMatch(/Do not push/);
+});
+test('personal Claude uses sy with user settings, full tools and a persistent session', async () => {
+  queries.length = 0;
+  await createClaudeAdapter().execute(
+    {
+      ...base('/repo'),
+      executionMode: 'personal',
+      resumeSessionId: 'saved-session',
+      approvalMode: 'auto',
+    },
+    () => {},
+    async () => ({ decision: 'approve' }),
+  );
+  const options = queries[0].options;
+  expect(options.pathToClaudeCodeExecutable).toBe('sy');
+  expect(options.settingSources).toEqual(['user', 'project', 'local']);
+  expect(options.resume).toBe('saved-session');
+  expect(options.systemPrompt).toMatchObject({ type: 'preset', preset: 'claude_code' });
+  expect(options.tools).toBeUndefined();
+  expect(options.maxTurns).toBeUndefined();
+  expect(options.plugins).toBeUndefined();
+  expect(options.permissionMode).toBe('bypassPermissions');
+});
+
+test('personal Claude questions still wait for user input when permissions are bypassed', async () => {
+  queries.length = 0;
+  const interact = vi.fn(async () => ({ answers: { Choose: ['A'] } }));
+  await createClaudeAdapter().execute(
+    { ...base('/repo'), executionMode: 'personal', approvalMode: 'auto' },
+    () => {},
+    interact,
+  );
+  const hook = queries[0].options.hooks.PreToolUse[0].hooks[0];
+  const result = await hook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'AskUserQuestion',
+    tool_input: { questions: [] },
+  });
+  expect(interact).toHaveBeenCalledWith(expect.objectContaining({ kind: 'question' }));
+  expect(result.hookSpecificOutput.updatedInput.answers).toEqual({ Choose: 'A' });
+});
+
+test('manual personal Claude denies a tool before sy can bypass permission callbacks', async () => {
+  queries.length = 0;
+  const interact = vi.fn(async () => ({ decision: 'deny' as const }));
+  await createClaudeAdapter().execute(
+    { ...base('/repo'), executionMode: 'personal', approvalMode: 'manual' },
+    () => {},
+    interact,
+  );
+  const hook = queries[0].options.hooks.PreToolUse[0].hooks[0];
+  const result = await hook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Write',
+    tool_input: { file_path: '/repo/a.txt', content: 'x' },
+  });
+  expect(interact).toHaveBeenCalledWith(expect.objectContaining({ kind: 'approval' }));
+  expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+});
+
+test('individual conversations resume and fork through the same personal Codex runtime', async () => {
+  const { createNativeDirectResponder } = await import('../src/server/adapters/direct.js');
+  const responder = createNativeDirectResponder({ getApprovalMode: () => 'auto' });
+  const session = {
+    id: 'app-codex-thread',
+    sessionId: 'saved-thread',
+    provider: 'codex',
+    cwd: '/repo',
+    projectPath: '/repo',
+    model: '',
+    prompt: 'previous work',
+    events: [],
+    managed: { resumable: true },
+  } as any;
+  const input = {
+    session,
+    text: 'continue privately',
+    fork: false,
+    signal: new AbortController().signal,
+    interact: async () => ({ decision: 'approve' as const }),
+  };
+  calls.length = 0;
+  await responder(input, () => {});
+  expect(calls.find((c) => c.method === 'thread/resume')?.params).toMatchObject({
+    threadId: 'saved-thread',
+    sandbox: 'danger-full-access',
+    approvalPolicy: 'never',
+  });
+  expect(calls.some((c) => c.method === 'config/read')).toBe(false);
+  calls.length = 0;
+  await responder({ ...input, fork: true }, () => {});
+  expect(calls.find((c) => c.method === 'thread/fork')?.params.threadId).toBe('saved-thread');
+  expect(calls.some((c) => c.method === 'thread/resume')).toBe(false);
+  calls.length = 0;
+  await responder({ ...input, session: { ...session, managed: { resumable: false } } }, () => {});
+  expect(calls.find((c) => c.method === 'thread/start')?.params.ephemeral).toBe(false);
+  expect(calls.find((c) => c.method === 'turn/start')?.params.input[0].text).toContain(
+    'previous work',
+  );
+});
+
+test('a Claude coworker with a synthetic error model resumes using personal model settings', async () => {
+  const { createNativeDirectResponder } = await import('../src/server/adapters/direct.js');
+  queries.length = 0;
+  await createNativeDirectResponder({ getApprovalMode: () => 'auto' })(
+    {
+      session: {
+        id: 'claude-coworker',
+        sessionId: 'saved-claude',
+        provider: 'claude',
+        cwd: '/repo',
+        projectPath: '/repo',
+        model: '<synthetic>',
+        events: [],
+      } as any,
+      text: 'continue',
+      fork: false,
+      signal: new AbortController().signal,
+      interact: async () => ({ decision: 'approve' }),
+    },
+    () => {},
+  );
+  expect(queries[0].options.resume).toBe('saved-claude');
+  expect(queries[0].options.model).toBeUndefined();
 });

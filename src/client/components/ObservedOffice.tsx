@@ -128,6 +128,14 @@ export function ObservedOffice({
       onProviderChange(initial.provider);
     }
   }, []);
+  useEffect(() => {
+    const target = sessions.find((s) => s.id === initialSessionId);
+    if (target) {
+      setSelectedId(target.id);
+      onProviderChange(target.provider);
+      onFocusSession();
+    }
+  }, [initialSessionId, sessions.some((s) => s.id === initialSessionId)]);
   const preferred =
     sessions.find((s) => s.provider === selectedProvider && s.status === 'active') ??
     sessions.find((s) => s.provider === selectedProvider) ??
@@ -244,12 +252,16 @@ export function ObservedOffice({
                 {clock(selected.updatedAt)} 기준 · {observedStatus[selected.status]}
               </span>
               <div className="session-actions">
-                <button className="primary" onClick={() => onResume(selected)}>
+                <button
+                  className="primary"
+                  disabled={selected.managed?.busy}
+                  onClick={() => onResume(selected)}
+                >
                   <TerminalSquare size={14} />
                   이어서 작업
                 </button>
                 <button onClick={openChat}>
-                  <MessageCircle size={14} />이 동료에게 질문
+                  <MessageCircle size={14} />말 걸기
                 </button>
                 <button
                   onClick={() => {
@@ -368,7 +380,9 @@ export function ObservedOffice({
         <aside className="inspector observed-inspector">
           <div className="inspector-heading">
             <span>동료 살펴보기</span>
-            <span className="small-tag">기록 · 이어가기</span>
+            <span className="small-tag">
+              {selected?.managed ? '앱 작업 · 세션' : '기록 · 이어가기'}
+            </span>
           </div>
           {selected ? (
             <>
@@ -383,6 +397,11 @@ export function ObservedOffice({
                   </p>
                 </div>
               </div>
+              {run && selected.managed?.runId === run.id && (
+                <button className="session-ask" onClick={() => onFocusRun(selected.provider)}>
+                  앱 작업의 승인·결과 보기
+                </button>
+              )}
               {(() => {
                 const asked = terminalQuestions.questions.find(
                   (q) => selected.provider === 'claude' && q.sessionId === selected.sessionId,
@@ -474,16 +493,19 @@ export function ObservedOffice({
                   </dd>
                 </dl>
                 <p className="observed-note">
-                  대화 탭은 기록을 참고한 별도 답변입니다. 원래 대화를 불러와 직접 일을 시키려면
-                  이어서 작업을 열어 주세요.
+                  대화 탭에서 기록에 대해 질문하거나 이 동료에게 직접 일을 맡길 수 있어요. 터미널로
+                  계속하려면 이어서 작업을 열어주세요.
                 </p>
-                <button className="session-ask" onClick={() => onResume(selected)}>
+                <button
+                  className="session-ask"
+                  disabled={selected.managed?.busy}
+                  onClick={() => onResume(selected)}
+                >
                   <TerminalSquare size={16} />
                   터미널에서 이어서 작업
                 </button>
                 <button className="session-ask" onClick={openChat}>
-                  <MessageCircle size={16} />
-                  작업에 대해 질문하기
+                  <MessageCircle size={16} />말 걸기 · 질문하거나 지시하기
                 </button>
               </section>
               <section

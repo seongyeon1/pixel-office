@@ -95,12 +95,16 @@ for (const provider of ['claude', 'codex'] as const) {
       await page.reload();
       await page.getByText('직접 퇴근시킨 동료 1명', { exact: true }).click();
       await page.getByRole('button', { name: `다시 출근 ${sessionId}`, exact: true }).click();
-      await expect(
-        page.getByRole('button', { name: `전체 맵 동료 ${projectRoot} ${sessionId}`, exact: true }),
-      ).toBeVisible();
-      await page
-        .getByRole('button', { name: `전체 맵 동료 ${projectRoot} ${sessionId}`, exact: true })
-        .click();
+      // The whole map caps desks per room; old sessions can be behind the +N link
+      // now that app coworkers share the roster. The room keeps every restored coworker.
+      await expect
+        .poll(async () =>
+          (await (await page.request.get('/api/observed')).json()).sessions.some(
+            (s: { id: string }) => s.id === observedId,
+          ),
+        )
+        .toBe(true);
+      await page.getByRole('button', { name: `프로젝트 열기 ${projectRoot}`, exact: true }).click();
       await openDock();
       await terminal.getByRole('button', { name: '이어서 작업', exact: true }).click();
       await expect(terminal).toContainText(`FAKE-${provider.toUpperCase()} ${command}`);

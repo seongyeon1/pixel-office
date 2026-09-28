@@ -115,3 +115,9 @@ test('no app, a wrong token or no answer in time leaves the question to the term
     out: '',
   });
 });
+
+test('SDK-managed questions do not open a second external-session question', async () => {
+  expect(
+    await runHook({ PIXEL_MANAGED_QUESTIONS: '1', PIXEL_HOOK_FILE: '/nonexistent/hook.json' }),
+  ).toEqual({ code: 0, out: '' });
+});

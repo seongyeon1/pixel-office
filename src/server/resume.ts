@@ -1,6 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import type { ObservedSession, Provider } from '../shared/contracts.js';
+import { continuationContext } from './sessions.js';
+import type { ObservedDetail, ObservedSession, Provider } from '../shared/contracts.js';
 
 export type ResumeMode = 'resume' | 'fork';
 export type AgentCommands = Record<Provider, string>;
@@ -11,10 +12,21 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // The session id is interpolated into a shell command, so only a plain UUID is accepted.
 export function resumeCommand(
   session: Pick<ObservedSession, 'provider' | 'sessionId' | 'processAlive'> &
-    Partial<Pick<ObservedSession, 'status'>>,
+    Partial<Pick<ObservedDetail, 'status' | 'managed' | 'launched' | 'prompt' | 'events'>>,
   mode: ResumeMode,
   commands: AgentCommands = { claude: 'claude', codex: 'codex' },
 ) {
+  if (session.managed?.workspaceRemoved)
+    throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
+  if (session.managed?.resumable === false || session.launched?.resumable === false) {
+    const context = continuationContext({
+      ...session,
+      prompt: session.prompt ?? '',
+      events: session.events ?? [],
+    } as ObservedDetail);
+    const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+    return `${commands[session.provider]} ${quote(context + '\n\n이전 기록을 확인하고 사용자의 다음 요청을 기다리세요.')}`;
+  }
   if (!uuid.test(session.sessionId)) throw new Error('이어갈 수 없는 세션 ID입니다.');
   // Two processes appending to one transcript interleave their turns; fork instead.
   if (mode === 'resume' && (session.processAlive === true || session.status === 'active'))

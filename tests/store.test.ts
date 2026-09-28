@@ -71,3 +71,29 @@ test('groups repositories by full path and filters before the history limit', ()
   });
   db.close();
 });
+
+test('related history includes bundle membership before applying the history limit', () => {
+  const db = createStore(':memory:');
+  try {
+    db.createRun({
+      ...run(),
+      id: 'bundle',
+      projectPath: '/group',
+      repos: [
+        {
+          root: '/group/api',
+          name: 'api',
+          worktreePath: '/w/api',
+          branch: 'pixel/r1',
+          baseCommit: 'abc',
+        },
+      ],
+    });
+    for (let i = 0; i < 105; i++)
+      db.createRun({ ...run(), id: `unrelated-${i}`, projectPath: '/elsewhere' });
+    expect(db.listRuns('/group/api', true).map((r) => r.id)).toEqual(['bundle']);
+    expect(db.listRuns('/group/api')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});

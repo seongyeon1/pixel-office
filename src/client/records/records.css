@@ -172,26 +172,3 @@
     padding-left: 14px;
   }
 }
-/* Records room furniture on the floor: archive shelves and a writing desk. */
-.floor-records .floor-furniture.a {
-  left: 10%;
-  right: 10%;
-  top: 30px;
-  height: 22px;
-  background: repeating-linear-gradient(
-    90deg,
-    #b8946a 0 10px,
-    #d8b98c 10px 12px,
-    #9fb8c6 12px 20px
-  );
-  border-bottom: 4px solid #8e6f48;
-}
-.floor-records .floor-furniture.b {
-  left: 14%;
-  right: 14%;
-  bottom: 14px;
-  height: 14px;
-  background: #caa77a;
-  border-bottom: 3px solid #a3845c;
-  border-radius: 2px;
-}

@@ -92,15 +92,25 @@ export function SessionOffice({
             selectedRunProvider
               ? rooms
                   .flatMap((r) => r.workers)
-                  .find((w) => w.run && w.provider === selectedRunProvider)?.id
+                  .find(
+                    (w) =>
+                      (w.run || (!!run && w.session?.managed?.runId === run.id)) &&
+                      w.provider === selectedRunProvider,
+                  )?.id
               : selected && `observed:${selected.id}`
           }
           nameOf={(w) =>
-            w.session
-              ? `캐릭터 ${providerName(w.session)} ${w.session.sessionId}`
-              : `앱 동료 ${w.provider === 'codex' ? 'Codex' : 'Claude'}`
+            !!run && w.session?.managed?.runId === run.id
+              ? `앱 동료 ${w.provider === 'codex' ? 'Codex' : 'Claude'}`
+              : w.session
+                ? `캐릭터 ${providerName(w.session)} ${w.session.sessionId}`
+                : `앱 동료 ${w.provider === 'codex' ? 'Codex' : 'Claude'}`
           }
-          onOpen={(_root, w) => (w.session ? onSelect(w.session) : onSelectRun(w.provider))}
+          onOpen={(_root, w) =>
+            w.session && (!run || w.session.managed?.runId !== run.id)
+              ? onSelect(w.session)
+              : onSelectRun(w.provider)
+          }
         />
       )}
       <div className="session-office-bottom">

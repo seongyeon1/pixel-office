@@ -1,22 +1,30 @@
+import { createWorktreeCleanup, usesWorktree } from './worktrees.js';
 import Fastify from 'fastify';
+import { createSessionRegistry } from './sessions.js';
 import { createWorkspaceReader } from './workspace.js';
 import { createTerminals } from './terminals.js';
 import { createLauncher } from './launcher.js';
 import { launchSchema } from '../shared/launcher.js';
+import { approvalSettings } from './approvals.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { IncomingMessage } from 'node:http';
 import { isAbsolute, resolve } from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import {
   startSchema,
+  followUpSchema,
   answerSchema,
+  directSettingsSchema,
+  approvalSettingsSchema,
   type Adapter,
+  type DirectSettings,
   type Provider,
   type HarnessCatalog,
   type ProjectSummary,
   type OfficeEvent,
+  type SessionConversation,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
 import type { Orchestrator } from './orchestrator.js';
@@ -25,7 +33,7 @@ import { listModels } from './models.js';
 import { harnessCatalog } from './harness.js';
 import type { QuestionDesk } from './questions.js';
 import { hookStatus, installHook, uninstallHook } from './hook-install.js';
-import type { ChatService } from './chat.js';
+import { runningElsewhere, type ChatService } from './chat.js';
 import type { Observation } from './observation/observer.js';
 import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
 export async function createServer({
@@ -62,9 +70,11 @@ export async function createServer({
   hookToken?: string;
   hookSetup?: { claudeHome: string; command: string };
 }) {
+  const sessions = createSessionRegistry(store, observation);
+  chat?.useSessions(sessions);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const terminals = createTerminals({ shell: terminalShell });
-  const launcher = createLauncher({ terminals, commands: launchCommands });
+  const launcher = createLauncher({ terminals, commands: launchCommands, store });
   const sessionLocks = new Map<string, Promise<void>>();
   const withSession = async <T>(id: string, action: () => Promise<T>): Promise<T> => {
     const previous = sessionLocks.get(id);
@@ -81,9 +91,84 @@ export async function createServer({
       if (sessionLocks.get(id) === pending) sessionLocks.delete(id);
     }
   };
+  // The CLI a resume terminal runs: the server's default unless the person set a wrapper.
+  const settings = (): DirectSettings =>
+    store.getSetting<DirectSettings>('direct', {
+      commands: agentCommands ?? { claude: 'claude', codex: 'codex' },
+    });
+  const terminalFor = (id: string) => {
+    const launched = sessions.get(id)?.launched;
+    return (launched ? terminals.get(launched.terminalId) : undefined) ?? terminals.find(id);
+  };
+  const cleanup = createWorktreeCleanup(store, (path) => {
+    const runs = store.cleanupRuns();
+    if (terminals.list().some((t) => usesWorktree(path, t.root, runs)))
+      return '이 폴더의 터미널이 열려 있어요. 먼저 터미널을 종료해주세요.';
+    const used = sessions
+      .list()
+      .sessions.filter((s) => usesWorktree(path, s.cwd || s.projectPath, runs));
+    if (
+      used.some(
+        (s) =>
+          s.processAlive === true ||
+          s.status === 'active' ||
+          ['direct', 'terminal'].includes(chat?.channels(s.id).busy ?? ''),
+      )
+    )
+      return '이 폴더에서 동료가 활동 중이에요. 작업을 마친 뒤 정리해주세요.';
+    return undefined;
+  });
+  app.get('/api/worktrees', async () => cleanup.list());
+  app.post('/api/worktrees/remove', async (req, reply) => {
+    const input = z
+      .object({ path: z.string().min(1), discardChanges: z.boolean().default(false) })
+      .parse(req.body);
+    try {
+      return await cleanup.remove(input.path, input.discardChanges);
+    } catch (e) {
+      return reply.code(409).send({ error: (e as Error).message });
+    }
+  });
+  orchestrator.useSessionGuard((run) => {
+    const folders = new Set([run.worktreePath, ...(run.repos?.map((r) => r.worktreePath) ?? [])]);
+    for (const folder of folders) cleanup.assertAvailable(folder);
+    const own = sessions.list().sessions.filter((s) => folders.has(s.cwd));
+    if (
+      own.some(
+        (s) =>
+          terminalFor(s.id) || ['direct', 'terminal'].includes(chat?.channels(s.id).busy ?? ''),
+      )
+    )
+      throw new Error(
+        '이 작업 폴더의 개별 대화나 이어가기 터미널이 실행 중이에요. 먼저 완료하거나 터미널을 종료해주세요.',
+      );
+  });
+  chat?.useTerminal({
+    isOpen: (id) => !!terminalFor(id),
+    send: (session, text) =>
+      withSession(session.id, async () => {
+        let info = terminalFor(session.id);
+        const forked = !info && runningElsewhere(session);
+        if (!info) {
+          const folder = await resumeFolder(session);
+          if (sessions.get(session.id)?.managed?.workspaceRemoved)
+            throw new ResumeConflict('정리한 작업 폴더입니다. 새 작업으로 시작해주세요.');
+          cleanup.assertAvailable(folder);
+          info = terminals.create(folder, 100, 30, {
+            command: resumeCommand(session, forked ? 'fork' : 'resume', settings().commands),
+            tag: session.id,
+            persistent: true,
+          });
+          // A resumed CLI replays its transcript first; type once it has settled.
+          await terminals.whenQuiet(info.id);
+        }
+        terminals.write(info.id, text);
+        return { forked };
+      }),
+  });
   const visibleSessions = () => {
     const retired = new Set(store.listRetired().map((s) => s.id));
-    return (observation?.list().sessions ?? []).filter((s) => !retired.has(s.id));
+    return (sessions.list().sessions ?? []).filter((s) => !retired.has(s.id));
   };
   // Rooms merged by hand: what the map and office show. File access keeps the real roots.
   const roomSessions = () => {
@@ -95,7 +180,7 @@ export async function createServer({
   };
   const workspace = createWorkspaceReader(() => [
     ...store.listProjects().map((p) => p.root),
-    ...(observation?.list().sessions ?? []).map((s) => s.projectPath),
+    ...(sessions.list().sessions ?? []).map((s) => s.projectPath),
     ...store.listRuns().map((r) => r.worktreePath),
   ]);
   const workspaceQuery = z.object({
@@ -171,15 +256,26 @@ export async function createServer({
         rows: z.number().int().min(5).max(100).default(24),
       })
       .parse(req.body);
-    return terminals.create(await workspace.authorize(root), cols, rows);
+    const folder = await workspace.authorize(root);
+    cleanup.assertAvailable(folder);
+    return terminals.create(folder, cols, rows);
   });
   app.get('/api/agents', async (req) => {
     const { root } = z.object({ root: z.string().min(1) }).parse(req.query);
     return launcher.list(await workspace.authorize(root));
   });
+  app.post('/api/launch-folders', async (req) => {
+    const { root } = z.object({ root: z.string().min(1) }).parse(req.body);
+    if (!isAbsolute(root)) throw new Error('폴더의 절대 경로를 입력해주세요.');
+    const folder = await realpath(root);
+    if (!(await stat(folder)).isDirectory()) throw new Error('폴더를 선택해주세요.');
+    store.rememberProject(folder);
+    return { root: folder };
+  });
   app.post('/api/agents', async (req, reply) => {
     const input = launchSchema.parse(req.body);
     const root = await workspace.authorize(input.root);
+    cleanup.assertAvailable(root);
     return reply.code(201).send(launcher.start({ ...input, root }));
   });
   app.get<{ Params: { id: string } }>('/api/terminals/:id', async (req, reply) => {
@@ -195,7 +291,7 @@ export async function createServer({
   // Resuming runs the provider CLI in the app's PTY; the observed id tags the terminal.
   app.get<{ Params: { id: string } }>('/api/observed/:id/terminal', async (req, reply) => {
     return (
-      terminals.find(req.params.id) ??
+      terminalFor(req.params.id) ??
       reply.code(404).send({ error: '이어서 작업 중인 터미널이 없습니다.' })
     );
   });
@@ -208,15 +304,31 @@ export async function createServer({
       })
       .parse(req.body);
     return withSession(req.params.id, async () => {
-      const session = observation?.get(req.params.id);
+      const session = sessions.get(req.params.id);
       if (!session) return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
       if (store.isRetired(session.id))
         return reply.code(409).send({ error: '퇴근한 동료입니다. 먼저 다시 출근시켜 주세요.' });
-      const existing = terminals.find(session.id);
+      if (session.managed?.busy)
+        return reply
+          .code(409)
+          .send({ error: '이 동료가 참여한 앱 작업을 완료하거나 중단한 뒤 이어가세요.' });
+      if (chat?.channels(session.id).busy === 'direct')
+        return reply
+          .code(409)
+          .send({ error: '개별 지시를 처리 중이에요. 답변이 끝난 뒤 이어가세요.' });
+      const existing = terminalFor(session.id);
       if (existing) return existing;
       try {
-        const command = resumeCommand(session, mode, agentCommands);
-        return terminals.create(await resumeFolder(session), cols, rows, {
+        const command = resumeCommand(session, mode, settings().commands);
+        const folder = await resumeFolder(session);
+        if (sessions.get(session.id)?.managed?.busy)
+          throw new ResumeConflict('앱 작업을 완료하거나 중단한 뒤 이어가세요.');
+        if (chat?.channels(session.id).busy === 'direct')
+          throw new ResumeConflict('개별 지시를 처리 중이에요. 답변이 끝난 뒤 이어가세요.');
+        if (sessions.get(session.id)?.managed?.workspaceRemoved)
+          throw new ResumeConflict('정리한 작업 폴더입니다. 새 작업으로 시작해주세요.');
+        cleanup.assertAvailable(folder);
+        return terminals.create(folder, cols, rows, {
           command,
           tag: session.id,
           persistent: true,
@@ -230,18 +342,18 @@ export async function createServer({
   });
   app.post<{ Params: { id: string } }>('/api/observed/:id/retire', async (req, reply) =>
     withSession(req.params.id, async () => {
-      const session = observation?.get(req.params.id);
+      const session = sessions.get(req.params.id);
       if (!session) return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
       store.retire(session);
       chat?.cancel(session.id);
-      const terminal = terminals.find(session.id);
+      const terminal = terminalFor(session.id);
       if (terminal) await terminals.end(terminal.id);
       return { ok: true };
     }),
   );
   app.post<{ Params: { id: string } }>('/api/observed/:id/restore', async (req, reply) =>
     withSession(req.params.id, async () => {
-      if (!observation?.get(req.params.id))
+      if (!sessions.get(req.params.id))
         return reply.code(409).send({
           error:
             '원본 세션 로그를 현재 찾을 수 없습니다. 원래 CLI에서 세션을 열면 다시 감지됩니다.',
@@ -262,7 +374,7 @@ export async function createServer({
     return project;
   });
   app.get('/api/observed', async () => {
-    const snapshot = observation?.list() ?? {
+    const snapshot = sessions.list() ?? {
       sessions: [],
       scannedAt: null,
       scanning: false,
@@ -278,27 +390,79 @@ export async function createServer({
     };
   });
   app.get<{ Params: { id: string } }>('/api/observed/:id', async (req, reply) => {
-    const session = observation?.get(req.params.id);
+    const session = sessions.get(req.params.id);
     return session ?? reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+  });
+  const conversation = (id: string, messages = chat!.list(id)): SessionConversation => ({
+    mode: 'records',
+    directAvailable: true,
+    messages,
+    channels: chat!.channels(id),
+    interactions: chat!.pending(id),
   });
   app.get<{ Params: { id: string } }>('/api/observed/:id/chat', async (req, reply) => {
     if (!chat) return reply.code(503).send({ error: '채팅 서비스를 사용할 수 없습니다.' });
-    return { mode: 'records', directAvailable: false, messages: chat.list(req.params.id) };
+    return conversation(req.params.id);
   });
   app.post<{ Params: { id: string } }>('/api/observed/:id/chat', async (req, reply) => {
     if (!chat) return reply.code(503).send({ error: '채팅 서비스를 사용할 수 없습니다.' });
     const { question } = z.object({ question: z.string().trim().min(1).max(4000) }).parse(req.body);
-    if (!observation?.get(req.params.id))
+    if (!sessions.get(req.params.id))
       return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
     try {
-      return reply.code(202).send({
-        mode: 'records',
-        directAvailable: false,
-        messages: chat.ask(req.params.id, question),
-      });
+      return reply.code(202).send(conversation(req.params.id, chat.ask(req.params.id, question)));
     } catch (e) {
       return reply.code(409).send({ error: (e as Error).message });
     }
+  });
+  // An instruction the coworker carries out: typed into the app's resume terminal, or run as
+  // one more turn on the session by the app. A retired coworker is not spoken to.
+  app.post<{ Params: { id: string } }>('/api/observed/:id/say', async (req, reply) => {
+    if (!chat) return reply.code(503).send({ error: '채팅 서비스를 사용할 수 없습니다.' });
+    const { text, channel } = z
+      .object({
+        text: z.string().trim().min(1).max(20000),
+        channel: z.enum(['terminal', 'direct', 'auto']).default('auto'),
+      })
+      .parse(req.body);
+    const session = sessions.get(req.params.id);
+    if (!session) return reply.code(404).send({ error: '관측 중인 세션을 찾을 수 없습니다.' });
+    if (store.isRetired(session.id))
+      return reply.code(409).send({ error: '퇴근한 동료입니다. 먼저 다시 출근시켜 주세요.' });
+    try {
+      cleanup.assertAvailable(session.cwd);
+      return reply.code(202).send(conversation(session.id, chat.say(session.id, text, channel)));
+    } catch (e) {
+      return reply.code(409).send({ error: (e as Error).message });
+    }
+  });
+  app.post<{ Params: { id: string } }>('/api/observed/:id/chat/answer', async (req, reply) => {
+    if (!chat) return reply.code(503).send({ error: '채팅 서비스를 사용할 수 없습니다.' });
+    const { interactionId, answer } = z
+      .object({ interactionId: z.string().uuid(), answer: answerSchema })
+      .parse(req.body);
+    try {
+      chat.answer(req.params.id, interactionId, answer);
+      return conversation(req.params.id);
+    } catch (e) {
+      return reply.code(409).send({ error: (e as Error).message });
+    }
+  });
+  app.get('/api/settings/approvals', async () => approvalSettings(store));
+  app.post('/api/settings/approvals', async (req) => {
+    const next = approvalSettingsSchema.parse(req.body);
+    store.setSetting('approvals', next);
+    if (next.mode === 'auto') {
+      await orchestrator.approvePending();
+      chat?.approvePending();
+    }
+    return next;
+  });
+  app.get('/api/settings/direct', async () => settings());
+  app.post('/api/settings/direct', async (req) => {
+    const next = directSettingsSchema.parse(req.body);
+    store.setSetting('direct', next);
+    return next;
   });
   app.post<{ Params: { id: string } }>('/api/observed/:id/chat/cancel', async (req) => {
     chat?.cancel(req.params.id);
@@ -343,11 +507,14 @@ export async function createServer({
     );
     return [...projects.values()];
   });
-  app.get<{ Querystring: { projectPath?: string } }>('/api/runs', async (req) => {
-    const { projectPath } = z
-      .object({ projectPath: z.string().min(1).optional() })
+  app.get<{ Querystring: { projectPath?: string; related?: string } }>('/api/runs', async (req) => {
+    const { projectPath, related } = z
+      .object({
+        projectPath: z.string().min(1).optional(),
+        related: z.enum(['true', 'false']).optional(),
+      })
       .parse(req.query);
-    return store.listRuns(projectPath);
+    return store.listRuns(projectPath, related === 'true');
   });
   // Listing spawns the Codex app server, so a panel reopened within a minute reuses the answer.
   let catalogCache: { at: number; value: Promise<HarnessCatalog> } | undefined;
@@ -481,6 +648,16 @@ export async function createServer({
   app.post('/api/runs', async (req, reply) => {
     try {
       return await orchestrator.start(startSchema.parse(req.body));
+    } catch (e) {
+      return reply.code(409).send({ error: (e as Error).message });
+    }
+  });
+  app.post<{ Params: { id: string } }>('/api/runs/:id/follow-up', async (req, reply) => {
+    const { prompt } = followUpSchema.parse(req.body);
+    if (!store.getRun(req.params.id))
+      return reply.code(404).send({ error: '이전 작업 기록이 없습니다.' });
+    try {
+      return await orchestrator.followUp(req.params.id, prompt);
     } catch (e) {
       return reply.code(409).send({ error: (e as Error).message });
     }

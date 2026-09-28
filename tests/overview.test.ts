@@ -265,3 +265,30 @@ test('an open but quiet terminal keeps its desk as away; closing it or an unknow
   });
   expect(room.offDuty.map((w) => w.id).sort()).toEqual(['observed:closed', 'observed:unknown']);
 });
+
+test('a unified coworker keeps its session identity and opens its app task without a duplicate worker', () => {
+  const coworker = {
+    ...session('canonical-reviewer', '/a/app'),
+    provider: 'claude' as const,
+    managed: {
+      runId: run.id,
+      role: 'reviewer' as const,
+      executionMode: 'personal' as const,
+      resumable: true,
+      busy: true,
+    },
+    attention: { kind: 'approval' as const, certain: true, since: run.createdAt },
+  };
+  const room = projectRooms([project('/a/app', run)], [coworker], at)[0];
+  const reviewers = room.workers.filter((w) => w.provider === 'claude');
+  expect(reviewers).toHaveLength(1);
+  expect(reviewers[0]).toMatchObject({
+    id: 'observed:canonical-reviewer',
+    session: coworker,
+    run,
+    mark: 'approval',
+  });
+  const external = projectRooms([project('/a/app')], [session('external', '/a/app')], at)[0]
+    .workers[0];
+  expect(external.run).toBeUndefined();
+});

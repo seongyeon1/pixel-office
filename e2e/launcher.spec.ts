@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('a new personal-harness agent starts and remains reachable after hiding and reloading', async ({
   page,
@@ -21,22 +23,41 @@ test('a new personal-harness agent starts and remains reachable after hiding and
   await expect(launcher.getByRole('combobox', { name: '실행 하네스', exact: true })).toContainText(
     'syc',
   );
+  const folder = await realpath(await mkdtemp(join(tmpdir(), 'pixel-launch-choice-')));
+  await launcher.getByLabel('작업 폴더', { exact: true }).fill(folder);
+  await launcher.getByLabel('모델', { exact: true }).fill('gpt-6-astra');
   const prompt = `launcher ${test.info().project.name} 'quoted' task`;
   await launcher.getByLabel('처음 맡길 일').fill(prompt);
+  const created = page.waitForResponse(
+    (r) => r.url().endsWith('/api/agents') && r.request().method() === 'POST',
+  );
   await launcher.getByRole('button', { name: '동료 시작', exact: true }).click();
-  const terminal = page.getByRole('region', { name: '새 동료 터미널', exact: true });
+  const agent = await (await created).json();
+  expect(agent.root).toBe(folder);
+  expect(agent.model).toBe('gpt-6-astra');
+  await expect(launcher).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
+    'title',
+    folder,
+  );
+  await expect(page.locator('.observed-sessions')).toContainText(prompt);
+  await page.getByRole('button', { name: '터미널에서 이어서 작업', exact: true }).click();
+  const terminal = page.getByRole('region', { name: '세션 이어서 작업 터미널', exact: true });
   await expect(terminal).toContainText('FAKE-SYC');
+  await expect(terminal).toContainText('gpt-6-astra');
   await expect(terminal).toContainText(prompt);
-  await page.getByRole('button', { name: '새 동료 창 숨기기' }).click();
+  await page.getByRole('button', { name: '이어서 작업 숨기기' }).click();
   await page.reload();
-  await page.getByRole('button', { name: '새 동료', exact: true }).click();
-  await launcher
-    .getByRole('button', { name: `Codex · ${prompt.slice(0, 25)}`, exact: true })
-    .click();
+  await page.locator('.observed-sessions button').filter({ hasText: prompt }).click();
+  await page.getByRole('button', { name: '터미널에서 이어서 작업', exact: true }).click();
   await expect(terminal).toContainText(prompt);
+  const info = await page.evaluate(
+    async (id) => await (await fetch(`/api/observed/launch-${id}/terminal`)).json(),
+    agent.id,
+  );
+  expect(info.id).toBe(agent.terminal.id);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await terminal.getByRole('button', { name: '터미널 종료', exact: true }).click();
-  await expect(terminal).toContainText('종료된 동료');
 });
 
 test('new agent launch stays hidden while an older server is still running', async ({ page }) => {

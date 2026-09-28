@@ -180,6 +180,8 @@ const OFFICE = {
   facilityRows: 1,
   records: false,
 };
+// Viewport padding, the two side walls and the building's drop shadow, in CSS pixels.
+const FRAME = 4 + 18 + 16;
 const mapName = (w: ProjectWorker) =>
   `전체 맵 동료 ${w.root} ${w.visiting ? `${w.run!.id} 구현` : (w.session?.sessionId ?? w.run!.id)}`;
 export function FloorMap({
@@ -215,12 +217,12 @@ export function FloorMap({
 }) {
   const [box, width] = useWidth();
   const catalog = useModelCatalog();
-  // The floor border sits outside the layout.
+  // The walls and the building's shadow sit outside the layout.
   const layout = useMemo(
     () =>
       floorLayout(
         departmentOf ? rooms.map((r) => ({ ...r, group: departmentOf(r.root).id })) : rooms,
-        width - 6,
+        width - FRAME,
         office ? OFFICE : undefined,
       ),
     [rooms, width, office, departmentOf],
@@ -283,161 +285,175 @@ export function FloorMap({
   };
   return (
     <div className="floor-viewport" ref={box}>
-      <section
-        className={`floor ${office ? 'office' : ''}`}
-        aria-label={label}
-        style={{ width: layout.width, height: layout.height }}
-      >
-        {departmentOf &&
-          layout.bands
-            .filter((b) => b.group)
-            .map((b, i, all) => {
-              const name = departmentOf(
-                layout.cells.find((c) => c.band === b.band && c.kind === 'room')!.key,
-              ).name;
-              // The plaque only on the first band of a department.
-              const first = i === 0 || all[i - 1].group !== b.group;
-              return (
-                <div
-                  key={`dept-${b.band}`}
-                  className="floor-dept"
-                  data-dept={b.group}
-                  style={{
-                    top: b.top - 26,
-                    height: b.bottom - b.top + 34,
-                    left: layout.spineX * 2,
-                  }}
-                >
-                  {first && (
-                    <span className="floor-dept-name" role="heading" aria-level={2}>
-                      {name}
+      <div className="floor-building">
+        {/* The back wall with its windows, noticeboard and framed motto. */}
+        <div className="floor-wall" aria-hidden="true">
+          <i className="floor-board" />
+          <span className="floor-frame">좋은 일은 함께.</span>
+        </div>
+        <section
+          className={`floor ${office ? 'office' : ''}`}
+          aria-label={label}
+          style={{ width: layout.width, height: layout.height }}
+        >
+          {departmentOf &&
+            layout.bands
+              .filter((b) => b.group)
+              .map((b, i, all) => {
+                const name = departmentOf(
+                  layout.cells.find((c) => c.band === b.band && c.kind === 'room')!.key,
+                ).name;
+                // The plaque only on the first band of a department.
+                const first = i === 0 || all[i - 1].group !== b.group;
+                return (
+                  <div
+                    key={`dept-${b.band}`}
+                    className="floor-dept"
+                    data-dept={b.group}
+                    style={{
+                      top: b.top - 26,
+                      height: b.bottom - b.top + 34,
+                      left: layout.spineX * 2,
+                    }}
+                  >
+                    {first && (
+                      <span className="floor-dept-name" role="heading" aria-level={2}>
+                        {name}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+          <div className="floor-spine" style={{ width: layout.spineX * 2 }} aria-hidden="true" />
+          {layout.corridors.map((c) => (
+            <div
+              key={c.band}
+              className="floor-corridor"
+              style={{ top: c.top, left: layout.spineX * 2 - 4 }}
+              aria-hidden="true"
+            />
+          ))}
+          <div
+            className="floor-entrance"
+            style={{ top: layout.entrance.y - 34, width: layout.spineX * 2 - 16 }}
+            aria-label="입구"
+          >
+            <DoorOpen size={16} aria-hidden="true" />
+            입구
+          </div>
+          {layout.cells.map((cell) =>
+            cell.kind === 'room' ? (
+              <RoomCell
+                key={cell.key}
+                cell={cell}
+                room={byRoot.get(cell.key)!}
+                hidden={layout.hidden.get(cell.key) ?? 0}
+                onOpenRoom={onOpenRoom}
+                merging={merging}
+              />
+            ) : (
+              <div
+                key={cell.key}
+                className={`floor-cell floor-${cell.kind} ${cell.upper ? 'upper' : 'lower'}`}
+                style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
+                aria-label={facilityName[cell.kind]}
+              >
+                <header>
+                  {cell.kind === 'meeting' ? (
+                    <Users size={14} />
+                  ) : cell.kind === 'records' ? (
+                    <ScrollText size={14} />
+                  ) : (
+                    <Coffee size={14} />
+                  )}
+                  <strong>{facilityName[cell.kind]}</strong>
+                  {cell.kind === 'records' && (
+                    <span className="floor-presence">
+                      {writing ? `작성 중 ${writing}` : '조용함'}
                     </span>
                   )}
-                </div>
-              );
-            })}
-        <div className="floor-spine" style={{ width: layout.spineX * 2 }} aria-hidden="true" />
-        {layout.corridors.map((c) => (
-          <div
-            key={c.band}
-            className="floor-corridor"
-            style={{ top: c.top, left: layout.spineX * 2 - 4 }}
-            aria-hidden="true"
-          />
-        ))}
-        <div
-          className="floor-entrance"
-          style={{ top: layout.entrance.y - 34, width: layout.spineX * 2 }}
-          aria-label="입구"
-        >
-          <DoorOpen size={16} aria-hidden="true" />
-          입구
-        </div>
-        {layout.cells.map((cell) =>
-          cell.kind === 'room' ? (
-            <RoomCell
-              key={cell.key}
-              cell={cell}
-              room={byRoot.get(cell.key)!}
-              hidden={layout.hidden.get(cell.key) ?? 0}
-              onOpenRoom={onOpenRoom}
-              merging={merging}
-            />
-          ) : (
+                </header>
+                <i className="floor-furniture a" aria-hidden="true" />
+                <i className="floor-furniture b" aria-hidden="true" />
+                <i className="floor-furniture c" aria-hidden="true" />
+                <span className="floor-door" aria-hidden="true" />
+              </div>
+            ),
+          )}
+          {layout.rows.map((row, i) => (
             <div
-              key={cell.key}
-              className={`floor-cell floor-${cell.kind} ${cell.upper ? 'upper' : 'lower'}`}
-              style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
-              aria-label={facilityName[cell.kind]}
+              key={`back-${row.cell}-${i}`}
+              className="floor-desks back"
+              style={{ left: row.x, top: row.y }}
+              aria-hidden="true"
             >
-              <header>
-                {cell.kind === 'meeting' ? (
-                  <Users size={14} />
-                ) : cell.kind === 'records' ? (
-                  <ScrollText size={14} />
-                ) : (
-                  <Coffee size={14} />
-                )}
-                <strong>{facilityName[cell.kind]}</strong>
-                {cell.kind === 'records' && (
-                  <span className="floor-presence">
-                    {writing ? `작성 중 ${writing}` : '조용함'}
-                  </span>
-                )}
-              </header>
-              <i className="floor-furniture a" aria-hidden="true" />
-              <i className="floor-furniture b" aria-hidden="true" />
-              <span className="floor-door" aria-hidden="true" />
+              {Array.from({ length: row.seats }, (_, s) => (
+                <i key={s} data-seat={seatState(row.x, row.y, s)} />
+              ))}
             </div>
-          ),
-        )}
-        {layout.rows.map((row, i) => (
-          <div
-            key={`back-${row.cell}-${i}`}
-            className="floor-desks back"
-            style={{ left: row.x, top: row.y }}
-            aria-hidden="true"
-          >
-            {Array.from({ length: row.seats }, (_, s) => (
-              <i key={s} data-seat={seatState(row.x, row.y, s)} />
-            ))}
-          </div>
-        ))}
-        {layout.rows.map((row, i) => (
-          <div
-            key={`front-${row.cell}-${i}`}
-            className="floor-desks front"
-            // In front of whoever sits in this row, behind anyone walking below it.
-            style={{ left: row.x, top: row.y, zIndex: Math.round(row.y + FEET) + 1 }}
-            aria-hidden="true"
-          >
-            {row.tag && (
-              <span className={`floor-lane-tag ${row.tag.main ? 'main' : ''}`}>
-                {row.tag.branch || '정리된 워크트리'}
-              </span>
-            )}
-            {Array.from({ length: row.seats }, (_, s) => (
-              <i key={s} data-seat={seatState(row.x, row.y, s)} />
-            ))}
-          </div>
-        ))}
-        {visible.map((w) => {
-          const place = places.get(w.id)!;
-          return (
-            <FloorWorker
-              key={w.id}
-              worker={w}
-              target={place}
-              kind={place.kind}
-              start={arrivals.current.get(w.id)}
-              delay={arrivals.current.get(w.id) ? hash(w.id) % 1600 : 0}
-              layout={layout}
-              name={nameOf(w)}
-              modelNote={describeModel(
-                catalog,
-                w.provider,
-                w.session?.model ?? w.run?.team[w.provider].model ?? '',
+          ))}
+          {layout.rows.map((row, i) => (
+            <div
+              key={`front-${row.cell}-${i}`}
+              className="floor-desks front"
+              // In front of whoever sits in this row, behind anyone walking below it.
+              style={{ left: row.x, top: row.y, zIndex: Math.round(row.y + FEET) + 1 }}
+              aria-hidden="true"
+            >
+              {row.tag && (
+                <span className={`floor-lane-tag ${row.tag.main ? 'main' : ''}`}>
+                  {row.tag.branch || '정리된 워크트리'}
+                </span>
               )}
-              selected={selectedId === undefined ? undefined : selectedId === w.id}
-              onOpen={() => onOpen(w.root, w)}
+              {Array.from({ length: row.seats }, (_, s) => (
+                <i key={s} data-seat={seatState(row.x, row.y, s)} />
+              ))}
+            </div>
+          ))}
+          {visible.map((w) => {
+            const place = places.get(w.id)!;
+            return (
+              <FloorWorker
+                key={w.id}
+                worker={w}
+                target={place}
+                kind={place.kind}
+                start={arrivals.current.get(w.id)}
+                delay={arrivals.current.get(w.id) ? hash(w.id) % 1600 : 0}
+                layout={layout}
+                name={nameOf(w)}
+                modelNote={describeModel(
+                  catalog,
+                  w.provider,
+                  w.session?.model ?? w.run?.team[w.provider].model ?? '',
+                )}
+                selected={selectedId === undefined ? undefined : selectedId === w.id}
+                onOpen={() => onOpen(w.root, w)}
+              />
+            );
+          })}
+          {Object.entries(departures).map(([id, d]) => (
+            <FloorWorker
+              key={`leaving:${id}`}
+              worker={d.worker}
+              target={layout.entrance}
+              kind="desk"
+              start={d.from}
+              layout={layout}
+              name={`${nameOf(d.worker)} 퇴근 중`}
+              leaving
+              onArrive={() => setDepartures(({ [id]: _gone, ...rest }) => rest)}
+              onOpen={() => undefined}
             />
-          );
-        })}
-        {Object.entries(departures).map(([id, d]) => (
-          <FloorWorker
-            key={`leaving:${id}`}
-            worker={d.worker}
-            target={layout.entrance}
-            kind="desk"
-            start={d.from}
-            layout={layout}
-            name={`${nameOf(d.worker)} 퇴근 중`}
-            leaving
-            onArrive={() => setDepartures(({ [id]: _gone, ...rest }) => rest)}
-            onOpen={() => undefined}
-          />
-        ))}
-      </section>
+          ))}
+          <i className="floor-plant corner" aria-hidden="true" />
+          <i className="floor-plant lobby" aria-hidden="true" />
+        </section>
+        {/* The front wall, with the doorway at the foot of the spine. */}
+        <div className="floor-base" aria-hidden="true">
+          <i style={{ left: 0, width: layout.spineX * 2 }} />
+        </div>
+      </div>
     </div>
   );
 }

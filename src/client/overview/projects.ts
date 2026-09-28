@@ -146,8 +146,13 @@ export function projectRooms(
   for (const s of sessions) {
     if (s.automated) continue;
     const room = get(s.projectPath);
-    if (onDuty(s, now)) room.workers.push(observedWorker(s, seen, now));
-    else room.offDuty.push(observedWorker(s, seen, now));
+    const worker = observedWorker(s, seen, now);
+    if (room.latestRun && s.managed?.runId === room.latestRun.id) {
+      worker.run = room.latestRun;
+      worker.label = `앱 작업 · ${worker.label}`;
+    }
+    if (onDuty(s, now)) room.workers.push(worker);
+    else room.offDuty.push(worker);
   }
   // Automated sessions never take a desk or open a room of their own (e.g. smoke-test repos);
   // running ones are listed with a room that people or a connection already opened.
@@ -189,26 +194,29 @@ export function projectRooms(
         updatedAt: run.createdAt,
         run,
       };
-      room.workers.push({
-        ...base,
-        id: `run:${run.id}`,
-        identity: provider,
-        provider,
-        family: modelFamily(provider, run.team[provider].model || 'default'),
-        caption:
-          waiting || run.status === 'queued'
-            ? statusLabels[run.status]
-            : run.phase === 'review'
-              ? '코드 검토'
-              : run.phase === 'revise'
-                ? '수정 작업'
-                : '구현 작업',
-        active: true,
-        waiting,
-        mark: run.status === 'waiting_input' ? 'question' : waiting ? 'approval' : null,
-      });
+      const represented = (p: Provider) =>
+        sessions.some((s) => s.managed?.runId === run.id && s.provider === p);
+      if (!represented(provider))
+        room.workers.push({
+          ...base,
+          id: `run:${run.id}`,
+          identity: provider,
+          provider,
+          family: modelFamily(provider, run.team[provider].model || 'default'),
+          caption:
+            waiting || run.status === 'queued'
+              ? statusLabels[run.status]
+              : run.phase === 'review'
+                ? '코드 검토'
+                : run.phase === 'revise'
+                  ? '수정 작업'
+                  : '구현 작업',
+          active: true,
+          waiting,
+          mark: run.status === 'waiting_input' ? 'question' : waiting ? 'approval' : null,
+        });
       // The implementer brings the work over and stands by while it is reviewed.
-      if (reviewing)
+      if (reviewing && !represented(run.implementer))
         room.workers.push({
           ...base,
           id: `run:${run.id}:implementer`,

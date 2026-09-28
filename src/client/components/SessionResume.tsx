@@ -25,7 +25,9 @@ export function ResumeDock({
       throw e;
     });
   // Claude reports whether the original process lives; Codex does not, so a recent log counts.
-  const running = session.processAlive === true || session.status === 'active';
+  const fresh = session.managed?.resumable === false || session.launched?.resumable === false;
+  const blocked = !!session.managed?.busy;
+  const running = !fresh && (session.processAlive === true || session.status === 'active');
   return (
     <section
       className={`workspace-dock agent-dock ${expanded ? 'expanded' : ''}`}
@@ -55,10 +57,15 @@ export function ResumeDock({
           idle={(start, pending) => (
             <div className="terminal-empty resume-empty">
               <p>
-                이 세션의 대화 기록을 그대로 불러와 앱 터미널에서 이어서 작업해요. 권한 승인과
-                중단도 터미널에서 직접 할 수 있어요.
+                {fresh
+                  ? '원본 세션이 남아 있지 않아 보관된 작업 기록으로 새 대화를 시작해요.'
+                  : '이 세션의 대화 기록을 그대로 불러와 앱 터미널에서 이어서 작업해요.'}{' '}
+                권한 승인과 중단도 터미널에서 직접 할 수 있어요.
               </p>
               <code>{session.cwd || session.projectPath}</code>
+              {blocked && (
+                <p className="resume-warning">앱 작업을 완료하거나 중단한 뒤 이어갈 수 있어요.</p>
+              )}
               {running && (
                 <p className="resume-warning">
                   {session.processAlive === true
@@ -69,15 +76,15 @@ export function ResumeDock({
               <div className="resume-actions">
                 <button
                   className={running ? '' : 'primary'}
-                  disabled={pending || running}
+                  disabled={pending || running || blocked}
                   onClick={() => start(open('resume'))}
                 >
                   <Play size={15} />
-                  {pending ? '여는 중…' : '이어서 작업'}
+                  {pending ? '여는 중…' : fresh ? '기록으로 새 대화 시작' : '이어서 작업'}
                 </button>
                 <button
                   className={running ? 'primary' : ''}
-                  disabled={pending}
+                  disabled={pending || blocked || fresh}
                   onClick={() => start(open('fork'))}
                 >
                   <GitFork size={15} />

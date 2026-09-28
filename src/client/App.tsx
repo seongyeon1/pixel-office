@@ -1,3 +1,6 @@
+import { WorktreeCleanup } from './components/WorktreeCleanup';
+import { SessionChat } from './components/SessionChat';
+import { RunFollowUp } from './components/RunFollowUp';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   Armchair,
@@ -52,6 +55,7 @@ import './workspace/documents.css';
 import type { DocumentTarget } from './workspace/WorkspacePanel';
 import { applyEvent, emptyState, type OfficeState } from './state';
 import { TeamPanel } from './components/TeamPanel';
+import { CoworkerAvatar as Avatar } from './components/CoworkerAvatar';
 import { TerminalHookSettings } from './components/TerminalQuestion';
 import { InteractionPanel } from './components/InteractionPanel';
 import { ProjectMap } from './overview/ProjectMap';
@@ -81,20 +85,25 @@ type Health = {
   features?: { agentLauncher?: boolean };
 };
 const providerName = (id: Provider) => (id === 'claude' ? 'Claude' : 'Codex');
-function Avatar({ id, small = false }: { id: Provider; small?: boolean }) {
-  return (
-    <span className={`avatar ${id} ${small ? 'small' : ''}`}>{id === 'claude' ? '✳' : '⌘'}</span>
-  );
-}
 export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [booted, setBooted] = useState(false);
   const [authError, setAuthError] = useState('');
   const [error, setError] = useState('');
+  const [startError, setStartError] = useState('');
+  const startErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!startError) return;
+    startErrorRef.current?.focus({ preventScroll: true });
+    startErrorRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [startError]);
   const [state, setState] = useState<OfficeState>(emptyState);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const [runs, setRuns] = useState<Run[]>([]);
+  const [allRuns, setAllRuns] = useState<Run[]>([]);
+  const [projectHistory, setProjectHistory] = useState<Run[]>([]);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [historyScope, setHistoryScope] = useState<'all' | 'project'>('all');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [observation, setObservation] = useState<ObservationSnapshot>({
     sessions: [],
@@ -113,7 +122,7 @@ export function App() {
   const selectionVersion = useRef(0);
   const snapshotVersion = useRef(0);
   const [selected, setSelected] = useState<Provider>('claude');
-  const [tab, setTab] = useState<'activity' | 'files'>('activity');
+  const [tab, setTab] = useState<'activity' | 'files' | 'chat'>('activity');
   const [view, setView] = useState<'overview' | 'office' | 'history' | 'team' | 'records'>(() =>
     localStorage.getItem('pixel.overview') === 'true' ? 'overview' : 'office',
   );
@@ -124,6 +133,7 @@ export function App() {
   const [path, setPath] = useState(() => localStorage.getItem('pixel.project') ?? '');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<Mode>('collaborate');
+  const [executionMode, setExecutionMode] = useState<'personal' | 'isolated'>('personal');
   const [team, setTeam] = useState<TeamConfig>(defaultTeam);
   const [implementer, setImplementer] = useState<Provider>('codex');
   const [pending, setPending] = useState(false);
@@ -181,13 +191,17 @@ export function App() {
   const refreshRuns = async () => {
     const root = projectRef.current;
     const version = selectionVersion.current;
-    const [list, repositories, observed] = await Promise.all([
-      root ? api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}`) : Promise.resolve([]),
+    const [repositories, observed, all, related] = await Promise.all([
       api<ProjectSummary[]>('/projects'),
       api<ObservationSnapshot>('/observed'),
+      api<Run[]>('/runs'),
+      root
+        ? api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}&related=true`)
+        : Promise.resolve([]),
     ]);
     if (version !== selectionVersion.current) return;
-    setRuns(list);
+    setAllRuns(all);
+    setProjectHistory(related);
     setProjects(repositories);
     setObservation(observed);
   };
@@ -211,6 +225,7 @@ export function App() {
       setState(next);
       setDocumentTarget(undefined);
       setChanges([]);
+      return true;
     } catch (e) {
       if (version === snapshotVersion.current) setError((e as Error).message);
     }
@@ -223,6 +238,7 @@ export function App() {
     const version = ++selectionVersion.current;
     snapshotVersion.current++;
     projectRef.current = root;
+    setStartError('');
     setProject(inspected ?? { root, head: '', dirty: false });
     setBundle([]);
     localStorage.setItem('pixel.project', root);
@@ -230,7 +246,7 @@ export function App() {
     const empty = emptyState();
     stateRef.current = empty;
     setState(empty);
-    setRuns([]);
+    setProjectHistory([]);
     setDocumentTarget(undefined);
     setChanges([]);
     setPrompt('');
@@ -239,19 +255,20 @@ export function App() {
     setModal(null);
     if (!options?.keepView) setView('office');
     setResumeSessionId(undefined);
-    setTargetSessionId(options?.worker?.session?.id);
+    setTargetSessionId(options?.worker?.run ? undefined : options?.worker?.session?.id);
     if (options?.worker) setSelected(options.worker.provider);
     setRunFocus(!!options?.worker?.run);
     setLoadingProject(true);
     try {
-      const [list, metadata] = await Promise.all([
+      const [list, metadata, related] = await Promise.all([
         api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}`),
         inspected
           ? Promise.resolve(inspected)
           : api<Project>('/projects/inspect', { path: root }).catch((e: Error) => e.message),
+        api<Run[]>(`/runs?projectPath=${encodeURIComponent(root)}&related=true`),
       ]);
       if (version !== selectionVersion.current) return;
-      setRuns(list);
+      setProjectHistory(related);
       // A folder that is no repository stays selectable for its sessions and records; the
       // composer shows the reason instead of letting 작업 시작 be refused by the server.
       if (typeof metadata === 'string')
@@ -282,13 +299,15 @@ export function App() {
     (async () => {
       try {
         await bootstrap();
-        const [h, repositories, observed] = await Promise.all([
+        const [h, repositories, observed, all] = await Promise.all([
           api<Health>('/health'),
           api<ProjectSummary[]>('/projects'),
           api<ObservationSnapshot>('/observed'),
+          api<Run[]>('/runs'),
         ]);
         if (cancelled) return;
         setHealth(h);
+        setAllRuns(all);
         setProjects(repositories);
         setObservation(observed);
         const root =
@@ -450,11 +469,13 @@ export function App() {
     if (!prompt.trim() || loadingProject || busy || bundleMissing) return;
     setPending(true);
     setError('');
+    setStartError('');
     try {
       const run = await api<Run>('/runs', {
         projectPath: project.root,
         ...(project.repositories ? { repositories: bundle } : {}),
         prompt,
+        executionMode,
         mode,
         implementer,
         team,
@@ -467,7 +488,7 @@ export function App() {
       setRunFocus(true);
       setInspector(true);
     } catch (e) {
-      setError((e as Error).message);
+      setStartError((e as Error).message);
     } finally {
       setPending(false);
     }
@@ -487,6 +508,7 @@ export function App() {
   };
   const newTask = () => {
     if (active) return;
+    setStartError('');
     snapshotVersion.current++;
     const empty = emptyState();
     stateRef.current = empty;
@@ -516,6 +538,9 @@ export function App() {
       </div>
     );
   const selectedAgent = state.agents[selected];
+  const selectedSession = observedSessions.find(
+    (s) => !!state.run && s.managed?.runId === state.run.id && s.provider === selected,
+  );
   const providerNotice = [...state.events]
     .reverse()
     .find((e) => e.type === 'provider.fallback' || e.type === 'provider.limit');
@@ -530,6 +555,19 @@ export function App() {
     .slice(-30)
     .reverse();
   // The app's own run: its task composer and inspector slot into the repository office.
+  const historyRuns = historyScope === 'all' ? allRuns : projectHistory;
+  const openHistoryRun = async (run: Run) => {
+    const transition =
+      run.projectPath !== projectRef.current ? switchProject(run.projectPath) : undefined;
+    const version = selectionVersion.current;
+    await transition;
+    if (version !== selectionVersion.current || run.projectPath !== projectRef.current) return;
+    if (!(await selectRun(run.id))) return;
+    if (version !== selectionVersion.current || run.projectPath !== projectRef.current) return;
+    setRunFocus(true);
+    setView('office');
+    setInspector(true);
+  };
   const appComposer = (
     <>
       {providerNotice && (
@@ -564,6 +602,24 @@ export function App() {
           </button>
         ))}
       </div>
+      {state.run && terminal(state.run.status) && (
+        <RunFollowUp
+          key={state.run.id}
+          run={state.run}
+          disabled={busy || loadingProject || pending}
+          onHistory={() => {
+            setHistoryScope('all');
+            setView('history');
+          }}
+          onStarted={async (run) => {
+            await selectRun(run.id);
+            await refreshRuns();
+            setSelected(run.mode === 'collaborate' ? run.implementer : run.mode);
+            setRunFocus(true);
+            setInspector(true);
+          }}
+        />
+      )}
       <section className="task-composer">
         <div className="composer-title">
           <MessageSquare size={17} />
@@ -582,6 +638,23 @@ export function App() {
           placeholder="예: 로그인 화면을 만들어줘. Codex가 구현하고 Claude가 검토해줘."
           rows={3}
         />
+        <label className="execution-mode">
+          실행 환경
+          <select
+            aria-label="실행 환경"
+            value={executionMode}
+            disabled={!!active}
+            onChange={(e) => setExecutionMode(e.target.value as 'personal' | 'isolated')}
+          >
+            <option value="personal">내 환경 · sy / syc</option>
+            <option value="isolated">격리 환경 · 선택한 설정만</option>
+          </select>
+          <small>
+            {executionMode === 'personal'
+              ? '현재 폴더의 파일과 개인 설정을 사용하고 대화 세션을 이어가요.'
+              : '하네스에서 선택한 지침과 도구만 사용해요.'}
+          </small>
+        </label>
         <div className="composer-bottom">
           <button
             className={`project-chip ${project?.unavailable ? 'warning' : ''}`}
@@ -624,13 +697,24 @@ export function App() {
             </button>
           )}
         </div>
+        {startError && (
+          <div className="error-banner start-error" role="alert" tabIndex={-1} ref={startErrorRef}>
+            <AlertCircle size={17} />
+            <span>{startError}</span>
+            <button aria-label="작업 시작 오류 닫기" onClick={() => setStartError('')}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
         {project?.repositories && (
           <fieldset className="bundle-picker" disabled={!!active}>
             <legend>
               함께 작업할 저장소
               <small>
-                {bundle.length ? `${bundle.length}개 선택` : '하나 이상 골라 주세요'} · 저장소마다
-                작업 폴더가 따로 생기고 동료들은 그 상위 폴더에서 일해요.
+                {bundle.length ? `${bundle.length}개 선택` : '하나 이상 골라 주세요'} ·{' '}
+                {executionMode === 'personal'
+                  ? '선택한 저장소의 현재 파일에서 작업해요.'
+                  : '저장소마다 작업 폴더가 따로 생기고 동료들은 그 상위 폴더에서 일해요.'}
               </small>
             </legend>
             {project.repositories.some((r) => r.kind === 'worktree') && (
@@ -673,7 +757,7 @@ export function App() {
             레포(하위 클론)를 골라 주세요. 세션과 기록은 계속 볼 수 있어요.
           </p>
         )}
-        {project?.dirty && (
+        {project?.dirty && executionMode === 'isolated' && (
           <p className="hint dirty-note">
             커밋되지 않은 변경은 포함하지 않고, 마지막 커밋에서 새 작업을 시작해요.
           </p>
@@ -771,6 +855,24 @@ export function App() {
           <TaskDocumentButton key={state.run.id} source={{ kind: 'run', run: state.run }} />
         </div>
       )}
+      {selectedSession && (
+        <div className="session-actions app-session-actions">
+          <button
+            disabled={selectedSession.managed?.busy}
+            onClick={() => {
+              setWorkspaceOpen(false);
+              setLauncherOpen(false);
+              setResumeSessionId(selectedSession.id);
+            }}
+          >
+            <Terminal size={14} />
+            이어서 작업
+          </button>
+          <button onClick={() => setTab('chat')}>
+            <MessageSquare size={14} />말 걸기
+          </button>
+        </div>
+      )}
       <div className="inspector-tabs">
         <button className={tab === 'activity' ? 'active' : ''} onClick={() => setTab('activity')}>
           <Radio size={14} />
@@ -780,6 +882,12 @@ export function App() {
           <FileCode2 size={14} />
           변경 파일
         </button>
+        {selectedSession && (
+          <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>
+            <MessageSquare size={14} />
+            대화
+          </button>
+        )}
       </div>
       <div className="inspector-content">
         {state.interactions
@@ -793,7 +901,9 @@ export function App() {
               }}
             />
           ))}
-        {tab === 'activity' ? (
+        {tab === 'chat' && selectedSession ? (
+          <SessionChat key={selectedSession.id} session={selectedSession} onReply={() => {}} />
+        ) : tab !== 'files' ? (
           <>
             {state.run && (
               <div className="current-task">
@@ -979,7 +1089,7 @@ export function App() {
           </button>
           <button className={view === 'history' ? 'active' : ''} onClick={() => setView('history')}>
             <History size={18} />
-            작업 기록<span className="count">{runs.length}</span>
+            작업 기록<span className="count">{allRuns.length}</span>
           </button>
           <button className={view === 'records' ? 'active' : ''} onClick={() => setView('records')}>
             <ScrollText size={18} />
@@ -1010,7 +1120,7 @@ export function App() {
               <span>
                 <strong>{providerName(id)}</strong>
                 <small>
-                  {observing ? '외부 세션' : seniorityLabels[actualTeam[id].seniority]} ·{' '}
+                  {observing ? '개별 세션' : seniorityLabels[actualTeam[id].seniority]} ·{' '}
                   {observing
                     ? `${observedSessions.filter((s) => s.provider === id).length}개`
                     : state.agents[id].waiting
@@ -1084,9 +1194,21 @@ export function App() {
             </strong>
           </div>
           <div className="topbar-right">
+            <button
+              className="open-workspace"
+              aria-label="전체 작업 기록 열기"
+              onClick={() => {
+                setHistoryScope('all');
+                setView('history');
+              }}
+            >
+              <History size={16} />
+              <span>작업 기록</span>
+            </button>
             {health?.features?.agentLauncher && (
               <button
                 className="open-workspace"
+                aria-label="새 동료"
                 disabled={!project || view === 'overview' || view === 'records'}
                 onClick={() => {
                   setWorkspaceOpen(false);
@@ -1094,11 +1216,13 @@ export function App() {
                   setLauncherOpen((v) => !v);
                 }}
               >
-                <Plus size={16} /> 새 동료
+                <Plus size={16} />
+                <span>새 동료</span>
               </button>
             )}
             <button
               className="open-workspace"
+              aria-label="코드 · 터미널"
               aria-expanded={workspaceOpen}
               disabled={!project || view === 'overview' || view === 'records'}
               title={
@@ -1113,16 +1237,17 @@ export function App() {
               }}
             >
               <Code2 size={16} />
-              코드 · 터미널
+              <span>코드 · 터미널</span>
             </button>
             <button
               className="open-workspace"
+              aria-label="하네스"
               disabled={!project || view === 'overview' || view === 'records'}
               title="이 레포의 앱 작업에 쓸 플러그인과 스킬"
               onClick={() => setHarnessOpen(true)}
             >
               <Puzzle size={16} />
-              하네스
+              <span>하네스</span>
             </button>
             <span className="connection-pill">
               <span className="presence online" />
@@ -1140,15 +1265,22 @@ export function App() {
         </header>
         {launcherOpen && project && (
           <AgentLauncher
-            key={project.root}
+            key={`launcher:${project.root}`}
             root={project.root}
             onClose={() => setLauncherOpen(false)}
+            onStarted={async (agent) => {
+              await switchProject(agent.root);
+              await refreshRuns();
+              setTargetSessionId(`launch-${agent.id}`);
+              setSelected(agent.provider);
+              setRunFocus(false);
+            }}
           />
         )}
         {workspaceOpen && project && (
           <Suspense fallback={<p role="status">작업 공간을 여는 중…</p>}>
             <WorkspacePanel
-              key={project.root}
+              key={`workspace:${project.root}`}
               root={project.root}
               run={state.run}
               changes={changes}
@@ -1222,7 +1354,7 @@ export function App() {
           <RecordsPage sessions={observation.sessions} />
         ) : view === 'office' ? (
           <ObservedOffice
-            key={project?.root ?? 'none'}
+            key={`office:${project?.root ?? 'none'}`}
             sessions={observedSessions}
             automatedCount={automatedHere}
             onRecords={() => setView('records')}
@@ -1283,33 +1415,47 @@ export function App() {
               <div>
                 <h1>작업 기록</h1>
                 <p>
-                  {project
-                    ? `${repositoryName(project.root)}의 최근 작업 ${runs.length}개를 보여드려요.`
-                    : '레포를 선택하면 해당 작업 기록을 볼 수 있어요.'}
+                  {historyScope === 'all'
+                    ? `모든 프로젝트의 최근 작업 ${historyRuns.length}개예요.`
+                    : `${project ? repositoryName(project.root) : '선택한 프로젝트'}에 관련된 최근 작업 ${historyRuns.length}개예요.`}{' '}
+                  추가 요청도 별도 기록으로 남아요.
                 </p>
               </div>
             </div>
-            {runs.length ? (
+            <button className="text-button" onClick={() => setCleanupOpen(true)}>
+              작업 폴더 정리
+            </button>
+            <label className="history-scope">
+              기록 범위
+              <select
+                aria-label="작업 기록 범위"
+                value={historyScope}
+                onChange={(e) => setHistoryScope(e.target.value as 'all' | 'project')}
+              >
+                <option value="all">전체 프로젝트</option>
+                <option value="project" disabled={!project}>
+                  현재 프로젝트 · 묶음 작업 포함
+                </option>
+              </select>
+            </label>
+            {historyRuns.length ? (
               <div className="history-list">
-                {runs.map((r) => (
+                {historyRuns.map((r) => (
                   <div className="history-document-row" key={r.id}>
-                    <button
-                      onClick={() => {
-                        void selectRun(r.id);
-                        setRunFocus(true);
-                        setView('office');
-                        setInspector(true);
-                      }}
-                    >
+                    <button onClick={() => void openHistoryRun(r)}>
                       <span className={`history-icon ${r.status === 'completed' ? 'done' : ''}`}>
                         {r.status === 'completed' ? <Check size={19} /> : <Code2 size={19} />}
                       </span>
                       <span>
-                        <strong>{r.prompt}</strong>
+                        <strong>
+                          {r.parentRunId ? '추가 요청 · ' : ''}
+                          {r.prompt}
+                        </strong>
                         <small>
                           {repositoryName(r.projectPath)} ·{' '}
                           {new Date(r.createdAt).toLocaleString('ko-KR')}
                         </small>
+                        {r.summary && <span className="history-summary">{r.summary}</span>}
                       </span>
                       <span className="history-status">{statusLabels[r.status]}</span>
                       <ChevronRight size={16} />
@@ -1331,8 +1477,25 @@ export function App() {
           </main>
         )}
       </div>
+      {cleanupOpen && (
+        <WorktreeCleanup
+          onClose={() => setCleanupOpen(false)}
+          onChanged={async () => {
+            await refreshRuns();
+            if (state.run) await selectRun(state.run.id);
+          }}
+        />
+      )}
       {harnessOpen && project && (
-        <HarnessPanel root={project.root} onClose={() => setHarnessOpen(false)} />
+        <HarnessPanel
+          executionMode={executionMode}
+          onUseIsolated={() => {
+            setExecutionMode('isolated');
+            setHarnessOpen(false);
+          }}
+          root={project.root}
+          onClose={() => setHarnessOpen(false)}
+        />
       )}
       {modal && (
         <div

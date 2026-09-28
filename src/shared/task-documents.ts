@@ -1,5 +1,63 @@
-import type { ObservedDetail } from './contracts.js';
+import type { Change, ObservedDetail, ObservedEvent, OfficeEvent, Run } from './contracts.js';
 import { documentReference, isMarkdown } from './documents.js';
+
+// Git's change list omits ignored reports and documents already committed during a task.
+// Keep explicit answer references as well, using the same workspace boundary as sessions.
+export function runDocuments(
+  run: Pick<Run, 'worktreePath' | 'summary'>,
+  events: OfficeEvent[],
+  changes: Change[],
+) {
+  const messages: ObservedEvent[] = [];
+  const add = (text: unknown) => {
+    if (typeof text === 'string' && text.trim())
+      messages.push({
+        id: '',
+        timestamp: '',
+        kind: 'message',
+        title: '',
+        detail: text,
+        activity: 'idle',
+      });
+  };
+  add(run.summary);
+  const streams = new Map<string, string>();
+  for (const event of events) {
+    const key = event.agentId ?? '';
+    if (event.type === 'phase.started') {
+      add(streams.get(key));
+      streams.delete(key);
+    }
+    if (event.type === 'message') {
+      if (event.payload.delta === true && typeof event.payload.text === 'string')
+        streams.set(key, (streams.get(key) ?? '') + event.payload.text);
+      else add(event.payload.text);
+    }
+    if (event.type === 'phase.completed' || event.type === 'agent.result') add(event.payload.text);
+    const item = event.payload.item;
+    if (
+      event.type === 'tool.completed' &&
+      item &&
+      typeof item === 'object' &&
+      'type' in item &&
+      item.type === 'agentMessage' &&
+      'text' in item
+    )
+      add(item.text);
+  }
+  for (const text of streams.values()) add(text);
+  const references = sessionDocuments(
+    { projectPath: run.worktreePath, cwd: run.worktreePath, events: messages },
+    true,
+  );
+  const deleted = new Set(changes.filter((c) => c.status === 'deleted').map((c) => c.path));
+  return [
+    ...new Set([
+      ...references.map((d) => d.path),
+      ...changes.filter((c) => isMarkdown(c.path)).map((c) => c.path),
+    ]),
+  ].filter((path) => !deleted.has(path));
+}
 
 // These are recorded references, not a claim that a tool call succeeded or owns the file.
 export function sessionDocuments(

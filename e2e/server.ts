@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, mkdtemp } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,13 @@ const make = (id: Provider): Adapter => ({
   probe: async () => ({ installed: true, authenticated: true, detail: '데모 fixture' }),
   close: async () => {},
   execute: async (input, emit, interact) => {
+    if (input.prompt.includes('개별 대화 통합'))
+      emit({
+        runId: input.runId,
+        agentId: id,
+        type: 'agent.session',
+        payload: { sessionId: input.resumeSessionId ?? randomUUID(), model: 'fixture-model' },
+      });
     if (
       input.prompt.includes('모두 한도 테스트') ||
       (input.prompt.includes('구현 한도 테스트') && id === 'codex') ||
@@ -90,6 +98,35 @@ const make = (id: Provider): Adapter => ({
         throw new Error('질문 응답 전달 실패');
     }
     await writeFile(join(input.cwd, 'hello.txt'), 'hello from the team\n');
+    if (input.prompt.includes('Git 제외 보고서 테스트')) {
+      await writeFile(join(input.cwd, '.gitignore'), 'reports/\n');
+      await mkdir(join(input.cwd, 'reports/private'), { recursive: true });
+      await writeFile(
+        join(input.cwd, 'reports/private/result-summary.md'),
+        '# 아티팩트 결과 보고서\n\nGit에서 제외된 보고서입니다.',
+      );
+      await writeFile(join(input.cwd, 'reports/private/earlier.md'), '# 앞서 작성한 보고서');
+      emit({
+        runId: input.runId,
+        agentId: id,
+        type: 'tool.completed',
+        payload: {
+          item: { type: 'agentMessage', text: '[앞선 보고서](reports/private/earlier.md)' },
+        },
+      });
+      // Keep reports discoverable beyond pagination and the recent-events window.
+      for (let i = 0; i < 510; i++)
+        emit({
+          runId: input.runId,
+          agentId: id,
+          type: 'tool.output',
+          payload: { text: '진행 중' },
+        });
+      return {
+        outcome: 'completed',
+        text: `[결과 보고서](${join(input.cwd, 'reports/private/result-summary.md')})를 작성했습니다.`,
+      };
+    }
     if (input.prompt.includes('문서 산출물 테스트'))
       await writeFile(
         join(input.cwd, 'REPORT.md'),
@@ -124,6 +161,24 @@ observation.start();
 const chat = createChatService({
   store,
   getSession: observation.get,
+  listSessions: () => observation.list().sessions,
+  // Stand-in for a direct turn: asks for one approval, then answers with the instruction.
+  direct: async (input, update) => {
+    update('지시를 읽고 있어요.', { model: 'fixture-model' });
+    const answer = await input.interact({
+      agentId: input.session.provider,
+      kind: 'approval',
+      title: '샘플 파일 수정 승인',
+      details: { file: 'hello.txt', text: input.text },
+    });
+    if (input.signal.aborted) return;
+    if ('decision' in answer && answer.decision === 'deny')
+      throw new Error('사용자가 작업을 거절했습니다.');
+    update(`지시대로 처리했어요: ${input.text}`, {
+      model: 'fixture-model',
+      sessionId: input.fork ? 'forked-fixture' : input.session.sessionId,
+    });
+  },
   respond: async (input, update) => {
     if (input.prompt.endsWith(JSON.stringify('오류 테스트')))
       throw new Error('샘플 공급자 연결 실패');

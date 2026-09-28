@@ -47,6 +47,17 @@
 Codex 옵션은 [공식 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)와 설치된 App Server JSON 스키마를 확인했다. Claude 옵션은 설치된 SDK 타입 선언을 확인했다. 검증한 버전은 [검증 기록](verification.md)을 참고한다.
 
 
+## 동료에게 말 걸기 (지시)
+
+대화 탭의 **지시 · 실제 실행** 모드는 기록 질문과 달리 동료가 실제로 실행한다. 설계: `docs/superpowers/specs/2026-09-26-talk-to-coworkers-design.md`.
+
+- `POST /api/observed/:id/say`: `{ "text": "...", "channel": "terminal" | "direct" | "auto" }`. 수락 시 202와 대화 전체를 반환한다. `GET /api/observed/:id/chat`는 `channels`(이어가기 터미널 열림, 다른 곳 실행 중, 복제 세션, 다음에 쓰일 채널)와 대기 중 `interactions`를 함께 준다.
+- **터미널 채널**: 앱이 연 이어가기 PTY가 있으면 거기에 텍스트를 친다(여러 줄은 bracketed paste, 마지막에 Enter). 없으면 이어가기 PTY를 먼저 열고(다른 곳에서 실행 중이면 복제) 출력이 잠잠해진 뒤 친다. 답변은 관측 로그에서 **같은 본문의 요청 이벤트** 뒤에 오는 메시지·완료 이벤트로 채운다. 복제로 새 세션이 생기면 거기서 찾고 `viaSessionId`로 표시한다.
+- **직접 채널**: PTY가 없으면 Claude Agent SDK `resume`(실행 중이면 `forkSession`)이나 Codex app-server `thread/resume`(실행 중이면 `thread/fork`)으로 앱이 세션을 이어받아 turn 하나를 돌린다. 승인·질문은 앱 작업과 같은 규칙으로 `interactions`에 쌓이고 `POST /api/observed/:id/chat/answer`로 답한다. 자동 승인은 없다. 복제된 세션 id는 저장되어 다음 지시가 그 세션으로 이어진다.
+- `GET/POST /api/settings/direct`: 이어가기 터미널이 띄울 명령(`{ commands: { claude, codex } }`). 래퍼 스크립트 이름을 적으면 그 설정으로 이어간다. 공백 없는 실행 파일 이름만 받는다.
+- 한 세션에는 한 번에 하나의 답변(질문·지시)만 진행한다. 지시 응답 대기는 30분까지이며, 취소는 기다림을 멈출 뿐 터미널의 작업은 중단하지 않는다. 퇴근한 동료에게는 보내지 않는다.
+- 경계는 그대로다: 사용자가 자기 터미널에서 띄운 원래 프로세스에는 아무것도 보내지 않는다. 말이 닿는 것은 앱이 소유한 PTY와 앱이 이어받은 turn뿐이다.
+
 ## 세션 재개와 퇴근
 
 `feat/session-resume` 워크트리의 미완성 구현을 통합했다. 설치된 `codex resume --help`, `codex fork --help`, `claude --help`로 옵션을 확인했다.

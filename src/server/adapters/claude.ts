@@ -56,41 +56,57 @@ export function createClaudeAdapter({
       const abort = () => abortController.abort();
       input.signal.addEventListener('abort', abort, { once: true });
       if (input.signal.aborted) abort();
+      const personal = input.executionMode !== 'isolated';
       let text = '';
       let stderr = '';
       let providerError = '';
       let limited = false;
       try {
         // Nothing chosen keeps the run fully isolated: no plugins, no project instructions.
-        const harness = input.harness
-          ? await prepareClaudeHarness(input.harness, {
-              claudeHome,
-              harnessDir: input.harnessDir ?? join(tmpdir(), 'pixel-harness', input.runId),
-              cwd: input.cwd,
-            })
-          : { plugins: [], promptPrefix: '' };
+        const harness =
+          !personal && input.harness
+            ? await prepareClaudeHarness(input.harness, {
+                claudeHome,
+                harnessDir: input.harnessDir ?? join(tmpdir(), 'pixel-harness', input.runId),
+                cwd: input.cwd,
+              })
+            : { plugins: [], promptPrefix: '' };
         const stream = query({
           prompt: harness.promptPrefix + input.prompt,
           options: {
             cwd: input.cwd,
+            env: { ...process.env, PIXEL_MANAGED_QUESTIONS: '1' },
+            ...(personal
+              ? {
+                  pathToClaudeCodeExecutable: 'sy',
+                  systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+                }
+              : {}),
+            resume: input.resumeSessionId,
+            forkSession: input.forkSession,
             model: input.profile.model || undefined,
             abortController,
-            settingSources: [],
+            settingSources: personal ? ['user', 'project', 'local'] : [],
             // Chosen plugins arrive with their hooks and MCP servers stripped (see harness.ts).
-            plugins: harness.plugins,
-            permissionMode: 'default',
+            plugins: personal ? undefined : harness.plugins,
+            permissionMode:
+              personal && input.approvalMode !== 'manual' ? 'bypassPermissions' : 'default',
+            allowDangerouslySkipPermissions: personal,
             includePartialMessages: true,
-            maxTurns: 30,
-            tools:
-              input.role === 'reviewer'
+            maxTurns: personal ? undefined : 30,
+            tools: personal
+              ? undefined
+              : input.role === 'reviewer'
                 ? ['Read', 'Glob', 'Grep', 'Bash', 'AskUserQuestion']
                 : ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'AskUserQuestion'],
-            sandbox: {
-              enabled: true,
-              autoAllowBashIfSandboxed: false,
-              allowUnsandboxedCommands: false,
-              ...(input.role === 'reviewer' ? { filesystem: { denyWrite: [input.cwd] } } : {}),
-            },
+            sandbox: personal
+              ? undefined
+              : {
+                  enabled: true,
+                  autoAllowBashIfSandboxed: false,
+                  allowUnsandboxedCommands: false,
+                  ...(input.role === 'reviewer' ? { filesystem: { denyWrite: [input.cwd] } } : {}),
+                },
             ...(input.role === 'reviewer'
               ? { outputFormat: { type: 'json_schema' as const, schema: reviewJsonSchema() } }
               : {}),
@@ -112,13 +128,41 @@ export function createClaudeAdapter({
                           permissionDecisionReason: reason,
                         },
                       });
+                      // Permission callbacks are skipped by native bypass mode; questions still
+                      // need a real answer before the tool runs.
+                      if (personal && tool === 'AskUserQuestion') {
+                        const answer = await interact({
+                          runId: input.runId,
+                          agentId: 'claude',
+                          kind: 'question',
+                          title: 'Claude의 질문',
+                          details: { tool, ...args },
+                        });
+                        if (!('answers' in answer)) return deny('질문이 취소되었습니다.');
+                        return {
+                          hookSpecificOutput: {
+                            hookEventName: 'PreToolUse',
+                            permissionDecision: 'allow',
+                            updatedInput: {
+                              ...args,
+                              answers: Object.fromEntries(
+                                Object.entries(answer.answers).map(([k, v]) => [k, v.join(', ')]),
+                              ),
+                            },
+                          },
+                        };
+                      }
                       if (
                         input.role === 'reviewer' &&
                         ['Edit', 'Write', 'NotebookEdit'].includes(tool)
                       )
                         return deny('검토자는 소스 파일을 수정할 수 없습니다.');
                       const path = args.file_path ?? args.path;
-                      if (typeof path === 'string' && !(await allowedFile(input.cwd, path)))
+                      if (
+                        !personal &&
+                        typeof path === 'string' &&
+                        !(await allowedFile(input.cwd, path))
+                      )
                         return deny('작업 폴더 안의 파일만 접근할 수 있습니다.');
                       emit({
                         runId: input.runId,
@@ -126,8 +170,27 @@ export function createClaudeAdapter({
                         type: 'activity',
                         payload: { activity: activityForTool(tool), tool, input: args },
                       });
+                      // sy itself enables bypass mode. Enforce the app's manual setting
+                      // here, before execution, instead of relying on canUseTool.
+                      if (personal && input.approvalMode === 'manual') {
+                        const answer = await interact({
+                          runId: input.runId,
+                          agentId: 'claude',
+                          kind: 'approval',
+                          title: String(args.command ?? `${tool} 작업 승인`),
+                          details: { tool, ...args },
+                        });
+                        if (!('decision' in answer) || answer.decision !== 'approve')
+                          return deny('사용자가 작업을 거절했습니다.');
+                        return {
+                          hookSpecificOutput: {
+                            hookEventName: 'PreToolUse',
+                            permissionDecision: 'allow',
+                          },
+                        };
+                      }
                       // Ask on every shell invocation, including otherwise auto-approved commands.
-                      if (tool === 'Bash')
+                      if (!personal && tool === 'Bash')
                         return {
                           hookSpecificOutput: {
                             hookEventName: 'PreToolUse',

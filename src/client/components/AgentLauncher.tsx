@@ -1,12 +1,25 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { api } from '../api';
+import type { ProjectSummary } from '../../shared/contracts';
 import type { LaunchedAgent, LaunchInput } from '../../shared/launcher';
 import './agent-launcher.css';
 const TerminalPane = lazy(() =>
   import('../workspace/TerminalPane').then((m) => ({ default: m.TerminalPane })),
 );
-export function AgentLauncher({ root, onClose }: { root: string; onClose: () => void }) {
+export function AgentLauncher({
+  root,
+  onClose,
+  onStarted,
+}: {
+  root: string;
+  onClose: () => void;
+  onStarted: (agent: LaunchedAgent) => void | Promise<void>;
+}) {
+  const [folder, setFolder] = useState(root);
+  const [folders, setFolders] = useState<ProjectSummary[]>([]);
+  const [model, setModel] = useState('');
+  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
   const [agents, setAgents] = useState<LaunchedAgent[]>([]);
   const [selected, setSelected] = useState<LaunchedAgent>();
   const [provider, setProvider] = useState<LaunchInput['provider']>('claude');
@@ -29,18 +42,51 @@ export function AgentLauncher({ root, onClose }: { root: string; onClose: () => 
       stopped = true;
     };
   }, [root]);
+  useEffect(() => {
+    api<ProjectSummary[]>('/projects').then(setFolders, () => {});
+  }, []);
+  useEffect(() => {
+    let active = true;
+    setModels([]);
+    api<{ models: { id: string; label: string }[] }>(`/models/${provider}`).then(
+      (r) => {
+        if (active) setModels(r.models);
+      },
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, [provider]);
+  useEffect(() => {
+    const close = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    addEventListener('keydown', close);
+    return () => removeEventListener('keydown', close);
+  }, [onClose]);
   const start = async () => {
     setPending(true);
     setError('');
-    const key = JSON.stringify({ root, provider, harness, prompt });
+    const key = JSON.stringify({ root: folder, provider, harness, prompt, model });
     const id = request?.key === key ? request.id : crypto.randomUUID();
     setRequest({ key, id });
     try {
-      const agent = await api<LaunchedAgent>('/agents', { id, root, provider, harness, prompt });
+      const chosen = await api<{ root: string }>('/launch-folders', { root: folder.trim() });
+      const agent = await api<LaunchedAgent>('/agents', {
+        id,
+        root: chosen.root,
+        provider,
+        harness,
+        prompt,
+        model: model.trim() || undefined,
+      });
       setAgents((items) => [...items.filter((a) => a.id !== agent.id), agent]);
       setSelected(agent);
       setPrompt('');
       setRequest(undefined);
+      onClose();
+      await onStarted(agent);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -69,7 +115,7 @@ export function AgentLauncher({ root, onClose }: { root: string; onClose: () => 
         <Suspense fallback={<p role="status">터미널을 불러오는 중…</p>}>
           <TerminalPane
             key={selected.id}
-            root={root}
+            root={selected.root}
             storageKey={`pixel.launch:${selected.id}`}
             recover={() => api(`/terminals/${selected.terminal.id}`)}
             label="새 동료 터미널"
@@ -90,13 +136,32 @@ export function AgentLauncher({ root, onClose }: { root: string; onClose: () => 
           <p>
             선택한 폴더에서 새 세션을 시작합니다. 평소 쓰는 하네스의 설정과 권한이 그대로 적용돼요.
           </p>
-          <code>{root}</code>
+          <label>
+            작업 폴더
+            <input
+              list="launcher-folders"
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              placeholder="폴더의 절대 경로"
+              required
+              disabled={pending}
+            />
+            <datalist id="launcher-folders">
+              {folders.map((p) => (
+                <option key={p.root} value={p.root} />
+              ))}
+            </datalist>
+          </label>
+          <small>연결된 폴더를 고르거나 새 폴더의 절대 경로를 입력하세요.</small>
           <div className="launcher-options">
             <label>
               동료
               <select
                 value={provider}
-                onChange={(e) => setProvider(e.target.value as LaunchInput['provider'])}
+                onChange={(e) => {
+                  setProvider(e.target.value as LaunchInput['provider']);
+                  setModel('');
+                }}
               >
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
@@ -114,6 +179,24 @@ export function AgentLauncher({ root, onClose }: { root: string; onClose: () => 
             </label>
           </div>
           <label>
+            모델
+            <input
+              list="launcher-models"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="개인 설정의 기본 모델"
+              maxLength={150}
+              disabled={pending}
+            />
+            <datalist id="launcher-models">
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </datalist>
+          </label>
+          <label>
             처음 맡길 일
             <textarea
               value={prompt}
@@ -128,7 +211,11 @@ export function AgentLauncher({ root, onClose }: { root: string; onClose: () => 
               {error}
             </p>
           )}
-          <button className="primary" disabled={pending || !prompt.trim()} type="submit">
+          <button
+            className="primary"
+            disabled={pending || !prompt.trim() || !folder.trim()}
+            type="submit"
+          >
             {pending ? '시작 중…' : '동료 시작'}
           </button>
         </form>

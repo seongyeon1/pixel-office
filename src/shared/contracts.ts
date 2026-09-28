@@ -12,6 +12,10 @@ export type RunStatus =
   | 'cancelled'
   | 'interrupted'
   | 'needs_attention';
+export type ExecutionMode = 'personal' | 'isolated';
+export type RunSessions = Partial<
+  Record<Provider, Partial<Record<'implementer' | 'reviewer', string>>>
+>;
 export type Mode = 'collaborate' | Provider;
 export interface AgentProfile {
   seniority: Seniority;
@@ -45,6 +49,14 @@ export interface RunRepo {
 }
 export interface Run {
   id: string;
+  // A follow-up is a separate history entry using the same preserved workspace.
+  parentRunId?: string;
+  removedWorktrees?: string[];
+  executionMode?: ExecutionMode;
+  sessions?: RunSessions;
+  pullRequests?: string[];
+  pullRequestRequested?: boolean;
+  initialChanges?: Record<string, string>;
   projectPath: string;
   // The folder the coworkers work in: one repository's worktree, or, for a bundle run, the
   // folder holding one worktree per repository (then `repos` lists them and baseCommit is '').
@@ -105,6 +117,8 @@ export interface Interaction {
   resolved: boolean;
 }
 export type Answer = { decision: 'approve' | 'deny' } | { answers: Record<string, string[]> };
+export const approvalSettingsSchema = z.object({ mode: z.enum(['manual', 'auto']) }).strict();
+export type ApprovalSettings = z.infer<typeof approvalSettingsSchema>;
 export const reviewSchema = z.object({
   verdict: z.enum(['pass', 'changes_requested', 'inconclusive']),
   summary: z.string(),
@@ -136,6 +150,10 @@ export type HarnessCatalog = Record<
   { plugins: HarnessItem[]; skills: HarnessItem[]; error?: string }
 >;
 export interface PhaseInput {
+  executionMode?: ExecutionMode;
+  resumeSessionId?: string;
+  forkSession?: boolean;
+  approvalMode?: 'manual' | 'auto';
   runId: string;
   cwd: string;
   prompt: string;
@@ -179,6 +197,7 @@ const profileSchema = z.object({
   personaVersion: z.literal('1'),
 });
 export const startSchema = z.object({
+  executionMode: z.enum(['personal', 'isolated']).optional(),
   projectPath: z.string().min(1),
   // For a folder of repositories: the repositories (absolute paths inside it) to bundle.
   repositories: z.array(z.string().min(1)).max(50).optional(),
@@ -188,6 +207,7 @@ export const startSchema = z.object({
   team: z.object({ codex: profileSchema, claude: profileSchema }),
 });
 export type StartInput = z.infer<typeof startSchema>;
+export const followUpSchema = z.object({ prompt: z.string().trim().min(1).max(20000) }).strict();
 export const answerSchema = z.union([
   z.object({ decision: z.enum(['approve', 'deny']) }),
   z.object({ answers: z.record(z.string(), z.array(z.string().max(10000))) }),
@@ -240,6 +260,15 @@ export interface ObservedEvent {
   detail: string;
 }
 export interface ObservedSession {
+  launched?: { launchId: string; terminalId: string; resumable: boolean };
+  managed?: {
+    runId: string;
+    role: 'implementer' | 'reviewer';
+    executionMode: ExecutionMode;
+    resumable: boolean;
+    workspaceRemoved?: boolean;
+    busy: boolean;
+  };
   id: string;
   sessionId: string;
   provider: Provider;
@@ -276,6 +305,9 @@ export interface ObservedDetail extends ObservedSession {
   events: ObservedEvent[];
 }
 
+// records: a separate answer read from the logs. terminal: typed into the app's resume PTY.
+// direct: a turn the app runs on the session itself through the SDK or app server.
+export type ChatChannel = 'records' | 'terminal' | 'direct';
 export interface ChatMessage {
   id: string;
   sessionId: string;
@@ -286,9 +318,49 @@ export interface ChatMessage {
   error?: string;
   contextAt?: string;
   model?: string;
+  // Missing on messages written before channels existed, which were all record answers.
+  channel?: ChatChannel;
+  // Provider session id the instruction actually reached when the original was forked.
+  viaSessionId?: string;
+}
+// How the app reaches a coworker: the CLI (or wrapper script) that resume terminals run.
+// Direct turns use the app's approval settings, like app runs do.
+export interface DirectSettings {
+  commands: Record<Provider, string>;
+}
+export const defaultDirectSettings = (): DirectSettings => ({
+  commands: { claude: 'claude', codex: 'codex' },
+});
+// An executable name only: it is interpolated into a shell command.
+const commandSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[A-Za-z0-9_.\/-]+$/, '명령은 공백 없는 실행 파일 이름만 쓸 수 있어요.');
+export const directSettingsSchema = z.object({
+  commands: z.object({ claude: commandSchema, codex: commandSchema }),
+});
+export interface ConversationChannels {
+  // An app-owned resume terminal is open for this session.
+  terminal: boolean;
+  // The original process may still be running elsewhere, so an instruction forks the session.
+  running: boolean;
+  // A forked session already carries earlier instructions; later ones continue there.
+  viaSessionId?: string;
+  // The channel an instruction would use right now.
+  next: 'terminal' | 'direct';
+  // A message of some channel is in progress.
+  busy?: ChatChannel;
+  blockedReason?: string;
+  fresh?: boolean;
 }
 export interface SessionConversation {
   mode: 'records';
-  directAvailable: false;
+  // Instructions reach the coworker (terminal or direct channel), not only record answers.
+  directAvailable: boolean;
   messages: ChatMessage[];
+  channels?: ConversationChannels;
+  // Approvals and questions a direct turn is waiting on.
+  interactions?: Interaction[];
 }

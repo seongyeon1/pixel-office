@@ -1,8 +1,10 @@
-.agent-launcher {
+.workspace-dock.agent-launcher {
+  height: min(680px, 75vh);
   max-height: 75vh;
-  overflow-y: auto;
+  overflow: hidden;
 }
 .launcher-tabs {
+  flex-shrink: 0;
   display: flex;
   gap: 6px;
   padding: 10px 16px;
@@ -21,6 +23,9 @@
   background: #e2e9dc;
 }
 .launcher-form {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -50,6 +55,7 @@
   flex: 1;
   min-width: 120px;
 }
+.launcher-form input,
 .launcher-form select,
 .launcher-form textarea {
   width: 100%;

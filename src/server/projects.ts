@@ -262,3 +262,29 @@ export function isWithin(root: string, target: string) {
   const rel = relative(root, target);
   return rel === '' || (!rel.startsWith('..' + '/') && rel !== '..' && !isAbsolute(rel));
 }
+
+// Personal runs use the same checkout and local environment as launching sy/syc there.
+export async function personalWorkspace(project: Project, selected?: string[]) {
+  if (!project.repositories)
+    return {
+      path: project.root,
+      branch: (await git(project.root, ['branch', '--show-current'])).trim(),
+      baseCommit: project.head,
+      repos: undefined,
+    };
+  if (!selected?.length) throw new Error('함께 작업할 저장소를 골라 주세요.');
+  const repos: RunRepo[] = [];
+  for (const path of [...new Set(selected)]) {
+    const canonical = await realpath(path);
+    const entry = project.repositories.find((r) => r.path === canonical);
+    if (!entry) throw new Error('고른 폴더 안의 저장소만 선택해 주세요.');
+    repos.push({
+      root: canonical,
+      worktreePath: canonical,
+      name: relative(project.root, canonical),
+      baseCommit: entry.head,
+      branch: entry.branch,
+    });
+  }
+  return { path: project.root, branch: '', baseCommit: '', repos };
+}

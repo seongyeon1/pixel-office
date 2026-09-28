@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 const GIVE_UP_MS = Number(process.env.PIXEL_HOOK_GIVE_UP_MS ?? 570_000);
 const quietly = () => process.exit(0);
+// App-managed SDK runs already deliver questions through their own interaction panel.
+if (process.env.PIXEL_MANAGED_QUESTIONS === '1') quietly();
 try {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;

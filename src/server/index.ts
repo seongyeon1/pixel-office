@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { createChatService } from './chat.js';
 import { createNativeChatResponder } from './adapters/chat.js';
+import { createNativeDirectResponder } from './adapters/direct.js';
+import { approvalSettings } from './approvals.js';
 import { createStore } from './store.js';
 import { createCodexAdapter } from './adapters/codex.js';
 import { createClaudeAdapter } from './adapters/claude.js';
@@ -22,13 +24,19 @@ store.interruptActive();
 const adapters = { codex: createCodexAdapter(), claude: createClaudeAdapter() };
 const orchestrator = createOrchestrator({ store, adapters, dataDir });
 const observation = createObservation({
-  excludeRoots: [resolve(dataDir, 'workspaces'), resolve(dataDir, 'chat')],
+  excludeRoots: [resolve(dataDir, 'chat')],
 });
 observation.start();
 const chat = createChatService({
   store,
   getSession: observation.get,
+  listSessions: () => observation.list().sessions,
   respond: createNativeChatResponder(resolve(dataDir, 'chat')),
+  direct: createNativeDirectResponder({
+    dataDir,
+    getApprovalMode: () => approvalSettings(store).mode,
+    getHarness: (root, provider) => store.getHarness(root)[provider],
+  }),
 });
 // The AskUserQuestion hook finds the app through this file; its token survives restarts so an
 // installed hook keeps working, while the URL follows the current port.
@@ -83,7 +91,9 @@ const url = `${origin}/#token=${token}`;
 await writeFile(resolve(dataDir, 'connection.json'), JSON.stringify({ url, pid: process.pid }), {
   mode: 0o600,
 });
-console.log(`\n  Pixel Office · 에이전트들의 작은 사무실\n  ${url}\n`);
+console.log(
+  `\n  Pixel Office · 에이전트들의 작은 사무실\n  ${process.env.PIXEL_BACKGROUND === '1' ? '백그라운드 실행 중' : url}\n`,
+);
 let closing = false;
 const shutdown = async () => {
   if (closing) return;

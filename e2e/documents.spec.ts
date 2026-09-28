@@ -83,6 +83,7 @@ test('a completed run opens its Markdown artifact in the worktree and shows its 
   page,
 }) => {
   await connect(page);
+  await page.getByLabel('실행 환경', { exact: true }).selectOption('isolated');
   await page.getByLabel('작업 내용').fill('문서 산출물 테스트');
   await page.getByRole('button', { name: '작업 시작', exact: true }).click();
   await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
@@ -121,6 +122,7 @@ test('a completed run opens its Markdown artifact in the worktree and shows its 
 
 test('task documents open directly from history and show only this run files', async ({ page }) => {
   await connect(page);
+  await page.getByLabel('실행 환경', { exact: true }).selectOption('isolated');
   await page.getByLabel('작업 내용').fill('문서 산출물 테스트');
   await page.getByRole('button', { name: '작업 시작', exact: true }).click();
   await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
@@ -152,6 +154,41 @@ test('task documents open directly from history and show only this run files', a
   await expect(
     page.locator('.history-document-row').first().getByRole('button', { name: '작업 문서 보기' }),
   ).toBeFocused();
+});
+
+test('an ignored report linked in the answer opens from the task and its history', async ({
+  page,
+}) => {
+  await connect(page);
+  await page.getByLabel('실행 환경', { exact: true }).selectOption('isolated');
+  await page.getByLabel('실행 방식', { exact: true }).selectOption('codex');
+  await page.getByLabel('작업 내용').fill('Git 제외 보고서 테스트');
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
+  await page.getByRole('button', { name: '승인', exact: true }).click();
+  await expect(page.locator('.run-result.success')).toBeVisible();
+  await page
+    .locator('.inspector')
+    .getByRole('button', { name: '작업 문서 보기', exact: true })
+    .click();
+  const dialog = page.getByRole('dialog', { name: '이 작업의 문서' });
+  await expect(dialog.getByRole('heading', { name: '아티팩트 결과 보고서' })).toBeVisible();
+  await expect(
+    dialog.getByRole('button', { name: '파일 reports/private/result-summary.md', exact: true }),
+  ).toBeVisible();
+  await dialog
+    .getByRole('button', { name: '파일 reports/private/earlier.md', exact: true })
+    .click();
+  await expect(dialog.getByRole('heading', { name: '앞서 작성한 보고서' })).toBeVisible();
+  await dialog.getByRole('button', { name: '작업 문서 닫기' }).click();
+  await page.getByRole('button', { name: /^작업 기록/ }).click();
+  await page
+    .locator('.history-document-row')
+    .first()
+    .getByRole('button', { name: '작업 문서 보기' })
+    .click();
+  await expect(dialog.getByRole('heading', { name: '아티팩트 결과 보고서' })).toBeVisible();
+  await page.screenshot({ path: `/tmp/pixel-ignored-report-${test.info().project.name}.png` });
 });
 
 test('a coworker document is opened from its task, with earlier requests kept separate', async ({

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { sessionDocuments } from '../src/shared/task-documents';
-import type { ObservedEvent } from '../src/shared/contracts';
+import { runDocuments, sessionDocuments } from '../src/shared/task-documents';
+import type { ObservedEvent, OfficeEvent, Change } from '../src/shared/contracts';
 const e = (kind: ObservedEvent['kind'], detail: string, title = ''): ObservedEvent => ({
   id: '',
   timestamp: '',
@@ -10,6 +10,44 @@ const e = (kind: ObservedEvent['kind'], detail: string, title = ''): ObservedEve
   activity: 'idle',
 });
 const session = { projectPath: '/repo', cwd: '/repo/sub' };
+test('run documents resolve both providers answers and streamed links, deduplicate and exclude deleted or outside files', () => {
+  const event = (
+    type: string,
+    payload: OfficeEvent['payload'],
+    agentId: 'codex' | 'claude' = 'codex',
+  ): OfficeEvent => ({
+    eventId: '',
+    sequence: 1,
+    runId: 'run',
+    timestamp: '',
+    agentId,
+    type,
+    payload,
+  });
+  const events = [
+    event('message', { delta: true, text: '[Streaming](/repo/reports/' }),
+    event('message', { delta: true, text: 'stream.md)' }),
+    event('tool.completed', {
+      item: { type: 'agentMessage', text: '[Report](/repo/reports/result.md)' },
+    }),
+    event('agent.result', { text: '[Review](reports/review.md)' }, 'claude'),
+    event('phase.completed', {
+      text: '[Report](reports/result.md) `removed.md` [External](/outside/report.md) [Web](https://example.com/a.md)',
+    }),
+    event('tool.completed', { text: '[Read result](unrelated.md)' }),
+  ];
+  const changes = [
+    { path: 'reports/result.md', status: 'modified' },
+    { path: 'changed.md', status: 'added' },
+    { path: 'removed.md', status: 'deleted' },
+  ] as Change[];
+  expect(runDocuments({ worktreePath: '/repo' }, events, changes)).toEqual([
+    'reports/result.md',
+    'reports/review.md',
+    'reports/stream.md',
+    'changed.md',
+  ]);
+});
 test('session documents belong to the latest request and exclude reads, commands and other work', () => {
   const events = [
     e('request', '이전 일'),

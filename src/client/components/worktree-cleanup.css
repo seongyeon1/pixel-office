@@ -1,0 +1,72 @@
+.worktree-cleanup {
+  width: min(720px, 94vw);
+  max-height: 85vh;
+  overflow: auto;
+}
+.worktree-cleanup header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.worktree-cleanup > p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.worktree-cleanup ul {
+  padding: 0;
+  list-style: none;
+}
+.worktree-cleanup li {
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.worktree-cleanup li > strong,
+.worktree-cleanup code,
+.worktree-cleanup small {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-bottom: 8px;
+}
+.worktree-cleanup code {
+  font-size: 11px;
+}
+.worktree-cleanup small,
+.worktree-cleanup li p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.worktree-cleanup pre {
+  max-height: 160px;
+  overflow: auto;
+  font-size: 11px;
+}
+.worktree-cleanup button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+}
+.cleanup-confirm {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fff3e5;
+  border-radius: 8px;
+}
+.cleanup-confirm label {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  align-items: flex-start;
+}
+.cleanup-confirm input {
+  width: auto;
+}
+.cleanup-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

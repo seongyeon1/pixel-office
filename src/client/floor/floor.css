@@ -1,38 +1,114 @@
-/* One office floor. Coordinates come from layout.ts; this file only paints them. */
+/* One office floor. Coordinates come from layout.ts; this file only paints them, in the warm
+   pixel style of the original two-desk office: a brick floor, a glazed back wall, wooden furniture
+   and rugs that mark each space. */
 .floor-viewport {
   width: 100%;
   min-width: 0;
   overflow: hidden;
+  padding: 4px 18px 18px 4px;
+  box-sizing: border-box;
+}
+/* The building floats on the page: walls around the floor and a stepped shadow behind it. */
+.floor-building {
+  position: relative;
+  isolation: isolate;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 0 8px;
+  background: #c4b598;
+  border-radius: 3px;
+  box-shadow:
+    7px 8px 0 #c7cec4,
+    14px 16px 0 #d6dbd5;
+}
+.floor-wall {
+  position: relative;
+  height: 62px;
+  margin: 0 -8px;
+  background: #abbaa6;
+  box-shadow:
+    inset 0 -7px #94a58f,
+    inset 0 -14px #becbb6;
+}
+.floor-wall::before {
+  content: '';
+  position: absolute;
+  left: 150px;
+  right: 140px;
+  top: 0;
+  bottom: 0;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='230' height='62'><rect x='38' y='2' width='154' height='54' fill='%2391a6a0'/><rect x='43' y='6' width='144' height='46' fill='%23d7e8e2'/><rect x='48' y='10' width='64' height='38' fill='%23b9d2ca'/><rect x='118' y='10' width='64' height='38' fill='%23c4ddd5'/><rect x='112' y='5' width='6' height='48' fill='%23f0f1dd'/><rect x='51' y='13' width='3' height='24' fill='%23e5f0e8'/><rect x='34' y='56' width='162' height='6' fill='%23ece9d7'/></svg>")
+    center top / 230px 62px repeat-x;
+}
+.floor-board {
+  position: absolute;
+  left: 22px;
+  top: 6px;
+  width: 112px;
+  height: 46px;
+  box-sizing: border-box;
+  border: 4px solid #927d67;
+  background:
+    linear-gradient(#b77262, #b77262) 16px 4px / 4px 4px no-repeat,
+    linear-gradient(#768e74, #768e74) 50px 1px / 4px 4px no-repeat,
+    linear-gradient(#eff0d9, #eff0d9) 8px 8px / 24px 24px no-repeat,
+    linear-gradient(#dae0c5, #dae0c5) 40px 4px / 24px 28px no-repeat,
+    linear-gradient(#e8d4c1, #e8d4c1) 72px 10px / 24px 24px no-repeat,
+    #c4ac8b;
+}
+.floor-frame {
+  position: absolute;
+  right: 26px;
+  top: 12px;
+  padding: 6px 14px;
+  border: 4px solid #98aaa2;
+  background: #f2f0df;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #718574;
 }
 .floor {
   position: relative;
   margin: 0 auto;
-  border: 3px solid #7f8f78;
-  border-radius: 10px;
-  background-color: #e8e2d2;
-  background-image:
-    linear-gradient(#ddd5c1 1px, transparent 1px),
-    linear-gradient(90deg, #ddd5c1 1px, transparent 1px);
-  background-size: 24px 24px;
-  box-sizing: content-box;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='112' height='54'><rect width='112' height='54' fill='%23e5d6bd'/><path d='M0 .5h112M0 27.5h112' stroke='%23d5c4a9'/><path d='M.5 0v27M56.5 27v27' stroke='%23dac9af'/></svg>")
+    0 0 / 112px 54px;
   overflow: hidden;
 }
+/* The front wall: a low ledge with the doorway at the foot of the spine. */
+.floor-base {
+  position: relative;
+  height: 24px;
+  margin: 0 -8px;
+  background: linear-gradient(#b19c7e 0 10px, #c0ab8b 10px);
+}
+.floor-base > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  margin-left: 8px;
+  background: linear-gradient(#ecefe9 0 12px, #e1e6dd 12px);
+  box-shadow:
+    inset 3px 0 #d3d8cf,
+    inset -3px 0 #d3d8cf;
+}
+/* Walkways: the spine and the corridors are a lighter runner across the bricks. */
 .floor-spine {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  background: #d9d0ba;
-  box-shadow: inset -3px 0 #c8bea6;
+  background: #dccfb4;
+  box-shadow: inset -3px 0 #cdbf9f;
 }
 .floor-corridor {
   position: absolute;
   right: 0;
   height: 56px;
-  background: #d9d0ba;
+  background: #dccfb4;
   box-shadow:
-    inset 0 3px #c8bea6,
-    inset 0 -3px #c8bea6;
+    inset 0 3px #cdbf9f,
+    inset 0 -3px #cdbf9f;
 }
 .floor-corridor::after {
   content: '';
@@ -40,79 +116,138 @@
   left: 0;
   right: 0;
   top: 27px;
-  border-top: 2px dashed #c8bea6;
+  border-top: 2px dashed #cdbf9f;
 }
 .floor-entrance {
   position: absolute;
-  left: 0;
+  left: 8px;
   height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  color: #47613b;
-  background: #c7dab9;
-  border-top: 3px solid #8fae80;
-  border-bottom: 3px solid #8fae80;
+  color: #5f7259;
+  background: #ecefe9;
+  border: 3px solid #cfd6c9;
+  border-radius: 3px;
+  box-sizing: border-box;
 }
+/* Potted plants in the corners of the floor. */
+.floor-plant {
+  position: absolute;
+  width: 56px;
+  height: 62px;
+  z-index: 1;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='62'><rect x='17' y='43' width='22' height='18' fill='%23b79074'/><rect x='14' y='40' width='28' height='7' fill='%23d4b496'/><rect x='25' y='13' width='6' height='31' fill='%236d8060'/><rect x='5' y='13' width='17' height='15' fill='%23718867'/><rect x='12' y='3' width='18' height='19' fill='%238ca579'/><rect x='32' y='4' width='19' height='17' fill='%23749467'/><rect x='28' y='19' width='23' height='12' fill='%2391ab7d'/><rect x='3' y='22' width='18' height='12' fill='%2394ac7e'/></svg>")
+    center / contain no-repeat;
+  pointer-events: none;
+}
+.floor-plant.corner {
+  right: 6px;
+  bottom: 14px;
+  transform: scale(1.3);
+  transform-origin: bottom right;
+}
+.floor-plant.lobby {
+  left: 84px;
+  bottom: 12px;
+}
+/* Every space is a rug on the bricks: repositories grey-green, the meeting room lilac, the
+   lounge green, the records room warm. Names sit on a small plaque; facilities carry a caption. */
 .floor-cell {
   position: absolute;
   box-sizing: border-box;
-  border: 3px solid #8b9884;
-  border-radius: 4px;
-  background-color: #f6f0e2;
-  background-image: linear-gradient(90deg, #efe7d4 1px, transparent 1px);
-  background-size: 32px 100%;
-  box-shadow: inset 0 26px #e9e2d0;
+  border: 5px solid #c7c8b5;
+  border-radius: 3px;
+  background-color: #d3d4c1;
+  background-image: repeating-linear-gradient(90deg, #cccebb 0 2px, transparent 2px 9px);
 }
 .floor-cell > header {
   display: flex;
   align-items: center;
   gap: 6px;
   height: 40px;
-  padding: 0 8px;
+  padding: 0 6px;
   min-width: 0;
   color: #4b5c43;
 }
+.floor-meeting {
+  border-color: #c4c0cd;
+  background-color: #d5d1dc;
+  background-image: none;
+}
+.floor-lounge {
+  border-color: #bfcbb8;
+  background-color: #cbd6c1;
+  background-image: none;
+}
+.floor-records {
+  border-color: #d2c4a8;
+  background-color: #e6dcc6;
+  background-image: none;
+}
+.floor-meeting > header,
+.floor-lounge > header,
+.floor-records > header {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+  justify-content: center;
+  font-size: 12px;
+  color: #7c7f70;
+}
+.floor-meeting > header svg,
+.floor-lounge > header svg,
+.floor-records > header svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.8;
+}
 .floor-meeting > header strong,
-.floor-lounge > header strong {
-  font-size: 13px;
+.floor-lounge > header strong,
+.floor-records > header strong {
+  font-size: 12px;
+  font-weight: 600;
 }
 .floor-door {
   position: absolute;
   left: calc(50% - 22px);
   width: 44px;
-  height: 7px;
-  background: #d9d0ba;
+  height: 9px;
+  background: #e0d7c1;
+  box-shadow: inset 0 0 0 2px #cdbf9f;
 }
 .floor-cell.upper .floor-door {
-  bottom: -5px;
+  bottom: -9px;
 }
 .floor-cell.lower .floor-door {
-  top: -5px;
+  top: -9px;
 }
 .floor-room-name {
   display: flex;
   align-items: center;
   gap: 3px;
   min-width: 0;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
+  padding: 2px 6px;
+  border: 2px solid #cdbf9f;
+  border-radius: 3px;
+  background: #fbf8ef;
   color: #34482e;
 }
 .floor-room-name strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: 14px;
 }
 .floor-room-name:hover,
 .floor-room-name:focus-visible {
-  background: #e3ebda;
+  background: #fff;
+  border-color: #8fae80;
 }
 .floor-presence {
   flex-shrink: 0;
@@ -120,11 +255,11 @@
   border-radius: 10px;
   font-size: 11px;
   color: #6b7563;
-  background: #ece7da;
+  background: #e9e7d8;
 }
 .floor-room.busy .floor-presence {
   color: #2f5a34;
-  background: #dcebd2;
+  background: #d8e8cb;
 }
 .floor-presence.waiting {
   color: #7a4e07;
@@ -141,7 +276,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: #8a9282;
+  color: #8a8f7e;
 }
 .floor-room-empty {
   position: absolute;
@@ -151,7 +286,7 @@
   margin: 0;
   text-align: center;
   font-size: 12px;
-  color: #8d957f;
+  color: #858a78;
 }
 .floor-room-more {
   position: absolute;
@@ -181,35 +316,40 @@
 .floor-desks.back > i::before {
   content: '';
   position: absolute;
-  left: 18px;
-  top: 12px;
-  width: 30px;
-  height: 30px;
-  background: #6f7b74;
-  border: 2px solid #56615b;
-  border-radius: 8px 8px 3px 3px;
+  left: 17px;
+  top: 10px;
+  width: 32px;
+  height: 28px;
+  box-sizing: border-box;
+  background: #899bad;
+  border: 3px solid #617285;
+  border-radius: 7px 7px 2px 2px;
 }
 .floor-desks.front > i::before {
   content: '';
   position: absolute;
-  left: 21px;
-  top: 29px;
-  width: 24px;
-  height: 13px;
-  background: #4f5d57;
-  border: 2px solid #3d4843;
+  left: 20px;
+  top: 27px;
+  width: 26px;
+  height: 15px;
+  background: #4b5763;
+  border: 2px solid #38424b;
   border-radius: 3px 3px 1px 1px;
   box-sizing: border-box;
 }
 .floor-desks.front > i::after {
   content: '';
   position: absolute;
-  left: 4px;
-  top: 38px;
-  width: 58px;
+  left: 2px;
+  top: 40px;
+  width: 62px;
   height: 10px;
-  background: linear-gradient(#d8b98c 0 4px, #b8946a 4px);
-  border-bottom: 2px solid #8e6f48;
+  background:
+    linear-gradient(#c7c7bd, #c7c7bd) 22px 2px / 22px 4px no-repeat,
+    linear-gradient(#f8f5ea, #f8f5ea) 48px 1px / 9px 6px no-repeat,
+    linear-gradient(#fbf7e9, #fbf7e9) 6px 1px / 6px 5px no-repeat,
+    linear-gradient(#ebdbc2 0 7px, #bea68c 7px);
+  border-bottom: 2px solid #b9a38e;
   border-radius: 2px;
 }
 /* A screen in use lights the face above it; the monitor's power light shows who is at work. */
@@ -231,7 +371,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 1px 6px;
-  border: 1px dashed #9aa98f;
+  border: 1px dashed #a89a7c;
   border-radius: 3px;
   background: #fbf8ef;
   font-size: 10px;
@@ -244,49 +384,177 @@
   position: absolute;
   display: block;
 }
+/* Meeting room: a wooden table with a laptop and notes, and a chair on each corner. */
 .floor-meeting .floor-furniture.a {
-  left: 22%;
-  right: 22%;
-  top: 52%;
-  height: 26px;
-  background: #b89468;
-  border: 3px solid #8e6f48;
-  border-radius: 13px;
+  left: 24%;
+  right: 24%;
+  top: calc(50% - 22px);
+  height: 42px;
+  background: #e7d7ba;
+  box-shadow: 4px 6px 0 #ad977e;
 }
-.floor-meeting .floor-furniture.b {
-  left: 30%;
-  right: 30%;
-  top: 30px;
-  height: 14px;
-  background: #fbfbf7;
-  border: 3px solid #93a08c;
-}
-.floor-lounge .floor-furniture.a {
-  left: 10%;
-  right: 10%;
-  top: 30px;
-  height: 18px;
-  background: #b6c9b0;
-  border-bottom: 5px solid #8ea787;
-}
-.floor-lounge .floor-furniture.a::after {
+.floor-meeting .floor-furniture.a::before {
   content: '';
   position: absolute;
-  right: 8%;
-  top: -14px;
+  left: calc(50% - 18px);
+  top: 8px;
+  width: 36px;
+  height: 24px;
+  box-sizing: border-box;
+  background: #e7f0e6;
+  border: 4px solid #b4c3bf;
+}
+.floor-meeting .floor-furniture.a::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 22px;
   width: 16px;
-  height: 20px;
-  background: #5f6b62;
-  border-radius: 2px 2px 0 0;
+  height: 12px;
+  background: #faf8ec;
+  box-shadow: calc(100% + 40px) -10px 0 -2px #f9efdc;
+}
+.floor-meeting .floor-furniture.b,
+.floor-meeting .floor-furniture.c {
+  left: 12%;
+  right: 12%;
+  height: 22px;
+}
+.floor-meeting .floor-furniture.b {
+  top: calc(50% - 46px);
+}
+.floor-meeting .floor-furniture.c {
+  top: calc(50% + 28px);
+}
+.floor-meeting .floor-furniture.b::before,
+.floor-meeting .floor-furniture.b::after,
+.floor-meeting .floor-furniture.c::before,
+.floor-meeting .floor-furniture.c::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 26px;
+  height: 22px;
+  box-sizing: border-box;
+  background: #a49aaf;
+  border: 3px solid #8b8399;
+  border-radius: 6px 6px 2px 2px;
+}
+.floor-meeting .floor-furniture.b::before,
+.floor-meeting .floor-furniture.c::before {
+  left: 0;
+}
+.floor-meeting .floor-furniture.b::after,
+.floor-meeting .floor-furniture.c::after {
+  right: 0;
+}
+/* Lounge: a sofa along the left, a small coffee table with a book and a mug, and a plant. */
+.floor-lounge .floor-furniture.a {
+  left: 8%;
+  top: 30px;
+  width: 22%;
+  min-width: 46px;
+  bottom: 40px;
+  background: linear-gradient(#a4b19b 0 14px, transparent 14px), #7e967e;
+  box-shadow: inset -12px 0 #90a389;
+}
+.floor-lounge .floor-furniture.a::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 18px;
+  top: 18px;
+  bottom: 8px;
+  background: repeating-linear-gradient(#aab9a2 0 30px, #7e967e 30px 34px);
 }
 .floor-lounge .floor-furniture.b {
-  left: 16%;
-  right: 16%;
-  bottom: 12px;
-  height: 22px;
-  background: #d9a38b;
-  border: 3px solid #b27c65;
-  border-radius: 8px 8px 3px 3px;
+  left: 42%;
+  width: 26%;
+  min-width: 52px;
+  top: calc(50% - 8px);
+  height: 34px;
+  background: #e1c9a5;
+  box-shadow: 3px 5px 0 #ac9377;
+}
+.floor-lounge .floor-furniture.b::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  width: 16px;
+  height: 20px;
+  background:
+    linear-gradient(#a9b5a2, #a9b5a2) 3px 4px / 10px 2px no-repeat,
+    #e6e8d8;
+}
+.floor-lounge .floor-furniture.b::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 16px;
+  width: 10px;
+  height: 10px;
+  background: #f4eee0;
+}
+.floor-lounge .floor-furniture.c {
+  right: 6%;
+  top: 22px;
+  width: 44px;
+  height: 50px;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='62'><rect x='17' y='43' width='22' height='18' fill='%23b79074'/><rect x='14' y='40' width='28' height='7' fill='%23d4b496'/><rect x='25' y='13' width='6' height='31' fill='%236d8060'/><rect x='5' y='13' width='17' height='15' fill='%23718867'/><rect x='12' y='3' width='18' height='19' fill='%238ca579'/><rect x='32' y='4' width='19' height='17' fill='%23749467'/><rect x='28' y='19' width='23' height='12' fill='%2391ab7d'/><rect x='3' y='22' width='18' height='12' fill='%2394ac7e'/></svg>")
+    center / contain no-repeat;
+}
+/* Records room: library shelving along the back and a writing desk in front. */
+.floor-records .floor-furniture.a {
+  left: 8%;
+  right: 8%;
+  top: 22px;
+  height: 56px;
+  box-sizing: border-box;
+  border: 4px solid #d5b794;
+  border-bottom-width: 6px;
+  background:
+    linear-gradient(#e2c6a4, #e2c6a4) 0 22px / 100% 4px no-repeat,
+    repeating-linear-gradient(
+        90deg,
+        #789693 0 6px,
+        transparent 6px 8px,
+        #9f8cac 8px 14px,
+        transparent 14px 16px,
+        #d3b476 16px 22px,
+        transparent 22px 24px,
+        #b07d70 24px 30px,
+        transparent 30px 32px,
+        #c6cdaf 32px 38px,
+        transparent 38px 40px
+      )
+      4px 2px / 100% 18px no-repeat,
+    repeating-linear-gradient(
+        90deg,
+        #d3b476 0 6px,
+        transparent 6px 8px,
+        #789693 8px 14px,
+        transparent 14px 16px,
+        #b07d70 16px 22px,
+        transparent 22px 24px,
+        #9f8cac 24px 30px,
+        transparent 30px 32px
+      )
+      8px 28px / 100% 18px no-repeat,
+    #a18a6e;
+}
+.floor-records .floor-furniture.b {
+  left: 20%;
+  right: 20%;
+  bottom: 44px;
+  height: 18px;
+  background:
+    linear-gradient(#f8f5ea, #f8f5ea) 12px 4px / 16px 10px no-repeat,
+    #ebdbc2;
+  box-shadow: 3px 4px 0 #b9a38e;
+}
+.floor-records .floor-furniture.c {
+  display: none;
 }
 /* Workers: the translate target is the point between their feet. */
 .floor-worker {
@@ -327,30 +595,45 @@
 .floor-worker.working:not(.walking)[data-place='desk'] .floor-sprite .pixel-worker {
   animation: floor-type 0.8s steps(2) infinite;
 }
+/* A small white name plate under the character, like the desk plates of the first office. */
 .floor-name {
   max-width: 62px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: #fbfaf5d9;
+  padding: 0 5px;
+  border-bottom: 2px solid #c7c7b6;
+  border-radius: 2px;
+  background: #fbfaf2;
   font-size: 9px;
   line-height: 13px;
-  color: #56614e;
+  color: #425146;
 }
+/* A speech bubble above the head says what the coworker is doing. */
 .floor-caption {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + 6px);
   display: none;
-  padding: 3px 6px;
-  border: 2px solid #6d7a62;
-  border-radius: 3px;
+  padding: 3px 7px;
+  border: 2px solid #dfe3d8;
+  border-radius: 4px;
   background: #fff;
   white-space: nowrap;
   font-size: 10px;
   font-weight: 600;
-  color: #4d5c45;
+  color: #5d7565;
+}
+.floor-caption::after {
+  content: '';
+  position: absolute;
+  left: calc(50% - 4px);
+  bottom: -6px;
+  width: 6px;
+  height: 6px;
+  background: #fff;
+  border-right: 2px solid #dfe3d8;
+  border-bottom: 2px solid #dfe3d8;
+  transform: rotate(45deg) translate(-2px, -2px);
 }
 .floor-worker:hover .floor-caption,
 .floor-worker:focus-visible .floor-caption {
@@ -418,7 +701,25 @@
 }
 @media (max-width: 760px) {
   .floor-room-name strong {
-    font-size: 14px;
+    font-size: 13px;
+  }
+  .floor-frame {
+    display: none;
+  }
+  .floor-wall::before {
+    left: 150px;
+    right: 12px;
+  }
+  .floor-plant.corner {
+    transform: none;
+  }
+}
+@media (max-width: 480px) {
+  .floor-board {
+    display: none;
+  }
+  .floor-wall::before {
+    left: 12px;
   }
 }
 /* The repository name wins over the path when the header is tight. */
@@ -426,12 +727,12 @@
   flex-shrink: 0;
   max-width: 62%;
 }
-/* Repository office: captions are always on, and the picked coworker is outlined. */
+/* Repository office: captions are always on, and the picked coworker stands on a green mat. */
 .floor.office .floor-caption {
   display: block;
 }
 .floor.office .floor-mark {
-  bottom: calc(100% + 26px);
+  bottom: calc(100% + 28px);
 }
 .floor.office .floor-worker:hover .floor-mark,
 .floor.office .floor-worker:focus-visible .floor-mark {
@@ -439,13 +740,22 @@
 }
 .floor-worker.selected .floor-name {
   background: #5b8a5c;
+  border-color: #3f6a41;
   color: #fff;
 }
-.floor-worker.selected .floor-sprite {
-  filter: drop-shadow(0 0 0 #5b8a5c) drop-shadow(0 2px 0 #5b8a5c55);
+.floor-worker.selected::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 44px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a4b797;
+  z-index: -1;
 }
 .floor-worker[data-activity='executing'] .floor-caption {
-  border-color: #5e6f68;
+  border-color: #b8c3bd;
 }
 @media (prefers-reduced-motion: reduce) {
   .floor-worker {
@@ -456,7 +766,7 @@
   max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 2px 4px;
+  padding: 2px 5px;
   font-size: 9px;
 }
 .floor.office .floor-worker:hover .floor-caption,
@@ -575,26 +885,27 @@
   font-size: 11px;
   color: #9a4d2f;
 }
-/* Department bands: a faint floor tint and a plaque in the gap above the first band. */
+/* Department bands: a faint floor tint and a wooden sign in the gap above the first band. */
 .floor-dept {
   position: absolute;
   right: 0;
   border-radius: 6px;
-  background: #dfe7d51f;
+  background: #dfe7d524;
   box-shadow: inset 0 0 0 2px #c9d6bd66;
   pointer-events: none;
 }
 .floor-dept:nth-of-type(3n + 2) {
-  background: #e7dcc81f;
+  background: #e7dcc824;
 }
 .floor-dept-name {
   position: absolute;
   left: 10px;
-  top: 3px;
-  padding: 1px 10px;
-  border-radius: 4px;
-  background: #47613b;
-  color: #fff;
+  top: 2px;
+  padding: 1px 10px 2px;
+  border-bottom: 3px solid #6f5536;
+  border-radius: 3px;
+  background: #8e6f48;
+  color: #fbf3e3;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;

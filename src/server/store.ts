@@ -29,6 +29,11 @@ export function createStore(path: string) {
   db.exec('CREATE TABLE IF NOT EXISTS retired_sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS repo_harness(root TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS room_aliases(source TEXT PRIMARY KEY, target TEXT NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  // An observed session whose instructions went to a forked provider session keep going there.
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS direct_links(observed_id TEXT PRIMARY KEY, session_id TEXT NOT NULL)',
+  );
   db.exec(
     'CREATE TABLE IF NOT EXISTS departments(id TEXT PRIMARY KEY, name TEXT NOT NULL, root TEXT NOT NULL UNIQUE)',
   );
@@ -52,15 +57,23 @@ export function createStore(path: string) {
       { data: string } | undefined;
     return row ? (JSON.parse(row.data) as Run) : undefined;
   };
-  const listRuns = (projectPath?: string) => {
+  const listRuns = (projectPath?: string, includeRelated = false) => {
     const rows =
       projectPath === undefined
         ? db.prepare('SELECT data FROM runs ORDER BY rowid DESC LIMIT 100').all()
-        : db
-            .prepare(
-              "SELECT data FROM runs WHERE json_extract(data, '$.projectPath')=? ORDER BY rowid DESC LIMIT 100",
-            )
-            .all(projectPath);
+        : includeRelated
+          ? db
+              .prepare(
+                `SELECT data FROM runs WHERE json_extract(data, '$.projectPath')=?
+              OR EXISTS (SELECT 1 FROM json_each(runs.data, '$.repos') AS repo WHERE json_extract(repo.value, '$.root')=?)
+              ORDER BY rowid DESC LIMIT 100`,
+              )
+              .all(projectPath, projectPath)
+          : db
+              .prepare(
+                "SELECT data FROM runs WHERE json_extract(data, '$.projectPath')=? ORDER BY rowid DESC LIMIT 100",
+              )
+              .all(projectPath);
     return (rows as { data: string }[]).map((r) => JSON.parse(r.data) as Run);
   };
   const listProjects = (): ProjectSummary[] => {
@@ -102,6 +115,10 @@ export function createStore(path: string) {
     bus,
     getRun,
     listRuns,
+    cleanupRuns: () =>
+      (db.prepare('SELECT data FROM runs ORDER BY rowid DESC').all() as { data: string }[]).map(
+        (row) => JSON.parse(row.data) as Run,
+      ),
     listProjects,
     listDepartments(): Department[] {
       return db
@@ -222,6 +239,29 @@ export function createStore(path: string) {
       db.prepare(
         `UPDATE chat_messages SET data=json_set(data, '$.status', 'failed', '$.error', '서버가 재시작되어 답변이 중단되었습니다. 다시 질문해주세요.') WHERE json_extract(data, '$.status')='pending'`,
       ).run();
+    },
+    getSetting<T>(key: string, fallback: T): T {
+      const row = db.prepare('SELECT data FROM settings WHERE key=?').get(key) as
+        { data: string } | undefined;
+      return row ? { ...fallback, ...JSON.parse(row.data) } : fallback;
+    },
+    setSetting(key: string, value: unknown) {
+      db.prepare('INSERT OR REPLACE INTO settings(key,data) VALUES(?,?)').run(
+        key,
+        JSON.stringify(value),
+      );
+    },
+    directLink(observedId: string): string | undefined {
+      const row = db
+        .prepare('SELECT session_id FROM direct_links WHERE observed_id=?')
+        .get(observedId) as { session_id: string } | undefined;
+      return row?.session_id;
+    },
+    setDirectLink(observedId: string, sessionId: string) {
+      db.prepare('INSERT OR REPLACE INTO direct_links(observed_id,session_id) VALUES(?,?)').run(
+        observedId,
+        sessionId,
+      );
     },
     rememberProject(root: string) {
       db.prepare('INSERT OR IGNORE INTO projects(root) VALUES(?)').run(root);

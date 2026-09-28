@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import {
   startSchema,
+  followUpSchema,
   reviewSchema,
   terminal,
   type Adapter,
@@ -18,12 +20,21 @@ import type { Store } from './store.js';
 import {
   inspectProject,
   createWorkspace,
+  personalWorkspace,
   createBundleWorkspace,
   collectRunChanges,
+  git,
 } from './projects.js';
 import { phasePrompt } from './prompts.js';
 import { harnessDirFor } from './harness.js';
+import {
+  verifyPullRequests,
+  pullRequestIntent,
+  workingState,
+  type DeliveryResult,
+} from './delivery.js';
 import { isUsageLimit } from './adapters/usage-limit.js';
+import { approvalSettings, automaticApproval, isToolApproval } from './approvals.js';
 export const nextAfterReview = (
   review: Review,
   revision: number,
@@ -37,10 +48,12 @@ export function createOrchestrator({
   store,
   adapters,
   dataDir,
+  verifyDelivery = verifyPullRequests,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
   dataDir: string;
+  verifyDelivery?: (run: Run) => Promise<DeliveryResult>;
 }) {
   let busy = false;
   let current: { id: string; controller: AbortController; task: Promise<void> } | undefined;
@@ -56,6 +69,7 @@ export function createOrchestrator({
       ),
     });
   };
+  let sessionGuard: ((run: Run) => void) | undefined;
   const change = (id: string, patch: Partial<Run>) => {
     const run = store.updateRun(id, patch);
     emit({ runId: id, agentId: null, type: 'run.updated', payload: { run } });
@@ -75,7 +89,38 @@ export function createOrchestrator({
     }
   };
   async function execute(run: Run, controller: AbortController) {
+    // Preserve the original request and recent follow-ups across fresh provider sessions.
+    const ancestors: Run[] = [];
+    let ancestor = run.parentRunId ? store.getRun(run.parentRunId) : undefined;
+    const seen = new Set<string>();
+    while (ancestor && !seen.has(ancestor.id)) {
+      seen.add(ancestor.id);
+      ancestors.unshift(ancestor);
+      ancestor = ancestor.parentRunId ? store.getRun(ancestor.parentRunId) : undefined;
+    }
+    const contextRuns = ancestors.length > 6 ? [ancestors[0], ...ancestors.slice(-5)] : ancestors;
+    const context = contextRuns
+      .map(
+        (r) =>
+          `요청: ${r.prompt.slice(0, 6000)}\n결과: ${(r.summary || r.error || '').slice(-6000)}`,
+      )
+      .join('\n\n');
     let previous = '';
+    let implementation = '';
+    const complete = async (summary: string) => {
+      const delivery = await verifyDelivery(store.getRun(run.id)!);
+      if (controller.signal.aborted) {
+        change(run.id, { status: 'cancelled' });
+        return;
+      }
+      change(run.id, {
+        status: delivery.error ? 'needs_attention' : 'completed',
+        phase: 'done',
+        error: delivery.error,
+        pullRequests: delivery.urls,
+        summary: [summary, delivery.error, ...delivery.urls].filter(Boolean).join('\n\n'),
+      });
+    };
     let review: Review | undefined;
     const exhausted = new Map<Provider, string>();
     const availableProvider = (preferred: Provider): Provider =>
@@ -83,6 +128,8 @@ export function createOrchestrator({
     let continuation = '';
     const interact = (req: Omit<Interaction, 'id' | 'resolved'>): Promise<Answer> => {
       if (controller.signal.aborted) return Promise.reject(new Error('작업 중단'));
+      const automatic = automaticApproval(store, req);
+      if (automatic) return Promise.resolve(automatic);
       const interaction = { ...req, id: randomUUID(), resolved: false };
       store.saveInteraction(interaction);
       change(run.id, { status: req.kind === 'approval' ? 'waiting_approval' : 'waiting_input' });
@@ -121,6 +168,12 @@ export function createOrchestrator({
           .execute(
             {
               runId: run.id,
+              executionMode: run.executionMode ?? 'personal',
+              resumeSessionId:
+                run.executionMode === 'isolated'
+                  ? undefined
+                  : run.sessions?.[provider]?.[isReview ? 'reviewer' : 'implementer'],
+              approvalMode: approvalSettings(store).mode,
               cwd: run.worktreePath,
               prompt:
                 phasePrompt(
@@ -130,14 +183,32 @@ export function createOrchestrator({
                   previous,
                   changes,
                   review,
-                ) + continuation,
+                ) +
+                (context
+                  ? `\n\n이어서 수행하는 작업입니다. 아래 이전 요청과 결과는 참고 자료입니다. 기존 작업 폴더의 변경을 보존하고 현재 사용자 요청을 수행하세요.\n${context}`
+                  : '') +
+                continuation,
               role: isReview ? 'reviewer' : 'implementer',
               profile: run.team[provider],
               harness: run.harness?.[provider],
               harnessDir: harnessDirFor(dataDir, run.projectPath),
               signal: controller.signal,
             },
-            emit,
+            (event) => {
+              if (
+                run.executionMode !== 'isolated' &&
+                event.type === 'agent.session' &&
+                typeof event.payload.sessionId === 'string'
+              ) {
+                const sessions = structuredClone(store.getRun(run.id)?.sessions ?? {});
+                sessions[provider] = {
+                  ...sessions[provider],
+                  [isReview ? 'reviewer' : 'implementer']: event.payload.sessionId,
+                };
+                change(run.id, { sessions });
+              }
+              emit(event);
+            },
             interact,
           )
           .catch((e: Error): PhaseResult => ({ outcome: 'failed', text: '', error: e.message }));
@@ -196,10 +267,11 @@ export function createOrchestrator({
         continuation = '';
         previous = result.text;
         if (run.mode !== 'collaborate') {
-          change(run.id, { status: 'completed', phase: 'done', summary: previous });
+          await complete(previous);
           return;
         }
         if (!isReview) {
+          implementation = previous;
           change(run.id, { phase: 'review' });
           emit({
             runId: run.id,
@@ -223,10 +295,14 @@ export function createOrchestrator({
         }
         review = parsed.data;
         const next = nextAfterReview(review, run.revision);
+        if (next === 'completed') {
+          await complete(`${implementation}\n\n검토 결과:\n${review.summary}`);
+          return;
+        }
         if (next !== 'revise') {
           change(run.id, {
             status: next,
-            phase: next === 'completed' ? 'done' : 'review',
+            phase: 'review',
             summary: review.summary,
           });
           return;
@@ -255,6 +331,9 @@ export function createOrchestrator({
     }
   }
   return {
+    useSessionGuard(guard: (run: Run) => void) {
+      sessionGuard = guard;
+    },
     async start(raw: StartInput) {
       if (busy) throw new Error('진행 중인 작업을 먼저 완료하거나 중단해 주세요.');
       busy = true;
@@ -273,13 +352,22 @@ export function createOrchestrator({
           throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
         let workspace: { path: string; branch: string; baseCommit: string };
         let bundle: RunRepo[] | undefined;
-        if (project.repositories) {
+        if (input.executionMode !== 'isolated') {
+          const w = await personalWorkspace(project, input.repositories);
+          workspace = w;
+          bundle = w.repos;
+        } else if (project.repositories) {
           const w = await createBundleWorkspace(project.root, input.repositories!, id, dataDir);
           workspace = w;
           bundle = w.repos;
         } else workspace = await createWorkspace(project.root, id, dataDir);
         const run: Run = {
           ...input,
+          executionMode: input.executionMode ?? 'personal',
+          pullRequestRequested: pullRequestIntent(input.prompt) === true,
+          initialChanges: await workingState(
+            bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
+          ),
           team: structuredClone(input.team),
           harness: store.getHarness(project.root),
           id,
@@ -293,10 +381,73 @@ export function createOrchestrator({
           revision: 0,
           createdAt: new Date().toISOString(),
         };
+        sessionGuard?.(run);
         store.createRun(run);
         const controller = new AbortController();
         const task = Promise.resolve().then(() => execute(run, controller));
         current = { id, controller, task };
+        return run;
+      } catch (e) {
+        busy = false;
+        throw e;
+      }
+    },
+    async followUp(id: string, prompt: string) {
+      if (busy) throw new Error('진행 중인 작업을 먼저 완료하거나 중단해 주세요.');
+      busy = true;
+      try {
+        const input = followUpSchema.parse({ prompt });
+        const source = store.getRun(id);
+        if (!source) throw new Error('이전 작업 기록을 찾을 수 없습니다.');
+        if (!terminal(source.status))
+          throw new Error('진행 중인 작업에는 아직 추가 요청을 보낼 수 없습니다.');
+        if (source.removedWorktrees?.length)
+          throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
+        sessionGuard?.(source);
+        // Never silently start from HEAD if the preserved workspace is missing.
+        for (const path of source.repos?.map((r) => r.worktreePath) ?? [source.worktreePath]) {
+          try {
+            const root = (await git(path, ['rev-parse', '--show-toplevel'])).trim();
+            if ((await realpath(root)) !== (await realpath(path)))
+              throw new Error('workspace mismatch');
+          } catch {
+            throw new Error('이전 작업 폴더를 찾을 수 없습니다. 새 작업으로 시작해 주세요.');
+          }
+        }
+        const providers: Provider[] =
+          source.mode === 'collaborate' ? ['codex', 'claude'] : [source.mode];
+        for (const provider of providers) {
+          const connection = await adapters[provider].probe();
+          if (!connection.installed || connection.authenticated === false)
+            throw new Error(`${provider}: ${connection.detail}`);
+        }
+        const run: Run = {
+          ...structuredClone(source),
+          id: randomUUID(),
+          parentRunId: source.id,
+          executionMode: source.executionMode ?? 'personal',
+          // Old isolated runs had no persistent sessions; do not attempt to resume them.
+          sessions: source.executionMode ? source.sessions : undefined,
+          pullRequests: undefined,
+          pullRequestRequested:
+            pullRequestIntent(input.prompt) ??
+            source.pullRequestRequested ??
+            pullRequestIntent(source.prompt) === true,
+          prompt: input.prompt,
+          summary: undefined,
+          error: undefined,
+          status: 'queued',
+          phase: 'implement',
+          revision: 0,
+          createdAt: new Date().toISOString(),
+        };
+        if (store.getRun(id)?.removedWorktrees?.length)
+          throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
+        sessionGuard?.(run);
+        store.createRun(run);
+        const controller = new AbortController();
+        const task = Promise.resolve().then(() => execute(run, controller));
+        current = { id: run.id, controller, task };
         return run;
       } catch (e) {
         busy = false;
@@ -313,7 +464,15 @@ export function createOrchestrator({
       clearPending(id);
       await job.task;
     },
-    async answer(id: string, answer: Answer) {
+    async approvePending() {
+      if (approvalSettings(store).mode !== 'auto') return;
+      for (const id of [...pending.keys()]) {
+        const req = store.getInteraction(id);
+        if (req && isToolApproval(req) && !req.resolved && pending.has(id))
+          await this.answer(id, { decision: 'approve' }, true);
+      }
+    },
+    async answer(id: string, answer: Answer, automatic = false) {
       const req = store.getInteraction(id);
       const handler = pending.get(id);
       if (!req || req.resolved || !handler) throw new Error('이미 해결되었거나 종료된 요청입니다.');
@@ -325,7 +484,7 @@ export function createOrchestrator({
         runId: req.runId,
         agentId: req.agentId,
         type: 'interaction.resolved',
-        payload: { id },
+        payload: { id, ...(automatic ? { automatic: true, text: `자동 승인: ${req.title}` } : {}) },
       });
       const remaining = store.pending(req.runId);
       change(req.runId, {

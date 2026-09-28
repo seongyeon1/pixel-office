@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { ApprovalSettings } from './ApprovalSettings';
+import { CoworkerAvatar } from './CoworkerAvatar';
 import {
   seniorityLabels,
   type TeamConfig,
@@ -34,11 +36,12 @@ export function TeamPanel({
   }, []);
   return (
     <div className="team-settings">
-      <p className="muted">모델과 일하는 방식을 정해주세요. 직급은 업무 지침에 반영됩니다.</p>
+      <ApprovalSettings />
+      <p className="muted">모델과 담당 역할을 정해주세요. 직급 지침은 격리 환경에서만 적용됩니다.</p>
       {(['claude', 'codex'] as const).map((id) => (
         <section className="team-setting" key={id}>
           <div className="team-heading">
-            <span className={`avatar ${id}`}>{id === 'claude' ? '✳' : '⌘'}</span>
+            <CoworkerAvatar id={id} />
             <div>
               <strong>{id === 'claude' ? 'Claude' : 'Codex'}</strong>
               <p>{implementer === id ? '구현 담당' : '검토 담당'}</p>

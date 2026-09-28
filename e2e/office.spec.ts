@@ -24,6 +24,8 @@ test('office fits the viewport and supports model/persona selection', async ({ p
     await mkdir('docs/images', { recursive: true });
     await page.screenshot({ path: 'docs/images/office.png', fullPage: true });
   }
+  if (await page.getByRole('button', { name: '새 작업', exact: true }).count())
+    await page.getByRole('button', { name: '새 작업', exact: true }).click();
   await page.getByRole('button', { name: '팀 구성', exact: true }).click();
   await page.getByLabel('codex 직급').selectOption('intern');
   await page.getByLabel('codex 모델').fill('custom-model');
@@ -63,6 +65,31 @@ test('running work can be stopped without starting a reviewer', async ({ page })
   await page.getByRole('button', { name: '작업 시작', exact: true }).click();
   await page.getByRole('button', { name: '작업 중단', exact: true }).click();
   await expect(page.locator('.run-result')).toContainText('중단됨');
+});
+test('start failures appear beside the composer and allow retry without losing the request', async ({
+  page,
+}) => {
+  await connect(page);
+  const prompt = '선택한 저장소에서 작업 시작 오류 확인';
+  await page.getByLabel('작업 내용').fill(prompt);
+  await page.route('**/api/runs', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({
+      status: 409,
+      json: { error: '선택한 저장소에서 다른 동료가 작업 중입니다.' },
+    });
+  });
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  const alert = page.locator('.task-composer').getByRole('alert');
+  await expect(alert).toContainText('선택한 저장소에서 다른 동료가 작업 중입니다.');
+  await expect(alert).toBeInViewport();
+  await expect(alert).toBeFocused();
+  await expect(page.getByLabel('작업 내용')).toHaveValue(prompt);
+  await expect(page.getByRole('button', { name: '작업 시작', exact: true })).toBeEnabled();
+  await page.unroute('**/api/runs');
+  await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+  await expect(alert).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '작업 중단', exact: true })).toBeVisible();
 });
 test('expired server session replaces stale execution with a reconnection message', async ({
   page,
@@ -105,7 +132,10 @@ test('single-agent mode shows the actual implementer instead of a reviewer role'
 }) => {
   await page.goto('/#token=e2e-token');
   await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
+  if (await page.getByRole('button', { name: '새 작업', exact: true }).count())
+    await page.getByRole('button', { name: '새 작업', exact: true }).click();
   await page.getByLabel('실행 방식').selectOption('claude');
+  await page.getByRole('button', { name: 'Claude 선택', exact: true }).click();
   await expect(page.getByText('구현과 테스트를 담당해요', { exact: true })).toBeVisible();
   await expect(page.getByText('Claude가 단독으로 작업해요', { exact: true })).toBeVisible();
 });
@@ -151,6 +181,7 @@ test('repository switching isolates live activity and history and survives reloa
   );
   await expect(page.locator('.current-task')).toHaveCount(0);
   await page.getByRole('button', { name: /^작업 기록/ }).click();
+  await page.getByLabel('작업 기록 범위').selectOption('project');
   await expect(page.getByRole('heading', { name: '첫 작업을 기다리고 있어요' })).toBeVisible();
   await page.getByRole('button', { name: '진행 중인 레포로 이동' }).click();
   await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
@@ -176,6 +207,7 @@ test('repository switching isolates live activity and history and survives reloa
     'title',
     secondRoot,
   );
+  await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
   await expect(page.locator('.current-task')).toContainText('두 번째 레포의 작업');
 });
 
@@ -218,7 +250,11 @@ test('existing sessions are discovered by repo and show live tools without execu
     );
     await page.goto('/#token=e2e-token');
     // One office shows observed sessions directly; wait for both to be discovered.
-    await expect(page.locator('.observed-sessions > button')).toHaveCount(2, { timeout: 20000 });
+    await expect(
+      page.getByRole('button', {
+        name: /^세션 선택 (Codex external-codex|Claude external-claude)$/,
+      }),
+    ).toHaveCount(2, { timeout: 20000 });
     await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
     // The list is grouped by model family; an unrecognised model id keeps its own group.
     await expect(
@@ -307,7 +343,11 @@ test('existing sessions are discovered by repo and show live tools without execu
       .poll(
         async () => {
           const r = await page.request.get('/api/observed');
-          return r.ok() ? (await r.json()).sessions.length : -1;
+          return r.ok()
+            ? (await r.json()).sessions.filter((s: { sessionId: string }) =>
+                /^(external-|chat-codex-)/.test(s.sessionId),
+              ).length
+            : -1;
         },
         { timeout: 10000 },
       )
@@ -344,7 +384,9 @@ test('separate Codex characters keep independent chats and expose failure and ca
       );
     await page.goto('/#token=e2e-token');
     // One office shows observed sessions directly; wait for both to be discovered.
-    await expect(page.locator('.observed-sessions > button')).toHaveCount(2, { timeout: 20000 });
+    await expect(
+      page.getByRole('button', { name: /^세션 선택 Codex chat-codex-[01]$/ }),
+    ).toHaveCount(2, { timeout: 20000 });
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex chat-codex-0', exact: true }),
     ).toBeVisible();
@@ -381,7 +423,11 @@ test('separate Codex characters keep independent chats and expose failure and ca
       .poll(
         async () => {
           const r = await page.request.get('/api/observed');
-          return r.ok() ? (await r.json()).sessions.length : -1;
+          return r.ok()
+            ? (await r.json()).sessions.filter((s: { sessionId: string }) =>
+                /^(external-|chat-codex-)/.test(s.sessionId),
+              ).length
+            : -1;
         },
         { timeout: 10000 },
       )
@@ -552,7 +598,10 @@ test('a question from a terminal Claude is answered in the office and handed bac
         }),
     );
     await page.goto('/#token=e2e-token');
-    const coworker = page.getByRole('button', { name: /^세션 선택 Claude/ });
+    const coworker = page.getByRole('button', {
+      name: '세션 선택 Claude asking-claude',
+      exact: true,
+    });
     await expect(coworker).toHaveCount(1, { timeout: 20000 });
     await coworker.click();
     // Before the question reaches the app, the inspector explains how to connect terminals.
@@ -567,7 +616,7 @@ test('a question from a terminal Claude is answered in the office and handed bac
     });
     expect(opened.ok()).toBe(true);
     const { id } = await opened.json();
-    await page.getByRole('button', { name: /^세션 선택 Claude/ }).click();
+    await page.getByRole('button', { name: '세션 선택 Claude asking-claude', exact: true }).click();
     const card = page.locator('.terminal-question');
     await expect(card).toContainText('어느 브랜치에 올릴까요?', { timeout: 10000 });
     await card.getByRole('radio', { name: /develop/ }).check();
@@ -597,5 +646,79 @@ test('a question from a terminal Claude is answered in the office and handed bac
     ).toEqual({ status: 'released' });
   } finally {
     await rm(f.claude, { force: true });
+  }
+});
+
+test('talking to a coworker runs a direct turn with approval, or types into the resume terminal', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const { writeFile, rm } = await import('node:fs/promises');
+  const { dirname, join } = await import('node:path');
+  const f = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  // One session and log per project: a resume terminal opened on desktop must not greet the
+  // mobile run, and a rewritten log of the same length would not be noticed as a new session.
+  const sessionId =
+    test.info().project.name === 'desktop'
+      ? '7c0c7a2e-3d41-4f6a-9e8b-1c2d3e4f5a6b'
+      : '8c0c7a2e-3d41-4f6a-9e8b-1c2d3e4f5a6b';
+  const log = join(dirname(f.codex), `say-${sessionId}.jsonl`);
+  const timestamp = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const line = (o: unknown) => JSON.stringify(o) + '\n';
+  await writeFile(
+    log,
+    line({ timestamp, type: 'session_meta', payload: { id: sessionId, cwd: f.project } }) +
+      line({
+        timestamp,
+        type: 'event_msg',
+        payload: { type: 'user_message', message: '예전 작업' },
+      }) +
+      line({ timestamp, type: 'event_msg', payload: { type: 'task_complete' } }),
+  );
+  try {
+    await connect(page);
+    const worker = page.getByRole('button', { name: `캐릭터 Codex ${sessionId}`, exact: true });
+    await expect(worker).toBeVisible({ timeout: 20000 });
+    await worker.click();
+    await page.getByRole('tab', { name: '대화', exact: true }).click();
+    const chat = page.locator('.session-chat');
+    await chat.getByRole('tab', { name: '지시 · 실제 실행' }).click();
+    // Nobody has a terminal open, so the app runs the turn itself and asks before acting.
+    await expect(chat).toContainText('앱이 이 세션을 이어받아 실행해요');
+    await page.getByLabel('동료에게 지시').fill('hello.txt를 고쳐줘');
+    await page.getByRole('button', { name: '지시 보내기', exact: true }).click();
+    await expect(chat).toContainText('나 · 직접 지시');
+    await expect(chat).toContainText('샘플 파일 수정 승인');
+    if (test.info().project.name === 'desktop')
+      await page
+        .locator('.observed-inspector')
+        .screenshot({ path: 'docs/images/session-say-desktop.png' });
+    await chat.getByRole('button', { name: '승인', exact: true }).click();
+    await expect(chat).toContainText('지시대로 처리했어요: hello.txt를 고쳐줘');
+    await expect(page.locator('.agent-speech')).toContainText('지시대로 처리했어요');
+    // With a resume terminal open, the instruction is typed there instead.
+    await page
+      .locator('.session-task-card')
+      .getByRole('button', { name: '이어서 작업', exact: true })
+      .click();
+    const terminal = page.getByRole('region', { name: '세션 이어서 작업 터미널', exact: true });
+    await terminal.getByRole('button', { name: '이어서 작업', exact: true }).click();
+    await expect(terminal).toContainText(`FAKE-CODEX resume ${sessionId}`);
+    await expect(chat).toContainText('이어가기 터미널로 전달돼요');
+    await page.getByLabel('동료에게 지시').fill('npm test 돌려줘');
+    await page.getByRole('button', { name: '지시 보내기', exact: true }).click();
+    await expect(chat).toContainText('나 · 터미널 지시');
+    await expect(terminal).toContainText('GOT:npm test 돌려줘');
+    await expect(chat.getByRole('status')).toContainText('터미널에서 작업 중');
+    await page.getByRole('button', { name: '기다리기 중단', exact: true }).click();
+    await expect(chat).toContainText('답변 생성을 중단했어요.');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    // Leave no terminal behind for later tests.
+    await terminal.getByRole('button', { name: '터미널 종료', exact: true }).click();
+    await expect(terminal.getByRole('button', { name: '이어서 작업', exact: true })).toBeVisible();
+  } finally {
+    await rm(log, { force: true });
   }
 });

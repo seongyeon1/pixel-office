@@ -3,6 +3,86 @@ import { createStore } from '../src/server/store.js';
 import { createServer } from '../src/server/transport.js';
 import type { Adapter } from '../src/shared/contracts.js';
 import { createOrchestrator } from '../src/server/orchestrator.js';
+test('approval settings default to manual, require authentication and validate persisted values', async () => {
+  const store = createStore(':memory:');
+  const adapter: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: '' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: adapter, claude: adapter };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-approval-settings' });
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: o,
+    token: 'test',
+    port: 4317,
+  });
+  const headers = { host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317' };
+  try {
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/settings/approvals',
+          headers,
+          payload: { mode: 'auto' },
+        })
+      ).statusCode,
+    ).toBe(401);
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers,
+      payload: { token: 'test' },
+    });
+    const authed = { ...headers, cookie: login.headers['set-cookie'] as string };
+    expect((await app.inject({ url: '/api/settings/approvals', headers: authed })).json()).toEqual({
+      mode: 'manual',
+    });
+    for (const payload of [{}, { mode: 'all' }, { mode: 'auto', sandbox: false }]) {
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/settings/approvals',
+            headers: authed,
+            payload,
+          })
+        ).statusCode,
+      ).toBe(400);
+    }
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/settings/approvals',
+          headers: { ...authed, origin: 'https://elsewhere.test' },
+          payload: { mode: 'auto' },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/settings/approvals',
+          headers: authed,
+          payload: { mode: 'auto' },
+        })
+      ).json(),
+    ).toEqual({ mode: 'auto' });
+    expect(store.getSetting('approvals', {})).toEqual({ mode: 'auto' });
+    expect((await app.inject({ url: '/api/settings/approvals', headers: authed })).json()).toEqual({
+      mode: 'auto',
+    });
+  } finally {
+    await app.close();
+    await o.shutdown();
+    store.close();
+  }
+});
 test('rejects foreign origins and unauthenticated actions; bootstrap grants a session', async () => {
   const store = createStore(':memory:');
   const a: Adapter = {
@@ -32,6 +112,16 @@ test('rejects foreign origins and unauthenticated actions; bootstrap grants a se
   expect(
     (await app.inject({ url: '/api/runs', headers: { host: '127.0.0.1:4317' } })).statusCode,
   ).toBe(401);
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/runs/missing/follow-up',
+        headers: { host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317' },
+        payload: { prompt: 'next' },
+      })
+    ).statusCode,
+  ).toBe(401);
   const r = await app.inject({
     method: 'POST',
     url: '/api/session',
@@ -43,6 +133,38 @@ test('rejects foreign origins and unauthenticated actions; bootstrap grants a se
   expect(
     (await app.inject({ url: '/api/runs', headers: { host: '127.0.0.1:4317', cookie } })).json(),
   ).toEqual([]);
+  const authed = { host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317', cookie };
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/runs/missing/follow-up',
+        headers: { ...authed, origin: 'https://foreign.example' },
+        payload: { prompt: 'next' },
+      })
+    ).statusCode,
+  ).toBe(403);
+  for (const payload of [{ prompt: '' }, { prompt: 'next', worktreePath: '/outside' }])
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/runs/missing/follow-up',
+          headers: authed,
+          payload,
+        })
+      ).statusCode,
+    ).toBe(400);
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/runs/missing/follow-up',
+        headers: authed,
+        payload: { prompt: 'next' },
+      })
+    ).statusCode,
+  ).toBe(404);
   await app.close();
   store.close();
 });
@@ -143,7 +265,7 @@ test('chat routes require authentication, validate input, and cancel only their 
       payload: { question: 'hello' },
     });
     expect(response.statusCode).toBe(202);
-    expect(response.json().directAvailable).toBe(false);
+    expect(response.json().directAvailable).toBe(true);
     expect(response.json().mode).toBe('records');
     expect(
       (

@@ -64,8 +64,12 @@ test('launch command selects personal or standard entrypoint without shell inter
     harness: 'personal' as const,
     prompt: 'task',
   };
-  expect(launchCommand(input)).toBe("syc 'task'");
-  expect(launchCommand({ ...input, harness: 'standard' })).toBe("codex 'task'");
+  expect(launchCommand(input)).toBe(
+    "syc '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntask'",
+  );
+  expect(launchCommand({ ...input, harness: 'standard' })).toBe(
+    "codex '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntask'",
+  );
   expect(launchCommand({ ...input, provider: 'claude' })).toBe(
     `sy --session-id ${input.id} 'task'`,
   );
@@ -121,7 +125,9 @@ test('launch API requires browser authentication and a connected folder', async 
     expect((await post({ ...input, id: 'bad;id' })).statusCode).toBe(400);
     const created = await post(input);
     expect(created.statusCode).toBe(201);
-    expect(created.json().terminal.command).toBe("echo syc 'test'");
+    expect(created.json().terminal.command).toBe(
+      "echo syc '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntest'",
+    );
     const list = await app.inject({
       url: `/api/agents?root=${encodeURIComponent(root)}`,
       headers: { ...headers, cookie },
@@ -133,4 +139,21 @@ test('launch API requires browser authentication and a connected folder', async 
     store.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('the chosen model is passed as a literal CLI argument for both personal launchers', async () => {
+  const { launchCommand } = await import('../src/server/launcher.js');
+  const input = {
+    id: '25ff09ab-e861-44cd-9d3a-b5408f853db3',
+    provider: 'codex' as const,
+    harness: 'personal' as const,
+    prompt: 'task',
+    model: 'gpt-6-astra',
+  };
+  expect(launchCommand(input)).toBe(
+    "syc --model 'gpt-6-astra' '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntask'",
+  );
+  expect(launchCommand({ ...input, provider: 'claude', model: 'opus[1m]' })).toBe(
+    `sy --session-id ${input.id} --model 'opus[1m]' 'task'`,
+  );
 });
