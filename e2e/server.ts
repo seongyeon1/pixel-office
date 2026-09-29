@@ -149,6 +149,7 @@ const observation = createObservation({
 });
 await mkdir(join(dir, 'observed-codex', 'sessions'), { recursive: true });
 await mkdir(join(dir, 'observed-claude', 'projects'), { recursive: true });
+await mkdir(join(dir, 'hook-claude'), { recursive: true });
 await writeFile(
   '.pixel/e2e-observer.json',
   JSON.stringify({

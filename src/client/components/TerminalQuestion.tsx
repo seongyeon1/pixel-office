@@ -32,9 +32,19 @@ export function useTerminalHook() {
   const [status, setStatus] = useState<HookStatus>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    api<HookStatus>('/terminal-hook').then(setStatus, (e: Error) => setError(e.message));
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await api<HookStatus>('/terminal-hook'));
+      setError('');
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }, []);
+  useEffect(() => {
+    void refresh();
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => clearInterval(timer);
+  }, [refresh]);
   const change = async (action: 'install' | 'uninstall') => {
     setBusy(true);
     setError('');
@@ -94,7 +104,16 @@ export function TerminalQuestionCard({
 }
 // Shown when a coworker is waiting on a question the app cannot see yet.
 export function TerminalHookHint({ hook }: { hook: ReturnType<typeof useTerminalHook> }) {
-  if (!hook.status?.available || hook.status.installed) return null;
+  if (!hook.status?.available) return null;
+  if (hook.status.installed)
+    return (
+      <section className="terminal-hook-hint" role="status">
+        <p>
+          <TerminalSquare size={14} />이 질문은 앱에 전달되지 않았거나 연결 대기 시간 10분이 지났어요.
+          현재 질문은 Claude 터미널에서 답해 주세요. 연결된 터미널의 새 질문은 앱에 나타납니다.
+        </p>
+      </section>
+    );
   return (
     <section className="terminal-hook-hint">
       <p>

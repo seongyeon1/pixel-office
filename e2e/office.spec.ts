@@ -608,7 +608,10 @@ test('a question from a terminal Claude is answered in the office and handed bac
     await expect(page.locator('.terminal-hook-hint')).toContainText('질문 연결을 켜면');
     await page.getByRole('button', { name: '팀 구성', exact: true }).click();
     await expect(page.locator('.terminal-hook-settings')).toContainText('꺼짐');
+    await page.locator('.terminal-hook-settings').getByRole('button', { name: '질문 연결 켜기' }).click();
+    await expect(page.locator('.terminal-hook-settings')).toContainText('켜짐');
     await page.getByRole('button', { name: '설정 완료' }).click();
+    await expect(page.locator('.terminal-hook-hint')).toContainText('터미널에서 답해 주세요');
 
     const opened = await page.request.post('/api/hook/questions', {
       headers: hook,
