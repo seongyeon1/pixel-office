@@ -332,7 +332,7 @@ export const defaultDirectSettings = (): DirectSettings => ({
   commands: { claude: 'claude', codex: 'codex' },
 });
 // An executable name only: it is interpolated into a shell command.
-const commandSchema = z
+export const commandSchema = z
   .string()
   .trim()
   .min(1)

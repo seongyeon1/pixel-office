@@ -56,24 +56,64 @@ test('a harness launch preserves quoted tasks, deduplicates retries, and can be 
   }
 });
 
-test('launch command selects personal or standard entrypoint without shell interpolation', async () => {
+test('launch command follows the engine of the harness without shell interpolation', async () => {
   const { launchCommand } = await import('../src/server/launcher.js');
   const input = {
     id: '25ff09ab-e861-44cd-9d3a-b5408f853db3',
     provider: 'codex' as const,
-    harness: 'personal' as const,
     prompt: 'task',
   };
-  expect(launchCommand(input)).toBe(
+  expect(launchCommand(input, 'syc')).toBe(
     "syc '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntask'",
   );
-  expect(launchCommand({ ...input, harness: 'standard' })).toBe(
-    "codex '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntask'",
+  expect(launchCommand({ ...input, provider: 'claude' }, 'dots')).toBe(
+    `dots --session-id ${input.id} 'task'`,
   );
-  expect(launchCommand({ ...input, provider: 'claude' })).toBe(
-    `sy --session-id ${input.id} 'task'`,
-  );
-  expect(() => launchCommand({ ...input, id: 'bad;id' })).toThrow();
+  expect(() => launchCommand({ ...input, id: 'bad;id' }, 'syc')).toThrow();
+});
+
+test('a harness is any registered command for its engine; unregistered names never run', async () => {
+  const { resolveHarness, defaultHarnesses } = await import('../src/server/launcher.js');
+  const list = [
+    { engine: 'claude' as const, command: 'dots' },
+    { engine: 'codex' as const, command: 'grokbot' },
+    ...defaultHarnesses((c) => c === 'sy'),
+  ];
+  expect(defaultHarnesses(() => false).map((h) => h.command)).toEqual(['claude', 'codex']);
+  expect(resolveHarness({ provider: 'claude', harness: 'dots' }, list)).toBe('dots');
+  // Registered for the other engine: its logs and resume syntax would not match.
+  expect(resolveHarness({ provider: 'claude', harness: 'grokbot' }, list)).toBeUndefined();
+  expect(resolveHarness({ provider: 'claude', harness: 'muse' }, list)).toBeUndefined();
+  // Names sent by older clients.
+  expect(resolveHarness({ provider: 'claude', harness: 'personal' }, list)).toBe('sy');
+  expect(resolveHarness({ provider: 'codex', harness: 'personal' }, list)).toBeUndefined();
+  expect(resolveHarness({ provider: 'codex', harness: 'standard' }, list)).toBe('codex');
+});
+
+test('a launched coworker keeps the command of its harness for resuming', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pixel-launch-own-'));
+  const terminals = createTerminals({ shell: '/bin/sh' });
+  let harnesses = [{ engine: 'claude' as const, command: 'true' }];
+  const launcher = createLauncher({ terminals, harnesses: () => harnesses });
+  const input = {
+    id: '25ff09ab-e861-44cd-9d3a-b5408f853db3',
+    root,
+    provider: 'claude' as const,
+    harness: 'true',
+    prompt: 'task',
+  };
+  try {
+    expect(() => launcher.start({ ...input, harness: 'false' })).toThrow('등록되지 않은');
+    launcher.start(input);
+    expect(launcher.command(input.id)).toBe('true');
+    expect(launcher.command('unknown')).toBeUndefined();
+    // Removed from the list since: fall back to the default resume command.
+    harnesses = [];
+    expect(launcher.command(input.id)).toBeUndefined();
+  } finally {
+    await terminals.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('launch API requires browser authentication and a connected folder', async () => {
@@ -97,13 +137,12 @@ test('launch API requires browser authentication and a connected folder', async 
     token: 'test',
     port: 4318,
     terminalShell: '/bin/sh',
-    launchCommands: { claude: 'echo sy', codex: 'echo syc' },
   });
   const input = {
     id: '25ff09ab-e861-44cd-9d3a-b5408f853db3',
     root,
     provider: 'codex',
-    harness: 'personal',
+    harness: 'echo',
     prompt: 'test',
   };
   const headers = { host: '127.0.0.1:4318', origin };
@@ -123,10 +162,36 @@ test('launch API requires browser authentication and a connected folder', async 
       app.inject({ method: 'POST', url: '/api/agents', headers: { ...headers, cookie }, payload });
     expect((await post({ ...input, root: tmpdir() })).statusCode).toBe(400);
     expect((await post({ ...input, id: 'bad;id' })).statusCode).toBe(400);
+    const settings = (payload?: Record<string, unknown>) =>
+      app.inject({
+        method: payload ? 'POST' : 'GET',
+        url: '/api/settings/harnesses',
+        headers: { ...headers, cookie },
+        payload,
+      });
+    expect((await settings()).json().harnesses.map((h: { command: string }) => h.command)).toEqual(
+      expect.arrayContaining(['claude', 'codex']),
+    );
+    // Not registered yet, and never a shell fragment.
+    expect((await post(input)).statusCode).toBe(400);
+    expect(
+      (await settings({ harnesses: [{ engine: 'codex', command: 'echo; rm -rf ~' }] })).statusCode,
+    ).toBe(400);
+    const saved = await settings({
+      harnesses: [
+        { engine: 'codex', command: 'echo' },
+        { engine: 'claude', command: 'no-such-harness-here' },
+      ],
+    });
+    expect(saved.json().harnesses).toEqual([
+      { engine: 'codex', command: 'echo', available: true },
+      { engine: 'claude', command: 'no-such-harness-here', available: false },
+    ]);
+    expect((await post({ ...input, provider: 'claude' })).statusCode).toBe(400);
     const created = await post(input);
     expect(created.statusCode).toBe(201);
     expect(created.json().terminal.command).toBe(
-      "echo syc '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntest'",
+      "echo '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntest'",
     );
     const list = await app.inject({
       url: `/api/agents?root=${encodeURIComponent(root)}`,
@@ -146,14 +211,13 @@ test('the chosen model is passed as a literal CLI argument for both personal lau
   const input = {
     id: '25ff09ab-e861-44cd-9d3a-b5408f853db3',
     provider: 'codex' as const,
-    harness: 'personal' as const,
     prompt: 'task',
     model: 'gpt-6-astra',
   };
-  expect(launchCommand(input)).toBe(
+  expect(launchCommand(input, 'syc')).toBe(
     "syc --model 'gpt-6-astra' '<!-- pixel-office-launch:25ff09ab-e861-44cd-9d3a-b5408f853db3 -->\ntask'",
   );
-  expect(launchCommand({ ...input, provider: 'claude', model: 'opus[1m]' })).toBe(
+  expect(launchCommand({ ...input, provider: 'claude', model: 'opus[1m]' }, 'sy')).toBe(
     `sy --session-id ${input.id} --model 'opus[1m]' 'task'`,
   );
 });

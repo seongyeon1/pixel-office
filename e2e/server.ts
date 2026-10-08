@@ -201,6 +201,15 @@ const chat = createChatService({
       );
   },
 });
+// The launcher list must not depend on what happens to be installed on the machine running e2e.
+store.setSetting('launch-harnesses', {
+  harnesses: [
+    { engine: 'claude', command: 'sy' },
+    { engine: 'codex', command: 'syc' },
+    { engine: 'claude', command: 'claude' },
+    { engine: 'codex', command: 'codex' },
+  ],
+});
 const { app } = await createServer({
   store,
   adapters,

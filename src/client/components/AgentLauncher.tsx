@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { api } from '../api';
 import type { ProjectSummary } from '../../shared/contracts';
-import type { LaunchedAgent, LaunchInput } from '../../shared/launcher';
+import type { LaunchedAgent, LaunchHarnessList, LaunchInput } from '../../shared/launcher';
 import './agent-launcher.css';
 const TerminalPane = lazy(() =>
   import('../workspace/TerminalPane').then((m) => ({ default: m.TerminalPane })),
@@ -23,7 +23,11 @@ export function AgentLauncher({
   const [agents, setAgents] = useState<LaunchedAgent[]>([]);
   const [selected, setSelected] = useState<LaunchedAgent>();
   const [provider, setProvider] = useState<LaunchInput['provider']>('claude');
-  const [harness, setHarness] = useState<LaunchInput['harness']>('personal');
+  const [harnesses, setHarnesses] = useState<LaunchHarnessList['harnesses']>([]);
+  const [picked, setHarness] = useState('');
+  const [adding, setAdding] = useState('');
+  const options = harnesses.filter((h) => h.engine === provider);
+  const harness = options.some((h) => h.command === picked) ? picked : (options[0]?.command ?? '');
   const [prompt, setPrompt] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -44,7 +48,32 @@ export function AgentLauncher({
   }, [root]);
   useEffect(() => {
     api<ProjectSummary[]>('/projects').then(setFolders, () => {});
+    api<LaunchHarnessList>('/settings/harnesses').then(
+      (r) => setHarnesses(r.harnesses),
+      (e: Error) => setError(e.message),
+    );
   }, []);
+  const saveHarnesses = async (next: { engine: LaunchInput['provider']; command: string }[]) => {
+    setError('');
+    try {
+      const saved = await api<LaunchHarnessList>('/settings/harnesses', {
+        harnesses: next.map(({ engine, command }) => ({ engine, command })),
+      });
+      setHarnesses(saved.harnesses);
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    }
+  };
+  const addHarness = async () => {
+    const command = adding.trim();
+    if (!command) return;
+    if (await saveHarnesses([...harnesses, { engine: provider, command }])) {
+      setHarness(command);
+      setAdding('');
+    }
+  };
   useEffect(() => {
     let active = true;
     setModels([]);
@@ -169,15 +198,55 @@ export function AgentLauncher({
             </label>
             <label>
               실행 하네스
-              <select
-                value={harness}
-                onChange={(e) => setHarness(e.target.value as LaunchInput['harness'])}
-              >
-                <option value="personal">내 하네스 · {provider === 'claude' ? 'sy' : 'syc'}</option>
-                <option value="standard">기본 CLI · {provider}</option>
+              <select value={harness} onChange={(e) => setHarness(e.target.value)}>
+                {options.map((h) => (
+                  <option key={h.command} value={h.command}>
+                    {h.command}
+                    {h.command === provider ? ' · 기본 CLI' : ''}
+                    {h.available ? '' : ' · 설치 안 됨'}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
+          <details className="launcher-harnesses">
+            <summary>하네스 추가 · 삭제</summary>
+            <p>
+              {provider === 'claude' ? 'Claude Code' : 'Codex'}를 감싸 실행하는 명령(예: sy)을
+              등록하면 그 설정 그대로 동료를 시작하고 이어갑니다.
+            </p>
+            <div className="launcher-harness-add">
+              <input
+                aria-label="추가할 하네스 명령"
+                value={adding}
+                onChange={(e) => setAdding(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  void addHarness();
+                }}
+                placeholder="실행 파일 이름"
+                maxLength={80}
+              />
+              <button type="button" disabled={!adding.trim()} onClick={() => void addHarness()}>
+                추가
+              </button>
+            </div>
+            <ul>
+              {options.map((h) => (
+                <li key={h.command}>
+                  <code>{h.command}</code>
+                  <button
+                    type="button"
+                    aria-label={`하네스 ${h.command} 삭제`}
+                    onClick={() => void saveHarnesses(harnesses.filter((x) => x !== h))}
+                  >
+                    <X size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
           <label>
             모델
             <input
@@ -213,7 +282,7 @@ export function AgentLauncher({
           )}
           <button
             className="primary"
-            disabled={pending || !prompt.trim() || !folder.trim()}
+            disabled={pending || !prompt.trim() || !folder.trim() || !harness}
             type="submit"
           >
             {pending ? '시작 중…' : '동료 시작'}

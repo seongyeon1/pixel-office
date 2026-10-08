@@ -3,8 +3,13 @@ import Fastify from 'fastify';
 import { createSessionRegistry } from './sessions.js';
 import { createWorkspaceReader } from './workspace.js';
 import { createTerminals } from './terminals.js';
-import { createLauncher } from './launcher.js';
-import { launchSchema } from '../shared/launcher.js';
+import { createLauncher, defaultHarnesses, onPath } from './launcher.js';
+import {
+  launchSchema,
+  launchHarnessesSchema,
+  type LaunchHarness,
+  type LaunchHarnessList,
+} from '../shared/launcher.js';
 import { approvalSettings } from './approvals.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -20,6 +25,7 @@ import {
   approvalSettingsSchema,
   type Adapter,
   type DirectSettings,
+  type ObservedSession,
   type Provider,
   type HarnessCatalog,
   type ProjectSummary,
@@ -74,7 +80,15 @@ export async function createServer({
   chat?.useSessions(sessions);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   const terminals = createTerminals({ shell: terminalShell });
-  const launcher = createLauncher({ terminals, commands: launchCommands, store });
+  const launchHarnesses = () =>
+    store.getSetting<{ harnesses: LaunchHarness[] } | null>('launch-harnesses', null)?.harnesses ??
+    defaultHarnesses();
+  const launcher = createLauncher({
+    terminals,
+    commands: launchCommands,
+    store,
+    harnesses: launchHarnesses,
+  });
   const sessionLocks = new Map<string, Promise<void>>();
   const withSession = async <T>(id: string, action: () => Promise<T>): Promise<T> => {
     const previous = sessionLocks.get(id);
@@ -96,6 +110,11 @@ export async function createServer({
     store.getSetting<DirectSettings>('direct', {
       commands: agentCommands ?? { claude: 'claude', codex: 'codex' },
     });
+  // A coworker started from the app resumes under the harness it was started with.
+  const commandsFor = (session: ObservedSession) => {
+    const own = session.launched && launcher.command(session.launched.launchId);
+    return own ? { ...settings().commands, [session.provider]: own } : settings().commands;
+  };
   const terminalFor = (id: string) => {
     const launched = sessions.get(id)?.launched;
     return (launched ? terminals.get(launched.terminalId) : undefined) ?? terminals.find(id);
@@ -155,7 +174,7 @@ export async function createServer({
             throw new ResumeConflict('정리한 작업 폴더입니다. 새 작업으로 시작해주세요.');
           cleanup.assertAvailable(folder);
           info = terminals.create(folder, 100, 30, {
-            command: resumeCommand(session, forked ? 'fork' : 'resume', settings().commands),
+            command: resumeCommand(session, forked ? 'fork' : 'resume', commandsFor(session)),
             tag: session.id,
             persistent: true,
           });
@@ -319,7 +338,7 @@ export async function createServer({
       const existing = terminalFor(session.id);
       if (existing) return existing;
       try {
-        const command = resumeCommand(session, mode, settings().commands);
+        const command = resumeCommand(session, mode, commandsFor(session));
         const folder = await resumeFolder(session);
         if (sessions.get(session.id)?.managed?.busy)
           throw new ResumeConflict('앱 작업을 완료하거나 중단한 뒤 이어가세요.');
@@ -457,6 +476,14 @@ export async function createServer({
       chat?.approvePending();
     }
     return next;
+  });
+  const harnessList = (): LaunchHarnessList => ({
+    harnesses: launchHarnesses().map((h) => ({ ...h, available: onPath(h.command) })),
+  });
+  app.get('/api/settings/harnesses', async () => harnessList());
+  app.post('/api/settings/harnesses', async (req) => {
+    store.setSetting('launch-harnesses', launchHarnessesSchema.parse(req.body));
+    return harnessList();
   });
   app.get('/api/settings/direct', async () => settings());
   app.post('/api/settings/direct', async (req) => {

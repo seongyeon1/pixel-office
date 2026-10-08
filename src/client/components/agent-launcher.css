@@ -69,3 +69,43 @@
   align-self: flex-end;
   padding: 10px 18px;
 }
+
+.launcher-harnesses {
+  font-size: 12px;
+}
+.launcher-harnesses summary {
+  cursor: pointer;
+}
+.launcher-harnesses p {
+  margin: 8px 0;
+}
+.launcher-harness-add {
+  display: flex;
+  gap: 6px;
+}
+.launcher-harness-add button {
+  flex-shrink: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.launcher-harnesses ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.launcher-harnesses li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.launcher-harnesses li button {
+  display: flex;
+  padding: 2px;
+}

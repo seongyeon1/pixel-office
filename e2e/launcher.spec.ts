@@ -23,6 +23,15 @@ test('a new personal-harness agent starts and remains reachable after hiding and
   await expect(launcher.getByRole('combobox', { name: '실행 하네스', exact: true })).toContainText(
     'syc',
   );
+  // Any wrapper around the same CLI can be registered, picked, and removed again.
+  const harness = launcher.getByRole('combobox', { name: '실행 하네스', exact: true });
+  await launcher.getByText('하네스 추가 · 삭제', { exact: true }).click();
+  await launcher.getByLabel('추가할 하네스 명령', { exact: true }).fill('no-such-dots');
+  await launcher.getByRole('button', { name: '추가', exact: true }).click();
+  await expect(harness).toHaveValue('no-such-dots');
+  await expect(harness).toContainText('no-such-dots · 설치 안 됨');
+  await launcher.getByRole('button', { name: '하네스 no-such-dots 삭제', exact: true }).click();
+  await expect(harness).toHaveValue('syc');
   const folder = await realpath(await mkdtemp(join(tmpdir(), 'pixel-launch-choice-')));
   await launcher.getByLabel('작업 폴더', { exact: true }).fill(folder);
   await launcher.getByLabel('모델', { exact: true }).fill('gpt-6-astra');
