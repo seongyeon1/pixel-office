@@ -53,6 +53,27 @@ test('normalizes Codex tools, completion and metadata without exposing reasoning
     }),
   ).toMatchObject({ event: { kind: 'complete', detail: 'done' } });
 });
+test('shows each shell command inside one Codex exec call as a separate tool event', () => {
+  const parsed = parseRecord('codex', {
+    timestamp,
+    type: 'response_item',
+    payload: {
+      type: 'custom_tool_call',
+      name: 'exec',
+      call_id: 'outer-call',
+      input:
+        'const results = await Promise.allSettled([\n' +
+        '  tools.exec_command({cmd:"npm test",workdir:"/repo"}),\n' +
+        '  tools.exec_command({cmd:"rg \\\"hello\\\" src",workdir:"/repo"})\n' +
+        ']);',
+    },
+  });
+  expect(parsed.events).toMatchObject([
+    { kind: 'tool', title: 'exec_command', detail: 'npm test', activity: 'executing' },
+    { kind: 'tool', title: 'exec_command', detail: 'rg "hello" src', activity: 'executing' },
+  ]);
+  expect(parsed.toolStarts).toEqual([{ id: 'outer-call', name: 'exec' }]);
+});
 test('normalizes Claude user requests and tool use; ignores thinking and large raw outputs', () => {
   expect(
     parseRecord('claude', {
@@ -306,6 +327,58 @@ test('links Claude and Codex subagents to the session that spawned them', async 
   const lead = sessions.find((s) => s.sessionId === 'lead')!;
   expect(lead.parentId).toBeUndefined();
   expect(sessions.find((s) => s.sessionId === 'kant')!.parentId).toBe(lead.id);
+  observer.close();
+});
+
+test('names a Claude subagent after its task and treats its closing message as the hand-back', async () => {
+  const f = await fixture();
+  const subagents = join(f.claudeHome, 'projects', 'repo', 'parent-1', 'subagents');
+  await mkdir(subagents, { recursive: true });
+  const row = (extra: object) =>
+    line({ timestamp, sessionId: 'parent-1', cwd: f.repo, agentId: 'abc', ...extra });
+  const text = (value: string) => ({
+    type: 'assistant',
+    // The closing record is written without a stop reason.
+    message: { stop_reason: null, content: [{ type: 'text', text: value }] },
+  });
+  await writeFile(
+    join(f.claudeHome, 'projects', 'repo', 'parent-1.jsonl'),
+    line({
+      timestamp,
+      type: 'user',
+      sessionId: 'parent-1',
+      cwd: f.repo,
+      message: { content: 'go' },
+    }),
+  );
+  await writeFile(
+    join(subagents, 'agent-abc.meta.json'),
+    JSON.stringify({ agentType: 'Explore', description: 'Label captions 3Q24' }),
+  );
+  await writeFile(
+    join(subagents, 'agent-abc.jsonl'),
+    row({ type: 'user', message: { content: 'label them' } }) + row(text('all labelled')),
+  );
+  await writeFile(
+    join(subagents, 'agent-def.jsonl'),
+    row({ agentId: 'def', type: 'user', message: { content: 'read it' } }) +
+      row({
+        agentId: 'def',
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
+      }),
+  );
+  let now = Date.parse(timestamp);
+  const observer = createObservation({ ...f, now: () => now });
+  await observer.scan();
+  const by = (label: string) => observer.list().sessions.find((s) => s.label === label)!;
+  expect(by('Label captions 3Q24')).toMatchObject({ status: 'active' });
+  expect(by('def')).toMatchObject({ status: 'active' });
+  now += 3 * 60000;
+  await observer.scan();
+  expect(by('Label captions 3Q24')).toMatchObject({ status: 'idle' });
+  // Still inside a tool call: unknown, not finished.
+  expect(by('def')).toMatchObject({ status: 'stale' });
   observer.close();
 });
 

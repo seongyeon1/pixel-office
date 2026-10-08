@@ -43,6 +43,9 @@ const SILENT_TOOL_MS = 60000;
 // How long a waiting agent keeps its hand raised: a guess expires with the working session,
 // a real question lasts one working day.
 const GUESSED_WAIT_MS = 30 * 60000;
+// A Claude subagent has nobody to wait for, and its closing record often carries no stop reason:
+// text with no tool in flight for this long is the hand-back.
+const SUBAGENT_DONE_MS = 30000;
 const CERTAIN_WAIT_MS = 8 * 3600000;
 const text = (v: unknown, max = 2000): string =>
   typeof v === 'string'
@@ -83,6 +86,21 @@ function toolDetail(input: unknown): string {
       '',
     1000,
   );
+}
+function shellCommands(input: unknown): string[] {
+  if (typeof input !== 'string') return [];
+  const commands: string[] = [];
+  // Codex records a functions.exec script as one call. Its nested exec_command
+  // calls have no separate log rows, so read their literal cmd arguments here.
+  const calls = /tools\.exec_command\s*\(\s*\{\s*cmd\s*:\s*("(?:\\.|[^"\\])*")/g;
+  for (const match of input.matchAll(calls)) {
+    try {
+      commands.push(JSON.parse(match[1]));
+    } catch {
+      /* Dynamic or malformed commands retain the outer tool event. */
+    }
+  }
+  return commands;
 }
 // Only visible messages and tool summaries are retained. Thinking, instructions and raw outputs are omitted.
 export function parseRecord(provider: Provider, row: RecordValue): Parsed {
@@ -134,16 +152,25 @@ export function parseRecord(provider: Provider, row: RecordValue): Parsed {
         };
     }
     if (row.type === 'response_item') {
-      if (['function_call', 'custom_tool_call'].includes(p.type))
+      if (['function_call', 'custom_tool_call'].includes(p.type)) {
+        const commands = ['exec', 'functions.exec'].includes(String(p.name))
+          ? shellCommands(p.input)
+          : [];
+        const events = commands.map((cmd) => event('tool', 'exec_command', cmd, 'executing'));
         return {
           toolStarts: p.call_id ? [{ id: String(p.call_id), name: text(p.name, 100) }] : [],
-          event: event(
-            'tool',
-            text(p.name, 100),
-            toolDetail(p.arguments ?? p.input),
-            activity(String(p.name)),
-          ),
+          ...(events.length
+            ? { events, event: events.at(-1) }
+            : {
+                event: event(
+                  'tool',
+                  text(p.name, 100),
+                  toolDetail(p.arguments ?? p.input),
+                  activity(String(p.name)),
+                ),
+              }),
         };
+      }
       if (['function_call_output', 'custom_tool_call_output'].includes(p.type))
         return {
           toolEnds: p.call_id ? [String(p.call_id)] : [],
@@ -256,6 +283,10 @@ interface Cursor {
   pending: Map<string, { name: string; since: number; timestamp: string }>;
   subagent: boolean;
   parentKey: string;
+  lastKind: ObservedEvent['kind'] | '';
+  // Named from the spawn record (task description) rather than the agent id in each row.
+  named: boolean;
+  nameTries: number;
 }
 interface Options {
   codexHome?: string;
@@ -460,6 +491,9 @@ export function createObservation(options: Options = {}) {
     pending: new Map(),
     subagent: provider === 'claude' && file.includes(`${sep}subagents${sep}`),
     parentKey: '',
+    lastKind: '',
+    named: false,
+    nameTries: 0,
     info: {
       id:
         'observed-' +
@@ -497,7 +531,7 @@ export function createObservation(options: Options = {}) {
         if (parsed.cwd && isAbsolute(parsed.cwd)) cursor.cwd = parsed.cwd;
         if (parsed.sessionId) cursor.info.sessionId = parsed.sessionId;
         if (parsed.model) cursor.info.model = parsed.model;
-        if (parsed.label) cursor.info.label = parsed.label;
+        if (parsed.label && !cursor.named) cursor.info.label = parsed.label;
         if (parsed.prompt) cursor.info.prompt = parsed.prompt;
         if (parsed.automated !== undefined) {
           cursor.info.automated = parsed.automated;
@@ -538,6 +572,7 @@ export function createObservation(options: Options = {}) {
           if (stamp >= cursor.lastActivity) {
             cursor.lastActivity = stamp;
             cursor.openTurn = item.kind !== 'complete';
+            cursor.lastKind = item.kind;
             cursor.info.activity = item.activity;
             cursor.info.updatedAt = item.timestamp;
           }
@@ -627,6 +662,17 @@ export function createObservation(options: Options = {}) {
       }
     }
     if (c.subagent && !c.parentKey) c.parentKey = c.info.sessionId;
+    // Claude writes agent-<id>.meta.json beside the log, possibly a moment after the log itself.
+    if (c.subagent && provider === 'claude' && !c.named && c.nameTries++ < 5) {
+      const meta = await readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')
+        .then((raw) => object(JSON.parse(raw)))
+        .catch(() => ({}) as RecordValue);
+      const name = text(meta.description, 100).trim() || text(meta.agentType, 100).trim();
+      if (name) {
+        c.info.label = name;
+        c.named = true;
+      }
+    }
   };
   // Runs after the process registry so a closed terminal cannot keep asking.
   const settle = (c: Cursor) => {
@@ -635,13 +681,20 @@ export function createObservation(options: Options = {}) {
     if (attention && quiet > (attention.certain ? CERTAIN_WAIT_MS : GUESSED_WAIT_MS))
       attention = null;
     c.info.attention = attention;
-    c.info.status = c.openTurn
-      ? quiet < 120000 || attention?.certain
-        ? 'active'
-        : 'stale'
-      : c.lastActivity
-        ? 'idle'
-        : 'stale';
+    const handedBack =
+      c.subagent &&
+      c.provider === 'claude' &&
+      c.lastKind === 'message' &&
+      !c.pending.size &&
+      quiet >= SUBAGENT_DONE_MS;
+    c.info.status =
+      c.openTurn && !handedBack
+        ? quiet < 120000 || attention?.certain
+          ? 'active'
+          : 'stale'
+        : c.lastActivity
+          ? 'idle'
+          : 'stale';
     if (c.info.status !== 'active') c.info.activity = 'idle';
   };
   const processRegistry = async () => {
