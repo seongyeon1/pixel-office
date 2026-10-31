@@ -80,7 +80,7 @@ type Project = {
 type Snapshot = { run: Run; events: OfficeEvent[]; interactions: Interaction[]; sequence: number };
 type Health = {
   providers: Record<Provider, Connection>;
-  activeId: string | null;
+  activeIds: string[];
   demo: boolean;
   features?: { agentLauncher?: boolean };
 };
@@ -312,7 +312,7 @@ export function App() {
         setObservation(observed);
         const root =
           localStorage.getItem('pixel.project') ??
-          repositories.find((p) => p.latestRun?.id === h.activeId)?.root ??
+          repositories.find((p) => p.latestRun && h.activeIds.includes(p.latestRun.id))?.root ??
           observed.sessions[0]?.projectPath;
         if (root) await switchProject(root, undefined, { keepView: true });
         if (!cancelled) setBooted(true);

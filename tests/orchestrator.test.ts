@@ -10,6 +10,7 @@ import {
   type Adapter,
   type PhaseInput,
   type Review,
+  type Run,
 } from '../src/shared/contracts.js';
 import { personaInstructions } from '../src/server/personas.js';
 async function project() {
@@ -167,10 +168,15 @@ test('cancelled implementation cannot trigger reviewer even with late success', 
   };
   const run = await o.start(input);
   await new Promise((r) => setTimeout(r, 15));
-  await expect(o.start(input)).rejects.toThrow('진행 중');
+  // A second run in the same folder waits instead of being refused.
+  const second = await o.start(input);
+  expect(store.getRun(second.id)?.status).toBe('queued');
+  expect(o.queuePosition(second.id)).toBe(1);
   await o.cancel(run.id);
   expect(store.getRun(run.id)?.status).toBe('cancelled');
   expect(reviewer).toBe(false);
+  await o.cancel(second.id);
+  expect(store.getRun(second.id)?.status).toBe('cancelled');
   store.close();
 });
 test('a run keeps the repository harness it started with and hands each provider its own part', async () => {
@@ -293,7 +299,7 @@ test.each(['codex', 'claude'] as const)(
         implementer: exhausted,
         team: defaultTeam(),
       });
-      await wait(() => !o.activeId);
+      await wait(() => o.activeIds.length === 0);
       expect(store.getRun(run.id)?.status).toBe('completed');
       expect(inputs.map((i) => i.role)).toEqual(['implementer', 'reviewer']);
       expect(inputs[0].prompt).toContain('partial work summary');
@@ -332,7 +338,7 @@ test('a reviewer quota failure continues read-only review on the available provi
       implementer: 'codex',
       team: defaultTeam(),
     });
-    await wait(() => !o.activeId);
+    await wait(() => o.activeIds.length === 0);
     expect(store.getRun(run.id)?.status).toBe('completed');
     expect(roles).toEqual(['implementer', 'reviewer']);
     const notice = store.events(run.id).find((e) => e.type === 'provider.fallback');
@@ -388,7 +394,7 @@ test.each(['quota', 'unavailable', 'ordinary', 'cancel'] as const)(
         await wait(() => attempts > 0);
         await o.cancel(run.id);
       }
-      await wait(() => !o.activeId);
+      await wait(() => o.activeIds.length === 0);
       expect(store.getRun(run.id)?.status).toBe(
         scenario === 'ordinary'
           ? 'failed'
@@ -432,7 +438,7 @@ test('after review fallback, revisions and handoffs stay on the available provid
       implementer: 'codex',
       team: defaultTeam(),
     });
-    await wait(() => !o.activeId);
+    await wait(() => o.activeIds.length === 0);
     expect(store.getRun(run.id)?.status).toBe('completed');
     expect(roles).toEqual(['implementer', 'reviewer', 'implementer', 'reviewer']);
     const events = store.events(run.id);
@@ -480,7 +486,6 @@ test('follow-up preserves workspace files, context and separate durable run hist
       baseCommit: first.baseCommit,
       branch: first.branch,
     });
-    await expect(o.followUp(first.id, 'concurrent')).rejects.toThrow('진행 중');
     await wait(() => store.getRun(next.id)?.status === 'completed');
     expect(inputs[1].prompt).toContain('first request');
     expect(inputs[1].prompt).toContain('result 1');
@@ -672,4 +677,226 @@ test('plain folder runs without git and follow-ups reuse the folder', async () =
     await o.shutdown();
     store.close();
   }
+});
+// A fake whose every execution waits until the test releases that run.
+const gated = (onInput?: (i: PhaseInput) => void) => {
+  const gates = new Map<string, () => void>();
+  const adapter = fake(async (i) => {
+    onInput?.(i);
+    await new Promise<void>((r) => {
+      gates.set(i.runId, r);
+      i.signal.addEventListener('abort', () => r(), { once: true });
+    });
+    return { outcome: 'completed', text: `done ${i.runId}` };
+  });
+  return { adapter, release: (id: string) => gates.get(id)?.() };
+};
+const solo = (projectPath: string) => ({
+  projectPath,
+  prompt: 'task',
+  mode: 'codex' as const,
+  implementer: 'codex' as const,
+  team: defaultTeam(),
+});
+test('runs in different folders overlap, runs in one folder are serial', async () => {
+  const store = createStore(':memory:');
+  const { adapter, release } = gated();
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-lanes-')),
+  });
+  try {
+    const [a, b] = [await project(), await project()];
+    const a1 = await o.start(solo(a));
+    const a2 = await o.start(solo(a));
+    const b1 = await o.start(solo(b));
+    await wait(() => store.getRun(a1.id)?.status === 'running');
+    await wait(() => store.getRun(b1.id)?.status === 'running');
+    expect(store.getRun(a2.id)?.status).toBe('queued');
+    expect(o.queuePosition(a2.id)).toBe(1);
+    expect(o.queuePosition(a1.id)).toBe(0);
+    expect([...o.activeIds].sort()).toEqual([a1.id, b1.id].sort());
+    release(a1.id);
+    await wait(() => store.getRun(a1.id)?.status === 'completed');
+    await wait(() => store.getRun(a2.id)?.status === 'running');
+    expect(o.queuePosition(a2.id)).toBe(0);
+    release(a2.id);
+    release(b1.id);
+    await wait(() => o.activeIds.length === 0);
+    expect(store.getRun(a2.id)?.status).toBe('completed');
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('global limit queues the fourth run', async () => {
+  const store = createStore(':memory:');
+  const { adapter, release } = gated();
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-limit-')),
+  });
+  try {
+    const runs: Run[] = [];
+    for (let i = 0; i < 4; i++) runs.push(await o.start(solo(await project())));
+    await wait(() => runs.slice(0, 3).every((r) => store.getRun(r.id)?.status === 'running'));
+    expect(store.getRun(runs[3].id)?.status).toBe('queued');
+    expect(o.queuePosition(runs[3].id)).toBe(1);
+    release(runs[0].id);
+    await wait(() => store.getRun(runs[3].id)?.status === 'running');
+    for (const r of runs) release(r.id);
+    await wait(() => o.activeIds.length === 0);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('the concurrency setting changes the global limit', async () => {
+  const store = createStore(':memory:');
+  store.setSetting('concurrency', { limit: 1 });
+  const { adapter, release } = gated();
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-limit-')),
+  });
+  try {
+    const first = await o.start(solo(await project()));
+    const second = await o.start(solo(await project()));
+    await wait(() => store.getRun(first.id)?.status === 'running');
+    expect(store.getRun(second.id)?.status).toBe('queued');
+    store.setSetting('concurrency', { limit: 2 });
+    o.drain();
+    await wait(() => store.getRun(second.id)?.status === 'running');
+    release(first.id);
+    release(second.id);
+    await wait(() => o.activeIds.length === 0);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('whenDone follow-up waits and resumes the latest session', async () => {
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const gates = new Map<string, () => void>();
+  const adapter = fake(async (i, emit) => {
+    inputs.push(i);
+    await new Promise<void>((r) => gates.set(i.runId, r));
+    emit({ runId: i.runId, agentId: 'codex', type: 'agent.session', payload: { sessionId: 's2' } });
+    return { outcome: 'completed', text: 'original result' };
+  });
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-whendone-')),
+  });
+  try {
+    const first = await o.start(solo(await project()));
+    await wait(() => store.getRun(first.id)?.status === 'running');
+    await expect(o.followUp(first.id, '추가')).rejects.toThrow('진행 중');
+    const next = await o.followUp(first.id, '추가', { whenDone: true });
+    expect(next.status).toBe('queued');
+    expect(o.queuePosition(next.id)).toBe(1);
+    gates.get(first.id)!();
+    await wait(() => inputs.length === 2);
+    expect(inputs[1].runId).toBe(next.id);
+    expect(inputs[1].resumeSessionId).toBe('s2');
+    expect(inputs[1].prompt).toContain('original result');
+    gates.get(next.id)!();
+    await wait(() => store.getRun(next.id)?.status === 'completed');
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('cancel removes a queued run', async () => {
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const { adapter, release } = gated((i) => inputs.push(i));
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-cancel-queued-')),
+  });
+  try {
+    const folder = await project();
+    const first = await o.start(solo(folder));
+    const second = await o.start(solo(folder));
+    const third = await o.start(solo(folder));
+    expect(o.queuePosition(third.id)).toBe(2);
+    await o.cancel(second.id);
+    expect(store.getRun(second.id)?.status).toBe('cancelled');
+    expect(o.queuePosition(second.id)).toBe(0);
+    expect(o.queuePosition(third.id)).toBe(1);
+    await wait(() => inputs.length === 1);
+    release(first.id);
+    await wait(() => store.getRun(third.id)?.status === 'running');
+    await wait(() => inputs.length === 2);
+    release(third.id);
+    await wait(() => o.activeIds.length === 0);
+    expect(inputs.map((i) => i.runId)).toEqual([first.id, third.id]);
+    expect(store.getRun(second.id)?.status).toBe('cancelled');
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('a queued personal run takes its baseline when it starts, not when it was queued', async () => {
+  const { collectRunChanges } = await import('../src/server/projects.js');
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const { adapter, release } = gated((i) => inputs.push(i));
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-baseline-')),
+  });
+  try {
+    const folder = await project();
+    const first = await o.start(solo(folder));
+    const second = await o.start(solo(folder));
+    await wait(() => inputs.length === 1);
+    await writeFile(join(inputs[0].cwd, 'first.txt'), 'first');
+    for (const args of [
+      ['add', '.'],
+      ['-c', 'user.name=Pixel', '-c', 'user.email=pixel@example.test', 'commit', '-m', 'first'],
+    ])
+      execFileSync('git', args, { cwd: inputs[0].cwd, stdio: 'pipe' });
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: folder }).toString().trim();
+    expect(second.baseCommit).not.toBe(head);
+    release(first.id);
+    await wait(() => inputs.length === 2);
+    const started = store.getRun(second.id)!;
+    expect(started.baseCommit).toBe(head);
+    expect((await collectRunChanges(started)).map((c) => c.path)).not.toContain('first.txt');
+    expect(inputs[1].prompt).not.toContain('first.txt');
+    release(second.id);
+    await wait(() => o.activeIds.length === 0);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('shutdown stops every running run and drops the queue', async () => {
+  const store = createStore(':memory:');
+  const { adapter } = gated();
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-shutdown-')),
+  });
+  const folder = await project();
+  const a = await o.start(solo(folder));
+  const b = await o.start(solo(await project()));
+  const queued = await o.start(solo(folder));
+  await wait(() => store.getRun(b.id)?.status === 'running');
+  await o.shutdown();
+  expect(store.getRun(a.id)?.status).toBe('cancelled');
+  expect(store.getRun(b.id)?.status).toBe('cancelled');
+  expect(store.getRun(queued.id)?.status).toBe('queued');
+  expect(o.activeIds).toEqual([]);
+  store.close();
 });

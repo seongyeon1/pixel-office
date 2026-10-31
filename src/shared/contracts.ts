@@ -121,6 +121,10 @@ export interface Interaction {
 export type Answer = { decision: 'approve' | 'deny' } | { answers: Record<string, string[]> };
 export const approvalSettingsSchema = z.object({ mode: z.enum(['manual', 'auto']) }).strict();
 export type ApprovalSettings = z.infer<typeof approvalSettingsSchema>;
+export const concurrencySettingsSchema = z
+  .object({ limit: z.number().int().min(1).max(8) })
+  .strict();
+export type ConcurrencySettings = z.infer<typeof concurrencySettingsSchema>;
 export const reviewSchema = z.object({
   verdict: z.enum(['pass', 'changes_requested', 'inconclusive']),
   summary: z.string(),
