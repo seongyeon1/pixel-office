@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { ApprovalSettings } from './ApprovalSettings';
+import { CoworkerSettings } from './CoworkerSettings';
+import { SlackSettings } from './SlackSettings';
 import { CoworkerAvatar } from './CoworkerAvatar';
 import {
   seniorityLabels,
@@ -37,6 +39,8 @@ export function TeamPanel({
   return (
     <div className="team-settings">
       <ApprovalSettings />
+      <SlackSettings />
+      <CoworkerSettings />
       <p className="muted">모델과 담당 역할을 정해주세요. 직급 지침은 격리 환경에서만 적용됩니다.</p>
       {(['claude', 'codex'] as const).map((id) => (
         <section className="team-setting" key={id}>

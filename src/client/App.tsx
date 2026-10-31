@@ -1448,6 +1448,7 @@ export function App() {
                       </span>
                       <span>
                         <strong>
+                          {r.origin?.kind === 'slack' && <span className="origin-badge">Slack</span>}
                           {r.parentRunId ? '추가 요청 · ' : ''}
                           {r.prompt}
                         </strong>
