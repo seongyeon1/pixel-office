@@ -23,17 +23,32 @@ const TOGGLES: { label: string; patterns: string[] }[] = [
   },
 ];
 const toggled = new Set(TOGGLES.flatMap((t) => t.patterns));
-const isOn = (rules: ToolRule[], patterns: string[]) =>
-  rules.some((r) => patterns.includes(r.pattern) && r.action === 'ask');
-function setToggle(rules: ToolRule[], patterns: string[], on: boolean): ToolRule[] {
-  const action: ToolRule['action'] = on ? 'ask' : 'auto';
-  const next = rules.map((r) => (patterns.includes(r.pattern) ? { ...r, action } : r));
-  const missing = patterns.filter((p) => !rules.some((r) => r.pattern === p));
-  return [...next, ...missing.map((pattern): ToolRule => ({ pattern, action }))];
+const firstAction = (rules: ToolRule[], pattern: string): ToolRule['action'] =>
+  rules.find((r) => r.pattern === pattern)?.action ?? 'auto';
+const askCount = (rules: ToolRule[], patterns: string[]) =>
+  patterns.filter((p) => firstAction(rules, p) === 'ask').length;
+// Toggle-owned patterns lead the list (first match wins), so a broader custom rule cannot shadow them.
+function normalize(rules: ToolRule[]): { rules: ToolRule[]; merged: number } {
+  const owned = rules.filter((r) => toggled.has(r.pattern));
+  const lead = [...toggled].map((pattern): ToolRule => ({
+    pattern,
+    action: firstAction(rules, pattern),
+  }));
+  return {
+    rules: [...lead, ...rules.filter((r) => !toggled.has(r.pattern))],
+    merged: owned.length - new Set(owned.map((r) => r.pattern)).size,
+  };
 }
+const setToggle = (rules: ToolRule[], patterns: string[], on: boolean): ToolRule[] =>
+  normalize(rules).rules.map((r) =>
+    patterns.includes(r.pattern) ? { ...r, action: on ? 'ask' : 'auto' } : r,
+  );
 
 type Draft = Omit<Coworker, 'bindings'> & { bindings: string };
-const toDraft = (c: Coworker): Draft => ({ ...c, bindings: c.bindings.join(', ') });
+const toDraft = (c: Coworker): Draft => ({
+  ...c,
+  bindings: c.bindings.join(', '),
+});
 const slug = (folder: string) =>
   (folder.split('/').filter(Boolean).pop() ?? '')
     .toLowerCase()
@@ -59,6 +74,7 @@ export function CoworkerSettings() {
   const [commands, setCommands] = useState<LaunchHarnessList['harnesses']>([]);
   const [draft, setDraft] = useState<Draft>();
   const [isNew, setIsNew] = useState(false);
+  const [merged, setMerged] = useState(0);
   const [harnessRoot, setHarnessRoot] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState('');
@@ -82,11 +98,17 @@ export function CoworkerSettings() {
     );
   }, []);
   const open = (next: Draft, created: boolean) => {
-    setDraft(next);
+    setMerged(normalize(next.rules).merged);
+    setDraft({ ...next, rules: normalize(next.rules).rules });
     setIsNew(created);
     setSaved('');
     setWarnings([]);
     setError('');
+  };
+  const closeForm = () => {
+    setDraft(undefined);
+    setWarnings([]);
+    setSaved('');
   };
   const patch = (value: Partial<Draft>) => setDraft((d) => d && { ...d, ...value });
   const patchRule = (i: number, value: Partial<ToolRule>) =>
@@ -100,13 +122,15 @@ export function CoworkerSettings() {
       const { bindings, command, model, ...rest } = draft;
       const result = await api<Coworker & { warnings?: string[] }>('/coworkers', {
         ...rest,
+        rules: normalize(rest.rules).rules,
         command: command || undefined,
         model: model?.trim() || undefined,
         bindings: bindings.split(/[\s,]+/).filter(Boolean),
       });
       setWarnings(result.warnings ?? []);
       setSaved(`${result.name} 설정을 저장했어요.`);
-      setDraft(toDraft(result));
+      setDraft({ ...toDraft(result), rules: normalize(result.rules).rules });
+      setMerged(0);
       setIsNew(false);
       await load();
     } catch (e) {
@@ -119,7 +143,7 @@ export function CoworkerSettings() {
     setError('');
     try {
       await api(`/coworkers/${c.id}`, undefined, 'DELETE');
-      if (draft?.id === c.id) setDraft(undefined);
+      if (draft?.id === c.id) closeForm();
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -231,6 +255,9 @@ export function CoworkerSettings() {
                   onChange={(e) => patch({ command: e.target.value || undefined })}
                 >
                   <option value="">기본값</option>
+                  {draft.command && !commandOptions.some((h) => h.command === draft.command) && (
+                    <option value={draft.command}>{draft.command}</option>
+                  )}
                   {commandOptions.map((h) => (
                     <option key={h.command} value={h.command}>
                       {h.command}
@@ -285,7 +312,19 @@ export function CoworkerSettings() {
                   <label key={t.label} className="coworker-toggle">
                     <input
                       type="checkbox"
-                      checked={isOn(draft.rules, t.patterns)}
+                      ref={(el) => {
+                        if (!el) return;
+                        const n = askCount(draft.rules, t.patterns);
+                        el.indeterminate = n > 0 && n < t.patterns.length;
+                      }}
+                      aria-checked={
+                        askCount(draft.rules, t.patterns) === 0
+                          ? 'false'
+                          : askCount(draft.rules, t.patterns) === t.patterns.length
+                            ? 'true'
+                            : 'mixed'
+                      }
+                      checked={askCount(draft.rules, t.patterns) === t.patterns.length}
                       onChange={(e) =>
                         patch({ rules: setToggle(draft.rules, t.patterns, e.target.checked) })
                       }
@@ -293,6 +332,11 @@ export function CoworkerSettings() {
                     {t.label}
                   </label>
                 ))}
+                {merged > 0 && (
+                  <p className="hint">
+                    토글과 같은 패턴의 규칙 {merged}개를 토글 설정으로 합쳤어요.
+                  </p>
+                )}
                 {draft.rules.map(
                   (r, i) =>
                     !toggled.has(r.pattern) && (
@@ -350,7 +394,7 @@ export function CoworkerSettings() {
             <button type="submit" className="primary" disabled={saving}>
               {saving ? '저장 중…' : '저장'}
             </button>
-            <button type="button" onClick={() => setDraft(undefined)}>
+            <button type="button" onClick={closeForm}>
               닫기
             </button>
           </div>

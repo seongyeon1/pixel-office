@@ -13,14 +13,14 @@ export function SlackSettings() {
   const [botToken, setBotToken] = useState('');
   const [appToken, setAppToken] = useState('');
   const [ownerId, setOwnerId] = useState('');
-  const [limit, setLimit] = useState(3);
+  const [limit, setLimit] = useState('3');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   useEffect(() => {
     api<SlackStatus>('/settings/slack').then(setStatus, (e: Error) => setError(e.message));
     api<{ limit: number }>('/settings/concurrency').then(
-      (r) => setLimit(r.limit),
+      (r) => setLimit(String(r.limit)),
       () => {},
     );
   }, []);
@@ -38,10 +38,19 @@ export function SlackSettings() {
   }
   const connect = () =>
     run(async () => {
-      const next = await api<SlackStatus>('/settings/slack', { botToken, appToken, ownerId });
-      setStatus(next);
-      setBotToken('');
-      setAppToken('');
+      const owner = ownerId.trim();
+      if (!botToken.startsWith('xoxb-')) throw new Error('Bot 토큰은 xoxb-로 시작해야 해요.');
+      if (!appToken.startsWith('xapp-')) throw new Error('App 토큰은 xapp-로 시작해야 해요.');
+      if (!/^U[A-Z0-9]+$/.test(owner))
+        throw new Error('Slack member ID는 U로 시작하는 영문 대문자·숫자예요. 예: U0123ABCD');
+      try {
+        setStatus(
+          await api<SlackStatus>('/settings/slack', { botToken, appToken, ownerId: owner }),
+        );
+      } finally {
+        setBotToken('');
+        setAppToken('');
+      }
       return 'Slack에 연결했어요.';
     });
   const disconnect = () =>
@@ -50,14 +59,14 @@ export function SlackSettings() {
       setStatus({ configured: false });
       return 'Slack 연결을 해제했어요.';
     });
-  const saveLimit = (value: number) => {
-    setLimit(value);
-    if (Number.isInteger(value) && value >= 1 && value <= 8)
-      void run(async () => {
-        await api('/settings/concurrency', { limit: value });
-        return '동시 실행 상한을 저장했어요.';
-      });
-  };
+  const saveLimit = () =>
+    run(async () => {
+      const value = Number(limit);
+      if (!limit.trim() || !Number.isInteger(value) || value < 1 || value > 8)
+        throw new Error('동시 실행 상한은 1에서 8 사이의 정수로 입력해 주세요.');
+      await api('/settings/concurrency', { limit: value });
+      return '동시 실행 상한을 저장했어요.';
+    });
   return (
     <section className="slack-settings" aria-label="Slack 설정">
       <h3>Slack</h3>
@@ -120,9 +129,12 @@ export function SlackSettings() {
           min={1}
           max={8}
           value={limit}
-          onChange={(e) => saveLimit(e.target.valueAsNumber)}
+          onChange={(e) => setLimit(e.target.value)}
         />
       </label>
+      <button type="button" disabled={busy} onClick={() => void saveLimit()}>
+        상한 저장
+      </button>
       {message && (
         <p className="approval-setting-status" role="status">
           {message}

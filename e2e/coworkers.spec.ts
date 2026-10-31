@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 test('coworker and Slack settings', async ({ page }) => {
   const project = (await readFile('.pixel/e2e-project.txt', 'utf8')).trim();
@@ -35,6 +36,61 @@ test('coworker and Slack settings', async ({ page }) => {
   await slack.getByLabel('App 토큰').fill('xapp-1-test');
   await slack.getByLabel('내 Slack member ID').fill('U0123ABCD');
   await slack.getByRole('button', { name: '연결 테스트 후 저장' }).click();
-  await expect(slack.getByRole('alert')).toBeVisible();
+  await expect(slack.getByRole('alert')).toContainText('Bot 토큰은 xoxb-로 시작해야 해요.');
   await expect(slack.getByRole('alert')).not.toContainText('not-a-token');
+
+  // Toggle-owned patterns lead the saved rules; a mixed group renders as mixed.
+  const rule = (pattern: string, action: string) => ({ pattern, action });
+  await page.evaluate(
+    async ([folder, rules]) => {
+      const r = await fetch('/api/coworkers', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: 'mixed-friend',
+          name: '혼합 동료',
+          folder,
+          engine: 'claude',
+          role: '',
+          mode: 'solo',
+          bindings: [],
+          createdBy: 'user',
+          rules,
+        }),
+      });
+      if (!r.ok) throw new Error('save failed');
+    },
+    [
+      dirname(project),
+      [
+        rule('mcp__github__*', 'ask'),
+        rule('mcp__*__*delete*', 'ask'),
+        rule('mcp__*__*post*', 'auto'),
+        rule('mcp__*__*publish*', 'auto'),
+        rule('mcp__*__*publish*', 'ask'),
+      ],
+    ] as const,
+  );
+  await page.reload();
+  await page.getByRole('button', { name: '팀 구성', exact: true }).click();
+  await coworkers
+    .getByRole('listitem')
+    .filter({ hasText: '혼합 동료' })
+    .getByRole('button', { name: '수정' })
+    .click();
+  const group = coworkers.getByLabel('그 외 외부 쓰기');
+  expect(await group.evaluate((el: HTMLInputElement) => el.indeterminate)).toBe(true);
+  await expect(coworkers).toContainText('토글과 같은 패턴의 규칙 1개를 토글 설정으로 합쳤어요.');
+  await coworkers.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(coworkers.getByRole('status').last()).toContainText('저장했어요');
+  const after = await page.evaluate(async () => {
+    const r = await fetch('/api/coworkers');
+    return (await r.json()) as { id: string; rules: { pattern: string; action: string }[] }[];
+  });
+  const mixed = after.find((c) => c.id === 'mixed-friend')!.rules;
+  expect(mixed.at(-1)).toEqual(rule('mcp__github__*', 'ask'));
+  expect(mixed.findIndex((r) => r.pattern === 'mcp__*__*publish*')).toBeLessThan(mixed.length - 1);
+  expect(mixed.filter((r) => r.pattern === 'mcp__*__*publish*')).toEqual([
+    rule('mcp__*__*publish*', 'auto'),
+  ]);
 });
