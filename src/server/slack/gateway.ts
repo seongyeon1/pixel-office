@@ -418,7 +418,13 @@ export function createSlackGateway({
         const job = slackJob(id);
         if (job) jobs.set(job.id, job);
       }
-      await Promise.all([...jobs.values()].map((job) => say(job, INTERRUPTED)));
+      await Promise.all(
+        [...jobs.values()].map(async (job) => {
+          await say(job, INTERRUPTED);
+          // The status message still shows the run as working until it is redrawn.
+          schedule(job.id);
+        }),
+      );
     },
     // The coordinator's voice in the job thread. Throws only a Slack error code.
     async reply(jobId: string, text: string) {

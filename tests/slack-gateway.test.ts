@@ -331,6 +331,20 @@ test('notifyInterrupted tells each Slack job thread once and ignores other runs'
   );
 });
 
+test('notifyInterrupted also refreshes the status message so it stops saying 작업 중', async () => {
+  vi.useFakeTimers();
+  const t = await start();
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  const job = t.store.getJobByThread('T1:C1:1.1')!;
+  t.store.updateJob(job.id, { statusTs: 's1' });
+  t.store.updateRun('run1', { status: 'interrupted' });
+  await t.gateway.notifyInterrupted(['run1']);
+  await vi.advanceTimersByTimeAsync(1000);
+  const edit = t.calls.filter((c) => c[0] === 'update' && c[2] === 's1').at(-1)!;
+  expect(JSON.stringify(edit[3])).toContain('연결 종료');
+});
+
 test('the same message delivered twice makes one job', async () => {
   const t = await start();
   await t.send({ eventId: 'Ev1' });
