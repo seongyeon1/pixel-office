@@ -16,11 +16,12 @@ import {
   type Department,
   emptyHarness,
 } from '../shared/contracts.js';
-import type { Coworker } from '../shared/coworkers.js';
+import type { Coworker, CoworkerDraft } from '../shared/coworkers.js';
 export interface Assignment {
   id: string;
   coworkerId: string;
-  runId: string;
+  // Absent while the assignment waits for `after` to finish.
+  runId?: string;
   task: string;
   after?: string;
 }
@@ -33,6 +34,9 @@ export interface Job {
   statusTs?: string;
   route: { kind: 'coordinator' } | { kind: 'coworker'; coworkerId: string };
   assignments: Assignment[];
+  coordinatorSessionId?: string;
+  // Coworkers the coordinator proposed, waiting for the owner's [만들기].
+  proposals?: Record<string, CoworkerDraft>;
   state: 'open' | 'done';
   createdAt: string;
 }

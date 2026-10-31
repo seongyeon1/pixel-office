@@ -6,7 +6,7 @@ import {
   type OfficeEvent,
   type Run,
 } from '../../shared/contracts.js';
-import type { Coworker } from '../../shared/coworkers.js';
+import { DEFAULT_RULES, type Coworker, type CoworkerDraft } from '../../shared/coworkers.js';
 import type { Coworkers } from '../coworkers.js';
 import type { Orchestrator } from '../orchestrator.js';
 import type { Job, Store } from '../store.js';
@@ -15,6 +15,7 @@ import {
   buttonQuestion,
   clip,
   planBlocks,
+  proposalBlocks,
   questionBlocks,
   questionKey,
   questionsOf,
@@ -43,7 +44,7 @@ export function createSlackGateway({
 }: {
   store: Store;
   port: SlackPort;
-  coworkers: Pick<Coworkers, 'get' | 'list' | 'forChannel'>;
+  coworkers: Pick<Coworkers, 'get' | 'list' | 'forChannel' | 'save'>;
   orchestrator: Pick<Orchestrator, 'startFor' | 'followUp' | 'answer' | 'queuePosition'>;
   coordinator: Coordinator;
   ownerId: string;
@@ -51,7 +52,14 @@ export function createSlackGateway({
   // Receives only a Slack error code, never a raw error that could carry a token.
   onError?: (code: string) => void;
 }) {
-  const fail = (e: unknown) => onError(slackErrorCode(e));
+  // A throwing onError must not turn into an unhandled rejection.
+  const fail = (e: unknown) => {
+    try {
+      onError(slackErrorCode(e));
+    } catch {
+      // ignored
+    }
+  };
   // Kept in memory: a restart interrupts every run, so no request outlives the process.
   const replies = new Map<string, { channel: string; ts: string; title: string }>();
   const posting = new Map<string, Promise<void>>();
@@ -148,7 +156,7 @@ export function createSlackGateway({
   const render = async (jobId: string) => {
     const job = store.getJob(jobId);
     if (!job) return;
-    const runs = job.assignments.flatMap((a) => store.getRun(a.runId) ?? []);
+    const runs = job.assignments.flatMap((a) => (a.runId && store.getRun(a.runId)) || []);
     const positions = Object.fromEntries(runs.map((r) => [r.id, orchestrator.queuePosition(r.id)]));
     const names = Object.fromEntries(coworkers.list().map((c) => [c.id, c.name]));
     const blocks = statusBlocks(job, runs, positions, notes.get(jobId), names);
@@ -220,7 +228,13 @@ export function createSlackGateway({
     const reply = replies.get(id);
     if (reply) {
       replies.delete(id);
-      const label = labels.get(id) ?? (automatic ? '자동 승인됨' : '오피스에서 처리됨');
+      const label =
+        labels.get(id) ??
+        (automatic
+          ? '자동 승인됨'
+          : event.payload.closed === true
+            ? '작업이 끝나 닫혔어요'
+            : '오피스에서 처리됨');
       labels.delete(id);
       await port.update(reply.channel, reply.ts, resolvedBlocks(label, reply.title), label);
       return;
@@ -242,16 +256,53 @@ export function createSlackGateway({
     }
   };
 
+  const decideProposal = async (a: InboundAction, jobId: string, proposalId: string) => {
+    const job = store.getJob(jobId);
+    const draft = job?.proposals?.[proposalId];
+    if (!job || !draft) return a.respond(resolvedBlocks('이미 처리됨'), '이미 처리됨');
+    const drop = () => {
+      const { [proposalId]: _, ...rest } = store.getJob(jobId)!.proposals ?? {};
+      store.updateJob(jobId, { proposals: rest });
+    };
+    if (a.actionId === 'pixel:propose-cancel') {
+      drop();
+      return a.respond(resolvedBlocks('제안을 취소했어요.', draft.name), '제안을 취소했어요.');
+    }
+    try {
+      coworkers.save({
+        ...draft,
+        createdBy: 'coordinator',
+        mode: 'solo',
+        bindings: [],
+        rules: DEFAULT_RULES,
+      });
+    } catch (e) {
+      const text = `동료를 만들지 못했어요. ${(e as Error).message}`;
+      return a.respond([], text, false);
+    }
+    drop();
+    const text = `동료 ${draft.name}를 만들었어요.`;
+    await a.respond(resolvedBlocks(text), text);
+    coordinator.wake(jobId, { kind: 'reply', text });
+  };
+
   const onAction = async (a: InboundAction) => {
     if (!a.actionId.startsWith('pixel:')) return;
     try {
       if (a.userId !== ownerId) return await a.respond([], OWNER_ONLY, false);
-      let value: { interactionId?: unknown; option?: unknown };
+      let value: {
+        interactionId?: unknown;
+        option?: unknown;
+        jobId?: unknown;
+        proposalId?: unknown;
+      };
       try {
         value = JSON.parse(a.value);
       } catch {
         return;
       }
+      if (a.actionId === 'pixel:propose-create' || a.actionId === 'pixel:propose-cancel')
+        return await decideProposal(a, String(value.jobId ?? ''), String(value.proposalId ?? ''));
       const id = String(value.interactionId ?? '');
       const option = typeof value.option === 'string' ? value.option : '';
       let answer: Answer;
@@ -270,8 +321,9 @@ export function createSlackGateway({
       labels.set(id, label);
       try {
         await orchestrator.answer(id, answer);
-      } catch {
+      } catch (e) {
         labels.delete(id);
+        if (!store.getInteraction(id)?.resolved) return fail(e);
         await a.respond(resolvedBlocks('이미 처리됨'), '이미 처리됨');
       }
     } catch (e) {
@@ -281,8 +333,31 @@ export function createSlackGateway({
 
   return {
     async start() {
-      store.bus.on('event', onEvent);
       await port.start(onMessage, onAction);
+      // Only after a successful start, and never twice, so a retried start keeps one listener.
+      store.bus.off('event', onEvent);
+      store.bus.on('event', onEvent);
+    },
+    // The coordinator's voice in the job thread. Throws only a Slack error code.
+    async reply(jobId: string, text: string) {
+      const job = store.getJob(jobId);
+      if (!job) throw new Error('일을 찾을 수 없어요.');
+      await port.post(job.channel, job.threadTs, planBlocks(text), text).catch((e) => {
+        throw new Error(slackErrorCode(e));
+      });
+    },
+    // A coworker the coordinator suggests; it is created only when the owner presses [만들기].
+    async propose(jobId: string, draft: CoworkerDraft) {
+      const job = store.getJob(jobId);
+      if (!job) throw new Error('일을 찾을 수 없어요.');
+      const proposalId = randomUUID();
+      store.updateJob(jobId, { proposals: { ...job.proposals, [proposalId]: draft } });
+      const text = `새 동료 제안: ${draft.name}`;
+      await port
+        .post(job.channel, job.threadTs, proposalBlocks(jobId, proposalId, draft), text)
+        .catch((e) => {
+          throw new Error(slackErrorCode(e));
+        });
     },
     async stop() {
       store.bus.off('event', onEvent);

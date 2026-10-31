@@ -1,4 +1,5 @@
 import { statusLabels, type Interaction, type Run } from '../../shared/contracts.js';
+import type { CoworkerDraft } from '../../shared/coworkers.js';
 import type { Job } from '../store.js';
 import type { Block } from './port.js';
 
@@ -61,8 +62,8 @@ export function statusBlocks(
 ): Block[] {
   const byId = new Map(runs.map((r) => [r.id, r]));
   const lines = job.assignments.map((a) => {
-    const run = byId.get(a.runId);
-    const position = positions[a.runId] ?? 0;
+    const run = a.runId ? byId.get(a.runId) : undefined;
+    const position = (a.runId && positions[a.runId]) || 0;
     const state = !run
       ? '대기 중'
       : run.status === 'queued' && position > 0
@@ -114,6 +115,23 @@ export function questionBlocks(interaction: Interaction): Block[] {
       : context('이 스레드에 답글로 답해 주세요.'),
   ];
 }
+
+export const proposalBlocks = (
+  jobId: string,
+  proposalId: string,
+  draft: CoworkerDraft,
+): Block[] => [
+  section(
+    `*새 동료 제안* · ${esc(draft.name)}\n폴더: \`${esc(draft.folder)}\` · ${draft.engine === 'codex' ? 'Codex' : 'Claude'}${draft.role ? `\n${esc(clip(draft.role, 1000).text)}` : ''}`,
+  ),
+  {
+    type: 'actions',
+    elements: [
+      button('만들기', 'pixel:propose-create', { jobId, proposalId }, 'primary'),
+      button('취소', 'pixel:propose-cancel', { jobId, proposalId }),
+    ],
+  },
+];
 
 export const resolvedBlocks = (text: string, title?: string): Block[] => [
   section(title ? `${esc(title)}\n_${esc(text)}_` : `_${esc(text)}_`),

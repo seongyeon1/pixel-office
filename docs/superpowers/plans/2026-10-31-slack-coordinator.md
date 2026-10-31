@@ -373,3 +373,16 @@
 - `codex --sandbox workspace-write --ask-for-approval on-request --disable plugins --disable apps -c mcp_servers.voicekit.enabled=false app-server --print-startup-config` → exit 0. app-server가 이 플래그 조합을 받는다.
 - `--safe`는 `syc` 전용 플래그다(`syc` 스크립트가 `codex --sandbox workspace-write --ask-for-approval on-request`로 펼친다). 그래서 다른 명령에는 이 두 플래그를 직접 넘긴다. `codex --help`에서 `-s, --sandbox`, `-a, --ask-for-approval`이 있는 것을 확인했다.
 - 대가: 승인 규칙이 있는 동안 Codex 실행에서는 플러그인(그 안의 스킬 포함)과 앱 연결도 꺼진다. 동료 저장 응답의 경고 문구에 이 내용을 적었다.
+
+### Task 7 Step 6 — 코디네이터 첫 답글까지 걸린 시간 (2026-10-31, claude-agent-sdk 0.3.282)
+
+실제 `createCoordinator`(기본 `runQuery` = 실제 `query()`)에 임시 데이터 폴더, 실제 store·동료 명단(회의록 동료·기획 동료·SKT 개발), 가짜 오케스트레이터(`startFor`는 Run 기록만 만들고 실행하지 않음)를 붙였다. 외부로 나가는 동작은 없다. `wake(job, { kind: 'new', text: 'skt 회의록 정리해줘' })`부터 첫 `reply` 도구 호출까지를 쟀다. 매 회 새 Job(새 세션)이다.
+
+| 모델 | 1 | 2 | 3 | 4 | 5 | 중앙값 |
+|---|---|---|---|---|---|---|
+| `claude-sonnet-5-5`(기본값) | 6.1s | 7.0s | 5.8s | 6.1s | 5.5s | **6.1s** |
+
+- 중앙값이 10초 안이라 기본 모델은 `claude-sonnet-5-5` 그대로 둔다(haiku 재측정 안 함). 첫 회 시험 실행은 8.9s였다(콜드 스타트).
+- 5회 모두 `list_coworkers` → `delegate('meeting-minutes', …)` → `reply` 순서였고, 첫 답글에 배정과 가정을 한두 줄로 적었다. `allowedTools: ['mcp__office__*']` + `permissionMode: 'default'`로 office 도구가 막히지 않는 것도 확인했다.
+- 턴 전체(`reply` 뒤 마무리까지)는 7.8~9.6s.
+- 측정 환경 탓에 앞 회차의 가짜 Run이 `queued`로 남아 `busy: true`가 보였고, 그래서 답글에 "다른 일을 하는 중"이 섞였다. 실제 실행에서는 Run 상태가 바뀌므로 해당 없음.

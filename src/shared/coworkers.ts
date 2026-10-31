@@ -23,6 +23,8 @@ export const coworkerSchema = z.object({
   createdBy: z.enum(['user', 'coordinator']),
 });
 export type Coworker = z.infer<typeof coworkerSchema>;
+// What the coordinator proposes; the owner's approval fills in the rest.
+export type CoworkerDraft = Pick<Coworker, 'id' | 'name' | 'folder' | 'role' | 'engine'>;
 
 // A write-looking tool is asked about; anything unsure leans to `ask`.
 export const DEFAULT_RULES: ToolRule[] = [
