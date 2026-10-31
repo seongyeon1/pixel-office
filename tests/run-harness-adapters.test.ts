@@ -385,70 +385,113 @@ test.each(['auto', 'manual'] as const)(
   },
 );
 
-test('Codex runs the coworker command and turns off MCP servers when a rule asks', async () => {
-  const { mkdtemp, writeFile } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const { spawn } = await import('node:child_process');
-  const codexHome = await mkdtemp(join(tmpdir(), 'pixel-codex-home-'));
-  await writeFile(
-    join(codexHome, 'config.toml'),
-    [
-      'model = "x"',
-      '[mcp_servers.atlassian]',
-      'url = "https://a"',
-      '[mcp_servers.atlassian.env]',
-      'A = "1"',
-      '[mcp_servers."docs"]',
-      'command = "d"',
-      '[mcp_servers.node-repl]',
-      'command = "n"',
-    ].join('\n'),
+const personalCodex = (approvalMode: 'auto' | 'manual') => ({
+  ...base('/repo'),
+  executionMode: 'personal' as const,
+  approvalMode,
+});
+const approve = async () => ({ decision: 'approve' as const });
+const ask = [{ pattern: 'mcp__*', action: 'ask' as const }];
+// A fake `mcp list --json`: servers come back disabled once their `-c` flag is present.
+const fakeList = (names: string[]) =>
+  vi.fn(async (_command: string, args: string[]) =>
+    JSON.stringify(
+      names.map((name) => ({
+        name,
+        enabled: !args.includes(`mcp_servers.${name}.enabled=false`),
+      })),
+    ),
   );
-  const personal = {
-    ...base('/repo'),
-    executionMode: 'personal' as const,
-    approvalMode: 'auto' as const,
-  };
-  const approve = async () => ({ decision: 'approve' as const });
-  await createCodexAdapter({ codexHome }).execute(
-    {
-      ...personal,
-      executable: 'pstack-codex',
-      toolRules: [{ pattern: 'mcp__*', action: 'ask' }],
-    },
+
+test('Codex turns off every MCP server, plugin and app before a run whose rules ask', async () => {
+  const { spawn } = await import('node:child_process');
+  const mcpList = fakeList(['atlassian', 'node-repl']);
+  await createCodexAdapter({ mcpList }).execute(
+    { ...personalCodex('manual'), executable: 'syc', toolRules: ask },
+    () => {},
+    approve,
+  );
+  const lockdown = [
+    '--disable',
+    'plugins',
+    '--disable',
+    'apps',
+    '-c',
+    'mcp_servers.atlassian.enabled=false',
+    '-c',
+    'mcp_servers.node-repl.enabled=false',
+  ];
+  // Listed with the same command, flags and folder the run uses, then re-checked.
+  expect(mcpList).toHaveBeenNthCalledWith(
+    1,
+    'syc',
+    ['--safe', '--disable', 'plugins', '--disable', 'apps', 'mcp', 'list', '--json'],
+    '/repo',
+  );
+  expect(mcpList).toHaveBeenNthCalledWith(
+    2,
+    'syc',
+    ['--safe', ...lockdown, 'mcp', 'list', '--json'],
+    '/repo',
+  );
+  expect(spawn).toHaveBeenLastCalledWith(
+    'syc',
+    ['--safe', ...lockdown, 'app-server', '--stdio'],
+    expect.anything(),
+  );
+  // Only `auto` rules: nothing to enforce, nothing listed or turned off.
+  const idle = fakeList(['atlassian']);
+  await createCodexAdapter({ mcpList: idle }).execute(
+    { ...personalCodex('auto'), toolRules: [{ pattern: 'mcp__*', action: 'auto' }] },
+    () => {},
+    approve,
+  );
+  expect(idle).not.toHaveBeenCalled();
+  expect(spawn).toHaveBeenLastCalledWith('syc', ['app-server', '--stdio'], expect.anything());
+});
+
+test.each([
+  ['listing fails', vi.fn(async () => Promise.reject(new Error('boom')))],
+  ['a name -c cannot address', fakeList(['my.docs'])],
+  ['a server stays on', vi.fn(async () => JSON.stringify([{ name: 'x', enabled: true }]))],
+])('Codex refuses to start a run whose rules ask when %s', async (_case, mcpList) => {
+  const { spawn } = await import('node:child_process');
+  vi.mocked(spawn).mockClear();
+  const result = await createCodexAdapter({ mcpList }).execute(
+    { ...personalCodex('auto'), toolRules: ask },
+    () => {},
+    approve,
+  );
+  expect(result).toMatchObject({ outcome: 'failed', error: expect.stringContaining('승인 규칙') });
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+test('only syc gets --safe; another command gets the codex flags it stands for', async () => {
+  const { spawn } = await import('node:child_process');
+  await createCodexAdapter().execute(personalCodex('manual'), () => {}, approve);
+  expect(spawn).toHaveBeenLastCalledWith(
+    'syc',
+    ['--safe', 'app-server', '--stdio'],
+    expect.anything(),
+  );
+  await createCodexAdapter().execute(
+    { ...personalCodex('manual'), executable: 'codex' },
+    () => {},
+    approve,
+  );
+  expect(spawn).toHaveBeenLastCalledWith(
+    'codex',
+    ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', 'app-server', '--stdio'],
+    expect.anything(),
+  );
+  await createCodexAdapter().execute(
+    { ...personalCodex('auto'), executable: 'pstack-codex' },
     () => {},
     approve,
   );
   expect(spawn).toHaveBeenLastCalledWith(
     'pstack-codex',
-    [
-      'app-server',
-      '--stdio',
-      '-c',
-      'mcp_servers.atlassian.enabled=false',
-      '-c',
-      'mcp_servers.docs.enabled=false',
-      '-c',
-      'mcp_servers.node-repl.enabled=false',
-    ],
+    ['app-server', '--stdio'],
     expect.anything(),
   );
-  // Only `auto` rules: nothing to enforce, the MCP servers stay on.
-  await createCodexAdapter({ codexHome }).execute(
-    { ...personal, toolRules: [{ pattern: 'mcp__*', action: 'auto' }] },
-    () => {},
-    approve,
-  );
-  expect(spawn).toHaveBeenLastCalledWith('syc', ['app-server', '--stdio'], expect.anything());
-  // `-c` cannot address a dotted name: the run refuses instead of leaving that server on.
-  await writeFile(join(codexHome, 'config.toml'), '[mcp_servers."my.docs"]\ncommand = "d"\n');
-  vi.mocked(spawn).mockClear();
-  const refused = await createCodexAdapter({ codexHome }).execute(
-    { ...personal, toolRules: [{ pattern: 'mcp__*', action: 'ask' }] },
-    () => {},
-    approve,
-  );
-  expect(refused).toMatchObject({ outcome: 'failed', error: expect.stringContaining('my.docs') });
-  expect(spawn).not.toHaveBeenCalled();
 });

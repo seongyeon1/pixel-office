@@ -966,7 +966,7 @@ test('coworker routes require authentication and enforce the roster rules', asyn
   expect(saved.json()).not.toHaveProperty('warnings');
   const codex = (await call('POST', '/api/coworkers', { ...body, engine: 'codex' })).json();
   expect(codex.warnings).toEqual([
-    'Codex는 외부 도구 승인을 강제할 수 없어 외부 MCP를 끄고 실행해요.',
+    'Codex는 외부 도구를 하나씩 승인받을 수 없어요. 승인 규칙이 있는 동안 Codex 실행에서는 모든 MCP 서버, 플러그인, 앱 연결(커넥터)을 끄고 실행해요.',
   ]);
   expect((await call('POST', '/api/coworkers', { ...body, id: 'Bad Id' })).statusCode).toBe(400);
   const list = (await call('GET', '/api/coworkers')).json();
