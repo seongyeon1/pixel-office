@@ -45,10 +45,11 @@ const DOC_MAX_COUNT = 3;
 function capBytes(text: string): string {
   const bytes = Buffer.from(text, 'utf8');
   if (bytes.length <= DOC_MAX_BYTES) return text;
+  const notice = '\n\n…(200KB를 넘어 잘렸어요)';
   const cut = new TextDecoder('utf-8', { fatal: false })
-    .decode(bytes.subarray(0, DOC_MAX_BYTES))
+    .decode(bytes.subarray(0, DOC_MAX_BYTES - Buffer.byteLength(notice)))
     .replace(/\uFFFD+$/, '');
-  return `${cut}\n\n…(200KB를 넘어 잘렸어요)`;
+  return cut + notice;
 }
 export type RunDocument = { path: string; content: string };
 
