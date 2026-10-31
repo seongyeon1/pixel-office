@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import {
   startSchema,
   followUpSchema,
@@ -108,7 +108,9 @@ export function createOrchestrator({
     let previous = '';
     let implementation = '';
     const complete = async (summary: string) => {
-      const delivery = await verifyDelivery(store.getRun(run.id)!);
+      const delivery: DeliveryResult = run.plain
+        ? { urls: [] }
+        : await verifyDelivery(store.getRun(run.id)!);
       if (controller.signal.aborted) {
         change(run.id, { status: 'cancelled' });
         return;
@@ -117,7 +119,7 @@ export function createOrchestrator({
         status: delivery.error ? 'needs_attention' : 'completed',
         phase: 'done',
         error: delivery.error,
-        pullRequests: delivery.urls,
+        pullRequests: run.plain ? undefined : delivery.urls,
         summary: [summary, delivery.error, ...delivery.urls].filter(Boolean).join('\n\n'),
       });
     };
@@ -338,8 +340,10 @@ export function createOrchestrator({
       if (busy) throw new Error('진행 중인 작업을 먼저 완료하거나 중단해 주세요.');
       busy = true;
       try {
-        const input = startSchema.parse(raw);
-        const project = await inspectProject(input.projectPath);
+        const { allowPlain, ...input } = startSchema.parse(raw);
+        const project = await inspectProject(input.projectPath, { allowPlain });
+        if (project.plain && input.executionMode === 'isolated')
+          throw new Error('git 저장소가 아닌 폴더는 개인 실행만 지원해요.');
         const providers: Provider[] =
           input.mode === 'collaborate' ? ['codex', 'claude'] : [input.mode];
         for (const p of providers) {
@@ -352,7 +356,8 @@ export function createOrchestrator({
           throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
         let workspace: { path: string; branch: string; baseCommit: string };
         let bundle: RunRepo[] | undefined;
-        if (input.executionMode !== 'isolated') {
+        if (project.plain) workspace = { path: project.root, branch: '', baseCommit: '' };
+        else if (input.executionMode !== 'isolated') {
           const w = await personalWorkspace(project, input.repositories);
           workspace = w;
           bundle = w.repos;
@@ -365,9 +370,12 @@ export function createOrchestrator({
           ...input,
           executionMode: input.executionMode ?? 'personal',
           pullRequestRequested: pullRequestIntent(input.prompt) === true,
-          initialChanges: await workingState(
-            bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
-          ),
+          initialChanges: project.plain
+            ? {}
+            : await workingState(
+                bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
+              ),
+          ...(project.plain ? { plain: true as const } : {}),
           team: structuredClone(input.team),
           harness: store.getHarness(project.root),
           id,
@@ -407,6 +415,10 @@ export function createOrchestrator({
         // Never silently start from HEAD if the preserved workspace is missing.
         for (const path of source.repos?.map((r) => r.worktreePath) ?? [source.worktreePath]) {
           try {
+            if (source.plain) {
+              if (!(await stat(path)).isDirectory()) throw new Error('not a folder');
+              continue;
+            }
             const root = (await git(path, ['rev-parse', '--show-toplevel'])).trim();
             if ((await realpath(root)) !== (await realpath(path)))
               throw new Error('workspace mismatch');

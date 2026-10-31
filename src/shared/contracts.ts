@@ -55,6 +55,8 @@ export interface Run {
   executionMode?: ExecutionMode;
   sessions?: RunSessions;
   pullRequests?: string[];
+  // A folder that is not a git repository: no workspace, changes or delivery to track.
+  plain?: true;
   pullRequestRequested?: boolean;
   initialChanges?: Record<string, string>;
   projectPath: string;
@@ -199,6 +201,7 @@ const profileSchema = z.object({
 export const startSchema = z.object({
   executionMode: z.enum(['personal', 'isolated']).optional(),
   projectPath: z.string().min(1),
+  allowPlain: z.boolean().optional(),
   // For a folder of repositories: the repositories (absolute paths inside it) to bundle.
   repositories: z.array(z.string().min(1)).max(50).optional(),
   prompt: z.string().trim().min(1).max(20000),
