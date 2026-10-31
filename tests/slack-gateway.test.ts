@@ -301,7 +301,7 @@ test('summary.md is capped at 200KB without splitting a character, and escaped l
   const first = uploads[0][4] as string;
   expect(first.endsWith('\n\n…(200KB를 넘어 잘렸어요)')).toBe(true);
   expect(first).not.toContain('\uFFFD');
-  expect(Buffer.byteLength(first, 'utf8')).toBeLessThanOrEqual(200 * 1024 + 64);
+  expect(Buffer.byteLength(first, 'utf8')).toBeLessThanOrEqual(200 * 1024);
   expect(uploads[1][4]).toBe(amps);
   const posts = t.calls.filter((c) => c[0] === 'post');
   const text = (posts[1][3] as { text: { text: string } }[])[0].text.text;
