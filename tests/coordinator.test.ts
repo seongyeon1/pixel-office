@@ -411,6 +411,28 @@ test('a hung turn times out, is told, aborts, and the next wake still runs', asy
   expect(t.run).toHaveBeenCalledTimes(2);
 });
 
+test('stop aborts the turn in flight, refuses its later tool calls and drops queued wakes', async () => {
+  const t = start();
+  let release!: () => void;
+  t.run.mockImplementationOnce(async (turn) => {
+    t.turns.push(turn);
+    await new Promise<void>((r) => (release = r));
+    return {};
+  });
+  t.coordinator.wake(t.job.id, { kind: 'new', text: '해줘' });
+  t.coordinator.wake(t.job.id, { kind: 'reply', text: '다시' });
+  await vi.waitFor(() => expect(t.turns).toHaveLength(1));
+  t.coordinator.stop();
+  expect(t.turns[0].abortController.signal.aborted).toBe(true);
+  await expect(call(t.turns[0], 'reply', { text: '늦은 답' })).rejects.toThrow('끝났어요');
+  release();
+  t.coordinator.wake(t.job.id, { kind: 'reply', text: '또' });
+  await t.coordinator.settled();
+  expect(t.run).toHaveBeenCalledTimes(1);
+  // Nothing is said in the thread once the coordinator is stopped.
+  expect(t.replies).toEqual([]);
+});
+
 test('a missing AGENTS.md read is told in the thread', async () => {
   const t = start();
   mkdirSync(join(t.dataDir, 'coordinator', 'AGENTS.md'), { recursive: true });

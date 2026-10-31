@@ -122,6 +122,9 @@ export function createCoordinator({
   const folder = join(dataDir, 'coordinator');
   const agentsPath = join(folder, 'AGENTS.md');
   const chains = new Map<string, Promise<void>>();
+  // Turns in flight, so stop() can end them; once stopped nothing runs or acts again.
+  const live = new Set<{ state: { closed: boolean }; abortController: AbortController }>();
+  let stopped = false;
   // A server-side notice; a Slack failure here must not stop the job's queue.
   const say = (jobId: string, text: string) => reply(jobId, text).catch(() => {});
 
@@ -377,12 +380,15 @@ export function createCoordinator({
   const turn = async (jobId: string, reason: WakeReason, resume: string | undefined) => {
     const state = { acted: false, closed: false };
     const abortController = new AbortController();
+    const entry = { state, abortController };
+    live.add(entry);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        abortController.abort();
         reject(new Error('timeout'));
+        abortController.abort();
       }, timeoutMs);
+      abortController.signal.addEventListener('abort', () => reject(new Error('stopped')));
     });
     try {
       return await Promise.race([
@@ -402,10 +408,12 @@ export function createCoordinator({
       throw Object.assign(e instanceof Error ? e : new Error(String(e)), { acted: state.acted });
     } finally {
       state.closed = true;
+      live.delete(entry);
       clearTimeout(timer);
     }
   };
   const handle = async (jobId: string, reason: WakeReason) => {
+    if (stopped) return;
     try {
       if (reason.kind === 'assignment_done') await startDependents(jobId, reason.assignmentId);
       const job = store.getJob(jobId);
@@ -416,11 +424,18 @@ export function createCoordinator({
       } catch (e) {
         // Only a session that could not be reopened, before any tool acted, runs again fresh.
         const resumeFailed = (e as Error).name === 'ResumeFailed';
-        if (!job.coordinatorSessionId || !resumeFailed || (e as { acted?: boolean }).acted) throw e;
+        if (
+          stopped ||
+          !job.coordinatorSessionId ||
+          !resumeFailed ||
+          (e as { acted?: boolean }).acted
+        )
+          throw e;
         result = await turn(jobId, reason, undefined);
       }
       if (result.sessionId) store.updateJob(jobId, { coordinatorSessionId: result.sessionId });
     } catch (e) {
+      if (stopped) return;
       const message = (e as Error).message;
       await say(
         jobId,
@@ -434,11 +449,22 @@ export function createCoordinator({
   return {
     // Only enqueues: it is called from inside bus event handlers, so nothing runs synchronously.
     wake(jobId: string, reason: WakeReason) {
+      if (stopped) return;
       const next = (chains.get(jobId) ?? Promise.resolve())
         .then(() => handle(jobId, reason))
         .catch(() => {});
       chains.set(jobId, next);
       void next.finally(() => chains.get(jobId) === next && chains.delete(jobId));
+    },
+    // For a disconnect or reconnect: ends turns in flight, refuses their later tool calls and
+    // drops queued wakes, so an old coordinator never acts beside its replacement.
+    stop() {
+      stopped = true;
+      for (const { state, abortController } of live) {
+        state.closed = true;
+        abortController.abort();
+      }
+      live.clear();
     },
     // Resolves once every queued wake has finished (tests and shutdown).
     async settled() {
