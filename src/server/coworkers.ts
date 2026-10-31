@@ -39,6 +39,18 @@ export function createCoworkers(store: Store, { dataDir }: { dataDir: string }) 
     save(input: unknown): Coworker {
       const raw = (input ?? {}) as Record<string, unknown>;
       const parsed = coworkerSchema.parse({ rules: DEFAULT_RULES.map((r) => ({ ...r })), ...raw });
+      if (parsed.id === COORDINATOR_ID) {
+        // Only name, role and model are editable; folder, rules and bindings stay fixed.
+        const current = list().find((c) => c.id === COORDINATOR_ID)!;
+        const coordinator = {
+          ...current,
+          name: parsed.name,
+          role: parsed.role,
+          model: parsed.model,
+        };
+        store.putCoworker(coordinator);
+        return coordinator;
+      }
       let folder: string;
       try {
         if (!statSync(parsed.folder).isDirectory()) throw new Error();

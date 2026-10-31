@@ -75,3 +75,29 @@ test('suggestions skip folders that already have a coworker', () => {
   coworkers.save(input('one', a));
   expect(coworkers.suggestions()).toEqual([{ name: 'b', folder: b }]);
 });
+
+test('the coordinator entry only takes name, role and model changes', () => {
+  const { coworkers, folder, input } = setup();
+  const before = coworkers.get('coordinator')!;
+  const saved = coworkers.save(
+    input('coordinator', folder('x'), {
+      name: '새 이름',
+      role: '새 역할',
+      model: 'opus',
+      rules: [{ pattern: '*', action: 'auto' }],
+      bindings: ['C1'],
+      mode: 'collaborate',
+    }),
+  );
+  expect(saved).toEqual({ ...before, name: '새 이름', role: '새 역할', model: 'opus' });
+  expect(coworkers.get('coordinator')).toEqual(saved);
+});
+
+test('moving a coworker onto another coworker folder is rejected', () => {
+  const { coworkers, folder, input } = setup();
+  const [a, b] = [folder('a'), folder('b')];
+  coworkers.save(input('one', a));
+  coworkers.save(input('two', b));
+  expect(() => coworkers.save(input('two', a))).toThrow('이미 이 폴더를 맡은 동료가 있어요.');
+  expect(coworkers.get('two')?.folder).toBe(b);
+});
