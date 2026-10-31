@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { createStore } from '../src/server/store.js';
 import { createServer } from '../src/server/transport.js';
 import type { Adapter } from '../src/shared/contracts.js';
@@ -1135,6 +1135,68 @@ test('a Slack connect failure after saving reports only the code and is remember
     disconnectFails = true;
     expect((await call('DELETE')).statusCode).toBe(200);
     expect((await call('GET')).json()).toEqual({ configured: false });
+  } finally {
+    await app.close();
+  }
+});
+
+test('a boot-time Slack error shows in settings, and the server uses the given coworkers', async () => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createCoworkers } = await import('../src/server/coworkers.js');
+  const { writeSlackConfig } = await import('../src/server/slack/secrets.js');
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const dataDir = await mkdtemp(join(tmpdir(), 'pixel-slack-boot-'));
+  await writeSlackConfig(dataDir, {
+    botToken: 'xoxb-111-secret-wxyz',
+    appToken: 'xapp-1-secret-app',
+    ownerId: 'U01ABC',
+  });
+  const coworkers = createCoworkers(store, { dataDir });
+  const listed = vi.spyOn(coworkers, 'list');
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: createOrchestrator({ store, adapters, dataDir }),
+    token: 't',
+    port: 4317,
+    dataDir,
+    coworkers,
+    slack: {
+      test: async () => {},
+      connect: async () => {},
+      disconnect: async () => {},
+      error: () => 'invalid_auth',
+    },
+  });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 't' },
+    })
+  ).headers['set-cookie'] as string;
+  const get = (url: string) =>
+    app.inject({ method: 'GET', url, headers: { host, origin, cookie } });
+  try {
+    expect((await get('/api/settings/slack')).json()).toEqual({
+      configured: true,
+      ownerId: 'U01ABC',
+      botToken: 'xoxb-…wxyz',
+      error: 'invalid_auth',
+    });
+    expect((await get('/api/coworkers')).statusCode).toBe(200);
+    expect(listed).toHaveBeenCalled();
   } finally {
     await app.close();
   }

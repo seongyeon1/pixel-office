@@ -12,6 +12,7 @@ import { createClaudeAdapter } from './adapters/claude.js';
 import { createOrchestrator } from './orchestrator.js';
 import { createCoworkers } from './coworkers.js';
 import { createServer } from './transport.js';
+import { createSlackConnection } from './slack/connection.js';
 import { createObservation } from './observation/observer.js';
 import { dropParentSession } from './env.js';
 import { createQuestionDesk } from './questions.js';
@@ -21,7 +22,7 @@ await mkdir(dataDir, { recursive: true });
 const port = Number(process.env.PORT ?? 4317);
 const token = randomBytes(24).toString('hex');
 const store = createStore(resolve(dataDir, 'office.sqlite'));
-store.interruptActive();
+const interrupted = store.interruptActive();
 const adapters = { codex: createCodexAdapter(), claude: createClaudeAdapter() };
 const coworkers = createCoworkers(store, { dataDir });
 const orchestrator = createOrchestrator({
@@ -30,6 +31,7 @@ const orchestrator = createOrchestrator({
   dataDir,
   coworkers: () => coworkers.list(),
 });
+const slack = createSlackConnection({ store, coworkers, orchestrator, dataDir, interrupted });
 const observation = createObservation({
   excludeRoots: [resolve(dataDir, 'chat')],
 });
@@ -67,6 +69,8 @@ const { app, origin } = await createServer({
   questions: createQuestionDesk(),
   hookToken,
   dataDir,
+  coworkers,
+  slack,
   hookSetup: {
     claudeHome: process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
     command: `PIXEL_HOOK_FILE=${q(hookFile)} node ${q(resolve('scripts/ask-hook.mjs'))}`,
@@ -95,6 +99,8 @@ if (production) {
   app.addHook('onClose', async () => vite.close());
 }
 await app.listen({ host: '127.0.0.1', port });
+// Not awaited: Slack being down or slow never holds up the office.
+void slack.boot();
 const url = `${origin}/#token=${token}`;
 await writeFile(resolve(dataDir, 'connection.json'), JSON.stringify({ url, pid: process.pid }), {
   mode: 0o600,
@@ -107,6 +113,7 @@ const shutdown = async () => {
   if (closing) return;
   closing = true;
   observation.close();
+  await slack.disconnect().catch(() => {});
   await orchestrator.shutdown();
   await app.close();
   store.close();

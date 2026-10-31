@@ -34,7 +34,7 @@ import {
   type SessionConversation,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
-import { createCoworkers } from './coworkers.js';
+import { createCoworkers, type Coworkers } from './coworkers.js';
 import { CODEX_LOCKDOWN_WARNING } from './adapters/codex.js';
 import { tmpdir } from 'node:os';
 import { concurrencySettings, type Orchestrator } from './orchestrator.js';
@@ -72,6 +72,7 @@ export async function createServer({
   hookToken,
   hookSetup,
   dataDir,
+  coworkers: injectedCoworkers,
   slack,
 }: {
   store: Store;
@@ -91,14 +92,20 @@ export async function createServer({
   hookToken?: string;
   hookSetup?: { claudeHome: string; command: string };
   dataDir?: string;
+  // The server's one coworker registry; built here only when none is given (tests).
+  coworkers?: Coworkers;
   // Slack gateway control; `test` checks a config (auth + hello DM) before it is saved.
   slack?: {
     test(config: SlackConfig): Promise<void>;
     connect(config: SlackConfig): Promise<void>;
     disconnect(): Promise<void>;
+    // The last connect failure outside a settings save (the boot-time connect), as a Slack code.
+    error?(): string | undefined;
   };
 }) {
-  const coworkers = createCoworkers(store, { dataDir: dataDir ?? join(tmpdir(), 'pixel-office') });
+  const coworkers =
+    injectedCoworkers ??
+    createCoworkers(store, { dataDir: dataDir ?? join(tmpdir(), 'pixel-office') });
   const sessions = createSessionRegistry(store, observation);
   chat?.useSessions(sessions);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -498,7 +505,8 @@ export async function createServer({
   app.get('/api/settings/slack', async () => {
     const saved = await readSlackConfig(slackDir);
     if (!saved) return { configured: false };
-    return slackError ? { ...maskSlack(saved), error: slackError } : maskSlack(saved);
+    const error = slackError ?? slack?.error?.();
+    return error ? { ...maskSlack(saved), error } : maskSlack(saved);
   });
   app.post('/api/settings/slack', async (req, reply) => {
     const config = slackConfigSchema.parse(req.body);
