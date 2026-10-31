@@ -11,7 +11,14 @@ import type { Interaction, Run } from '../src/shared/contracts.js';
 const OWNER = 'U0OWNER';
 type Call = [string, ...unknown[]];
 
-function setup(opts: { port?: Partial<SlackPort>; onError?: (code: string) => void } = {}) {
+type Doc = { path: string; content: string };
+function setup(
+  opts: {
+    port?: Partial<SlackPort>;
+    onError?: (code: string) => void;
+    documents?: (run: Run) => Promise<Doc[]>;
+  } = {},
+) {
   const store = createStore(':memory:');
   const dataDir = mkdtempSync(join(tmpdir(), 'pixel-gw-'));
   const coworkers = createCoworkers(store, { dataDir });
@@ -80,6 +87,7 @@ function setup(opts: { port?: Partial<SlackPort>; onError?: (code: string) => vo
     ownerId: OWNER,
     debounceMs: 1000,
     ...(opts.onError ? { onError: opts.onError } : {}),
+    documents: opts.documents ?? (async () => []),
   });
   const message = (over: Partial<InboundMessage> = {}): InboundMessage => ({
     eventId: `Ev${Math.random()}`,
@@ -161,6 +169,136 @@ afterEach(async () => {
   await current?.gateway.stop();
   current?.store.close();
   current = undefined;
+});
+
+const bigText = (n: number) => '가'.repeat(n);
+test('a completed bound run reports a clipped summary with the PR link and attaches summary.md', async () => {
+  const t = await start();
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  const job = t.store.getJobByThread('T1:C1:1.1')!;
+  const summary = bigText(5000);
+  const run = {
+    ...t.store.getRun('run1')!,
+    status: 'completed',
+    summary,
+    pullRequests: ['https://github.com/o/r/pull/1'],
+  } as Run;
+  t.store.updateRun('run1', run);
+  t.updated(run);
+  t.updated(run);
+  await t.settle();
+  const posts = t.calls.filter((c) => c[0] === 'post');
+  expect(posts).toHaveLength(1);
+  const blocks = posts[0][3] as { text: { text: string } }[];
+  expect(blocks[0].text.text).toBe(`${bigText(2999)}…`);
+  expect(blocks[1].text.text).toContain('<https://github.com/o/r/pull/1>');
+  expect(t.calls.filter((c) => c[0] === 'upload')).toEqual([
+    ['upload', 'C1', job.threadTs, 'summary.md', summary],
+  ]);
+});
+
+test('a short summary is not attached, a failed bound run gets no report, and a failed upload keeps the reply', async () => {
+  const errors: string[] = [];
+  const t = await start({
+    onError: (c) => errors.push(c),
+    port: {
+      upload: async () => {
+        throw Object.assign(new Error('x'), { data: { error: 'missing_scope' } });
+      },
+    },
+  });
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '2.1' });
+  t.updated({ ...t.store.getRun('run1')!, status: 'failed', summary: '실패' } as Run);
+  await t.settle();
+  expect(t.names()).not.toContain('post');
+  const done = { ...t.store.getRun('run2')!, status: 'completed', summary: bigText(3500) } as Run;
+  t.updated(done);
+  await t.settle();
+  expect(t.names().filter((n) => n === 'post')).toHaveLength(1);
+  expect(errors).toHaveLength(1);
+});
+
+test('coordinator jobs upload at most 3 run documents under 200KB once the last assignment ends', async () => {
+  const docs: Doc[] = [
+    { path: 'a.md', content: 'A' },
+    { path: 'big.md', content: 'x'.repeat(200 * 1024 + 1) },
+    { path: 'b.md', content: 'B' },
+    { path: 'c.md', content: 'C' },
+    { path: 'd.md', content: 'D' },
+  ];
+  const t = await start({ documents: async () => docs });
+  await t.send();
+  const job = t.store.getJobByThread('T1:D1:100.1')!;
+  const r1 = t.runFor(job.id, { id: 'ra' });
+  const r2 = t.runFor(job.id, { id: 'rb' });
+  t.store.updateJob(job.id, {
+    assignments: [
+      { id: 'a1', coworkerId: 'meeting', runId: 'ra', task: 't' },
+      { id: 'a2', coworkerId: 'meeting', runId: 'rb', task: 't' },
+      { id: 'a3', coworkerId: 'meeting', task: 'pending' },
+    ],
+  });
+  const finish = (r: Run) => {
+    t.store.updateRun(r.id, { status: 'completed' });
+    t.updated({ ...r, status: 'completed' });
+  };
+  finish(r1);
+  await t.settle();
+  finish(r2);
+  await t.settle();
+  // a3 has no run yet: not the last assignment.
+  expect(t.names()).not.toContain('upload');
+  t.store.updateJob(job.id, {
+    assignments: [
+      { id: 'a1', coworkerId: 'meeting', runId: 'ra', task: 't' },
+      { id: 'a2', coworkerId: 'meeting', runId: 'rb', task: 't' },
+    ],
+  });
+  const r3 = t.runFor(job.id, { id: 'rc' });
+  t.store.updateJob(job.id, {
+    assignments: [
+      ...t.store.getJob(job.id)!.assignments,
+      { id: 'a3', coworkerId: 'meeting', runId: 'rc', task: 't' },
+    ],
+  });
+  finish(r3);
+  await t.settle();
+  const uploads = t.calls.filter((c) => c[0] === 'upload');
+  expect(uploads.map((c) => c[3])).toEqual(['a.md', 'b.md', 'c.md']);
+  // Only the new run's documents on a later completion.
+  const r4 = t.runFor(job.id, { id: 'rd' });
+  t.store.updateJob(job.id, {
+    assignments: [
+      ...t.store.getJob(job.id)!.assignments,
+      { id: 'a4', coworkerId: 'meeting', runId: 'rd', task: 't' },
+    ],
+  });
+  finish(r4);
+  await t.settle();
+  expect(t.calls.filter((c) => c[0] === 'upload')).toHaveLength(6);
+});
+
+test('notifyInterrupted tells each Slack job thread once and ignores other runs', async () => {
+  const t = await start();
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  const job = t.store.getJobByThread('T1:C1:1.1')!;
+  const extra = t.runFor(job.id, { id: 'rx' });
+  t.store.updateJob(job.id, {
+    assignments: [
+      ...t.store.getJob(job.id)!.assignments,
+      { id: 'ax', coworkerId: 'meeting', runId: extra.id, task: 't' },
+    ],
+  });
+  t.store.createRun({ id: 'plain', status: 'interrupted' } as Run);
+  await t.gateway.notifyInterrupted(['run1', 'rx', 'plain', 'nope']);
+  const posts = t.calls.filter((c) => c[0] === 'post');
+  expect(posts).toHaveLength(1);
+  expect(posts[0].slice(1, 3)).toEqual(['C1', '1.1']);
+  expect(posts[0][4]).toBe('서버가 재시작되어 작업이 중단됐어요. 스레드에 답글을 달면 이어서 진행해요.');
 });
 
 test('the same message delivered twice makes one job', async () => {

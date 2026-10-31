@@ -413,7 +413,7 @@ export function createStore(path: string) {
       );
     },
     interruptActive() {
-      let count = 0;
+      const interrupted: string[] = [];
       for (const run of listRuns()) {
         if (!terminal(run.status)) {
           updateRun(run.id, {
@@ -427,10 +427,10 @@ export function createStore(path: string) {
             type: 'run.status',
             payload: { status: 'interrupted' },
           });
-          count++;
+          interrupted.push(run.id);
         }
       }
-      return count;
+      return interrupted;
     },
     close() {
       bus.removeAllListeners();

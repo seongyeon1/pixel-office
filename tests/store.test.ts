@@ -41,7 +41,7 @@ test('restart interrupts active jobs without changing completed jobs', () => {
   const db = createStore(':memory:');
   db.createRun(run());
   db.createRun({ ...run(), id: 'r2', status: 'completed' });
-  expect(db.interruptActive()).toBe(1);
+  expect(db.interruptActive()).toEqual(['r1']);
   expect(db.getRun('r1')?.status).toBe('interrupted');
   expect(db.getRun('r2')?.status).toBe('completed');
   db.close();
