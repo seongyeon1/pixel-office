@@ -196,6 +196,12 @@ export function createSlackGateway({
     const job = store.getJob(jobId);
     if (!job) return;
     const runs = job.assignments.flatMap((a) => (a.runId && store.getRun(a.runId)) || []);
+    // A follow-up's source shows whether it is still waiting on that run.
+    for (const r of [...runs])
+      if (r.parentRunId && !runs.some((x) => x.id === r.parentRunId)) {
+        const source = store.getRun(r.parentRunId);
+        if (source) runs.push(source);
+      }
     const positions = Object.fromEntries(runs.map((r) => [r.id, orchestrator.queuePosition(r.id)]));
     const names = Object.fromEntries(coworkers.list().map((c) => [c.id, c.name]));
     const blocks = statusBlocks(job, runs, positions, notes.get(jobId), names);

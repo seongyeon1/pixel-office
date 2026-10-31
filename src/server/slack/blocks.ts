@@ -1,4 +1,4 @@
-import { statusLabels, type Interaction, type Run } from '../../shared/contracts.js';
+import { statusLabels, terminal, type Interaction, type Run } from '../../shared/contracts.js';
 import type { CoworkerDraft } from '../../shared/coworkers.js';
 import type { Job } from '../store.js';
 import type { Block } from './port.js';
@@ -64,13 +64,16 @@ export function statusBlocks(
   const lines = job.assignments.map((a) => {
     const run = a.runId ? byId.get(a.runId) : undefined;
     const position = (a.runId && positions[a.runId]) || 0;
+    const source = run?.parentRunId ? byId.get(run.parentRunId) : undefined;
     const state = !run
       ? '대기 중'
-      : run.status === 'queued' && position > 0
-        ? position > 1
-          ? `대기 중 · 앞에 ${position - 1}개`
-          : '대기 중 · 곧 시작'
-        : statusLabels[run.status];
+      : run.status === 'queued' && source && !terminal(source.status)
+        ? '후속 지시 대기'
+        : run.status === 'queued' && position > 0
+          ? position > 1
+            ? `대기 중 · 앞에 ${position - 1}개`
+            : '대기 중 · 곧 시작'
+          : statusLabels[run.status];
     return `• *${esc(names[a.coworkerId] ?? a.coworkerId)}* — ${state}\n   ${esc(clip(a.task, 150).text)}`;
   });
   return [
