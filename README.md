@@ -179,6 +179,39 @@ CLI 설치·로그인 상태와 실제 작업 성공은 별개입니다. 선택 
 - 훅은 `.pixel/hook.json`(권한 600)의 전용 토큰으로만 질문을 올릴 수 있고, 답은 브라우저 연결 세션에서만 보낼 수 있습니다.
 - 이미 열려 있던 터미널은 다시 시작해야 훅이 적용될 수 있습니다. 훅이 없는 상태에서 질문 대기 중인 동료를 선택하면 연결 안내가 나옵니다.
 
+## Slack으로 일 맡기기
+
+Slack DM이나 채널에서 일을 맡기면 코디네이터가 맞는 동료에게 나눠 주고, 끝나면 같은 스레드에 결과를 보고해요. Slack과는 Socket Mode로 연결해서 공개 URL이나 포트를 열 필요가 없어요.
+
+**1. Slack 앱 만들기.** [api.slack.com/apps](https://api.slack.com/apps)에서 **Create New App → From scratch**로 앱을 만들고 아래처럼 설정해요.
+
+- **Socket Mode**를 켜요. 이때 만드는 App-Level Token(`connections:write` 스코프)이 `xapp-…` 토큰이에요.
+- **OAuth & Permissions → Bot Token Scopes**: `chat:write`, `reactions:write`, `files:write`, `im:history`, `im:write`, `app_mentions:read`, `channels:history`, `groups:history`
+- **Event Subscriptions**를 켜고 **Subscribe to bot events**에 `message.im`, `app_mention`, `message.channels`, `message.groups`를 추가해요.
+- **Interactivity & Shortcuts**를 켜요. 승인·제안 버튼에 필요해요(Socket Mode라 Request URL은 비워 둬요).
+- **App Home → Messages Tab**에서 DM 보내기를 허용해요.
+- **Install to Workspace** 후 나오는 Bot User OAuth Token이 `xoxb-…` 토큰이에요.
+
+**2. 토큰 넣기.** **팀 구성 → Slack**에 Bot 토큰, App 토큰, 내 Slack member ID를 넣고 **연결 테스트 후 저장**을 눌러요. 테스트가 통과하면 앱이 DM으로 "Pixel Office와 연결됐어요."를 보내고, 그다음에 저장해요. 토큰은 `.pixel/slack.json`(권한 600)에만 저장하고, 화면과 API에는 `xoxb-…abcd`처럼 끝 4자만 보여요. 서버를 다시 켜면 저장된 설정으로 자동 연결해요. 연결이 안 되면 서버는 그대로 켜지고 Slack 설정에 오류 코드만 보여요.
+
+**3. 내 member ID 찾기.** Slack에서 내 프로필을 열고 **⋮ → 멤버 ID 복사**를 눌러요. `U`(Enterprise Grid는 `W`)로 시작하는 값이에요. 이 ID로 보낸 메시지에만 반응하고, 다른 사람이나 봇 메시지는 무시해요. 승인 버튼도 이 사람만 누를 수 있어요.
+
+**4. 동료 만들기.** **팀 구성 → 동료**에서 이름, 폴더, 엔진, 역할을 정해요. **최근 작업한 폴더로 동료 만들기**로 빠르게 만들 수도 있어요. 코디네이터는 역할을 보고 일을 나누니 역할을 구체적으로 적어 두는 게 좋아요. 코디네이터의 지침은 `.pixel/coordinator/AGENTS.md`에서 고칠 수 있어요.
+
+- **바인딩 채널 id**를 넣은 채널에서는 코디네이터를 거치지 않고 그 동료가 바로 일을 받아요.
+- **승인 규칙**을 켠 외부 쓰기 도구(Confluence 게시, Jira 발급 등)는 실행 전에 Slack 스레드와 오피스에 승인 버튼이 떠요. 어느 쪽에서 눌러도 돼요. Codex는 도구별 승인을 강제할 수 없어서, 승인 규칙이 하나라도 켜진 Codex 동료는 외부 MCP·플러그인을 끄고 실행해요.
+
+**5. 일 맡기기.**
+
+- 앱에 DM을 보내거나, 채널에서 앱을 멘션해요(채널에는 먼저 `/invite @앱이름`으로 앱을 초대해요). 바로 👀가 달리고, 코디네이터가 배정 계획을 스레드에 적어요.
+- 진행 중에 스레드에 답글을 달면 후속 지시로 받아서 이어서 해요.
+- 맞는 동료가 없으면 코디네이터가 새 동료를 제안해요. **만들기**를 눌러야 실제로 생겨요.
+- 끝나면 결과 요약과 만들어진 문서(Markdown, 최대 3개)를 스레드에 올려요.
+- 작업 중에 서버가 다시 켜지면 그 스레드에 중단 안내를 남겨요. 답글을 달면 이어서 진행해요.
+- 동시에 도는 작업 수는 **동시 실행 상한**(1–8)으로 정해요. 넘치는 일은 순서대로 기다려요.
+
+Atlassian(Jira·Confluence)이나 Notion 같은 외부 MCP는 이 앱이 연결해 주지 않아요. 동료가 쓰는 CLI마다 따로 연결해 둬야 해요. Claude는 `claude mcp add`, Codex는 `~/.codex/config.toml`의 `[mcp_servers.<이름>]`으로 등록해요.
+
 ## 자동 기록(업무일지·세션 요약·메모리 정리)
 
 훅이나 스크립트가 `claude -p`·SDK·`codex exec`로 띄운 세션(업무일지, 세션 요약, 요약 종합, 지식 추출, memory-lake 정리 등)은 사람이 연 세션과 따로 다룹니다. Claude 기록의 `entrypoint: sdk-cli`, Codex의 `source: exec`로 구분합니다.
