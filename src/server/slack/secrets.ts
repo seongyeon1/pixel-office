@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -23,8 +23,15 @@ export async function readSlackConfig(dataDir: string): Promise<SlackConfig | un
 export async function writeSlackConfig(dataDir: string, config: SlackConfig): Promise<void> {
   await mkdir(dataDir, { recursive: true });
   const file = fileOf(dataDir);
-  await writeFile(file, JSON.stringify(config), { mode: 0o600 });
-  await chmod(file, 0o600);
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(temp, JSON.stringify(config), { mode: 0o600 });
+    await chmod(temp, 0o600);
+    await rename(temp, file);
+  } catch (e) {
+    await rm(temp, { force: true });
+    throw e;
+  }
 }
 
 export async function clearSlackConfig(dataDir: string): Promise<void> {

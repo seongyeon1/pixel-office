@@ -53,7 +53,7 @@ import {
   maskSlack,
   type SlackConfig,
 } from './slack/secrets.js';
-import { slackErrorCode } from './slack/port.js';
+import { slackErrorCode } from './slack/errors.js';
 import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
 export async function createServer({
   store,
@@ -493,9 +493,12 @@ export async function createServer({
     }
   });
   const slackDir = dataDir ?? join(tmpdir(), 'pixel-office');
+  let slackError: string | undefined;
+  const slackFailed = (code: string) => `Slack 연결을 확인하지 못했어요: ${code}`;
   app.get('/api/settings/slack', async () => {
     const saved = await readSlackConfig(slackDir);
-    return saved ? maskSlack(saved) : { configured: false };
+    if (!saved) return { configured: false };
+    return slackError ? { ...maskSlack(saved), error: slackError } : maskSlack(saved);
   });
   app.post('/api/settings/slack', async (req, reply) => {
     const config = slackConfigSchema.parse(req.body);
@@ -503,17 +506,27 @@ export async function createServer({
     try {
       await slack.test(config);
     } catch (e) {
-      const code =
-        e instanceof Error && /^[a-z0-9_]+$/i.test(e.message) ? e.message : slackErrorCode(e);
-      return reply.code(400).send({ error: `Slack 연결을 확인하지 못했어요: ${code}` });
+      return reply.code(400).send({ error: slackFailed(slackErrorCode(e)) });
     }
     await writeSlackConfig(slackDir, config);
-    await slack.connect(config);
+    try {
+      await slack.connect(config);
+      slackError = undefined;
+    } catch (e) {
+      slackError = slackErrorCode(e);
+      return reply.code(400).send({ error: slackFailed(slackError) });
+    }
     return maskSlack(config);
   });
   app.delete('/api/settings/slack', async () => {
-    await slack?.disconnect();
-    await clearSlackConfig(slackDir);
+    try {
+      await slack?.disconnect();
+    } catch {
+      // the config is cleared regardless
+    } finally {
+      await clearSlackConfig(slackDir);
+      slackError = undefined;
+    }
     return { ok: true };
   });
   app.get('/api/settings/approvals', async () => approvalSettings(store));

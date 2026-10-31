@@ -1066,3 +1066,76 @@ test('Slack settings test the connection, store it privately and never echo toke
   expect(res.json().error).toBe('Slack 연결 기능을 사용할 수 없어요.');
   await bare.close();
 });
+
+test('a Slack connect failure after saving reports only the code and is remembered', async () => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const dataDir = await mkdtemp(join(tmpdir(), 'pixel-slack-connect-'));
+  let fail = true;
+  let disconnectFails = false;
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: createOrchestrator({ store, adapters, dataDir }),
+    token: 't',
+    port: 4317,
+    dataDir,
+    slack: {
+      test: async () => {},
+      connect: async () => {
+        if (fail)
+          throw Object.assign(new Error('boom xoxb-111-secret-wxyz'), { code: 'socket_closed' });
+      },
+      disconnect: async () => {
+        if (disconnectFails) throw new Error('xoxb-111-secret-wxyz');
+      },
+    },
+  });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 't' },
+    })
+  ).headers['set-cookie'] as string;
+  const call = (method: 'GET' | 'POST' | 'DELETE', payload?: Record<string, unknown>) =>
+    app.inject({ method, url: '/api/settings/slack', headers: { host, origin, cookie }, payload });
+  const body = {
+    botToken: 'xoxb-111-secret-wxyz',
+    appToken: 'xapp-1-secret-app',
+    ownerId: 'U01ABC',
+  };
+  try {
+    const failed = await call('POST', body);
+    expect(failed.statusCode).toBe(400);
+    expect(failed.json().error).toBe('Slack 연결을 확인하지 못했어요: socket_closed');
+    expect(failed.body).not.toContain('secret');
+    const got = await call('GET');
+    expect(got.json()).toEqual({
+      configured: true,
+      ownerId: 'U01ABC',
+      botToken: 'xoxb-…wxyz',
+      error: 'socket_closed',
+    });
+    expect(got.body).not.toContain('secret');
+    fail = false;
+    expect((await call('POST', body)).statusCode).toBe(200);
+    expect((await call('GET')).json()).not.toHaveProperty('error');
+    disconnectFails = true;
+    expect((await call('DELETE')).statusCode).toBe(200);
+    expect((await call('GET')).json()).toEqual({ configured: false });
+  } finally {
+    await app.close();
+  }
+});
