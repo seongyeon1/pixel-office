@@ -39,16 +39,24 @@ export interface Project {
 const NOT_A_REPOSITORY = 'Git 저장소를 선택해 주세요.';
 // A repository, or a folder holding repositories (a team's project folder with one clone per
 // service): the latter has no head of its own and lists what a bundle run can pick from.
-export async function inspectProject(path: string): Promise<Project> {
+// With `allowPlain`, a folder that is no repository (or has no commit yet) is a plain project:
+// coworkers work in it directly and nothing is tracked.
+export async function inspectProject(
+  path: string,
+  opts: { allowPlain?: boolean } = {},
+): Promise<Project & { plain?: true }> {
   let located: { root: string; head: string };
   try {
     located = await locateRepository(path);
   } catch (e) {
-    if ((e as Error).message !== NOT_A_REPOSITORY) throw e;
+    const message = (e as Error).message;
+    const unborn = message.startsWith('최초 커밋');
+    if (message !== NOT_A_REPOSITORY && !(unborn && opts.allowPlain)) throw e;
     const root = await realpath(path);
-    const repositories = await listRepositories(root);
-    if (!repositories.length) throw e;
-    return { root, head: '', dirty: false, repositories };
+    const repositories = unborn ? [] : await listRepositories(root);
+    if (repositories.length) return { root, head: '', dirty: false, repositories };
+    if (!opts.allowPlain) throw e;
+    return { root, head: '', dirty: false, plain: true };
   }
   return {
     root: await realpath(located.root),
@@ -174,7 +182,9 @@ export async function collectRunChanges(run: {
   worktreePath: string;
   baseCommit: string;
   repos?: RunRepo[];
+  plain?: true;
 }): Promise<Change[]> {
+  if (run.plain) return [];
   if (!run.repos) return collectChanges(run.worktreePath, run.baseCommit);
   const groups = await Promise.all(
     run.repos.map(async (repo) =>

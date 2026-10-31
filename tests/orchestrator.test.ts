@@ -635,3 +635,41 @@ test('personal runs use the selected working folder including uncommitted local 
     store.close();
   }
 });
+test('plain folder runs without git and follow-ups reuse the folder', async () => {
+  const { realpath } = await import('node:fs/promises');
+  const folder = await realpath(await mkdtemp(join(tmpdir(), 'pixel-plain-run-')));
+  const store = createStore(':memory:');
+  const adapter = fake(async (input) => {
+    expect(input.cwd).toBe(folder);
+    return { outcome: 'completed', text: 'done' };
+  });
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-plain-data-')),
+  });
+  try {
+    const base = {
+      projectPath: folder,
+      prompt: 'task',
+      mode: 'codex' as const,
+      implementer: 'codex' as const,
+      team: defaultTeam(),
+    };
+    await expect(o.start({ ...base, executionMode: 'isolated', allowPlain: true })).rejects.toThrow(
+      '개인 실행만',
+    );
+    const run = await o.start({ ...base, allowPlain: true });
+    await wait(() => store.getRun(run.id)!.status === 'completed');
+    const done = store.getRun(run.id)!;
+    expect(done.plain).toBe(true);
+    expect(done.worktreePath).toBe(folder);
+    expect(done.pullRequests).toBeUndefined();
+    const next = await o.followUp(run.id, 'again');
+    await wait(() => store.getRun(next.id)!.status === 'completed');
+    expect(store.getRun(next.id)?.plain).toBe(true);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});

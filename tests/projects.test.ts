@@ -151,3 +151,20 @@ test('a bundle workspace holds one worktree per chosen repository and reports ch
   // A repository outside the folder is refused.
   await expect(createBundleWorkspace(folder, [dataDir], 'r2', dataDir)).rejects.toThrow('안의');
 });
+test('a folder that is not a repository is a plain project only when allowed', async () => {
+  const { realpath } = await import('node:fs/promises');
+  const plain = await mkdtemp(join(tmpdir(), 'pixel-plain-'));
+  expect(await inspectProject(plain, { allowPlain: true })).toEqual({
+    root: await realpath(plain),
+    head: '',
+    dirty: false,
+    plain: true,
+  });
+  await expect(inspectProject(plain)).rejects.toThrow('Git 저장소를 선택해 주세요.');
+  const unborn = await mkdtemp(join(tmpdir(), 'pixel-unborn-'));
+  execFileSync('git', ['init'], { cwd: unborn, stdio: 'pipe' });
+  expect((await inspectProject(unborn, { allowPlain: true })).plain).toBe(true);
+  await expect(inspectProject(join(plain, 'missing'), { allowPlain: true })).rejects.toThrow(
+    '폴더를 찾을 수 없습니다',
+  );
+});
