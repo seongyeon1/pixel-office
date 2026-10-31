@@ -15,6 +15,8 @@ import {
   type EventInput,
   type RunRepo,
   type PhaseResult,
+  concurrencySettingsSchema,
+  type ConcurrencySettings,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
 import {
@@ -44,6 +46,10 @@ export const nextAfterReview = (
     : review.verdict === 'inconclusive' || revision >= 2
       ? 'needs_attention'
       : 'revise';
+export function concurrencySettings(store: Store): ConcurrencySettings {
+  const parsed = concurrencySettingsSchema.safeParse(store.getSetting('concurrency', { limit: 3 }));
+  return parsed.success ? parsed.data : { limit: 3 };
+}
 export function createOrchestrator({
   store,
   adapters,
@@ -55,8 +61,13 @@ export function createOrchestrator({
   dataDir: string;
   verifyDelivery?: (run: Run) => Promise<DeliveryResult>;
 }) {
-  let busy = false;
-  let current: { id: string; controller: AbortController; task: Promise<void> } | undefined;
+  // One lane per folder: runs in a folder go one at a time, folders run side by side up to the limit.
+  const running = new Map<
+    string,
+    { lane: string; controller: AbortController; task: Promise<void> }
+  >();
+  let waiting: { run: Run; resume: boolean }[] = [];
+  let closed = false;
   const pending = new Map<
     string,
     { resolve: (answer: Answer) => void; reject: (e: Error) => void }
@@ -88,7 +99,54 @@ export function createOrchestrator({
       });
     }
   };
-  async function execute(run: Run, controller: AbortController) {
+  const drain = () => {
+    if (closed) return;
+    const { limit } = concurrencySettings(store);
+    const lanes = new Set([...running.values()].map((job) => job.lane));
+    for (const entry of [...waiting]) {
+      if (running.size >= limit) break;
+      if (lanes.has(entry.run.projectPath)) continue;
+      waiting = waiting.filter((e) => e !== entry);
+      lanes.add(entry.run.projectPath);
+      const controller = new AbortController();
+      const job = { lane: entry.run.projectPath, controller, task: Promise.resolve() };
+      running.set(entry.run.id, job);
+      job.task = Promise.resolve()
+        .then(() => execute(entry.run, controller, entry.resume))
+        .catch(() => {})
+        .finally(() => {
+          running.delete(entry.run.id);
+          drain();
+        });
+    }
+  };
+  // A personal run works in the live folder, so its baseline is the folder as it is when the run
+  // starts: a run queued behind another in the same folder must not count that run's work as its own.
+  const baseline = async (run: Run): Promise<Partial<Run>> => {
+    const head = async (cwd: string) => (await git(cwd, ['rev-parse', '--verify', 'HEAD'])).trim();
+    if (run.repos) {
+      const repos: RunRepo[] = [];
+      for (const repo of run.repos)
+        repos.push({
+          ...repo,
+          baseCommit: await head(repo.worktreePath),
+          branch: (await git(repo.worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim(),
+        });
+      return { repos, initialChanges: await workingState(repos) };
+    }
+    const baseCommit = await head(run.worktreePath);
+    return {
+      baseCommit,
+      branch: (await git(run.worktreePath, ['branch', '--show-current'])).trim(),
+      initialChanges: await workingState([{ worktreePath: run.worktreePath, baseCommit }]),
+    };
+  };
+  const enqueue = (run: Run, resume = false) => {
+    waiting.push({ run, resume });
+    drain();
+    return run;
+  };
+  async function execute(run: Run, controller: AbortController, resume: boolean) {
     // Preserve the original request and recent follow-ups across fresh provider sessions.
     const ancestors: Run[] = [];
     let ancestor = run.parentRunId ? store.getRun(run.parentRunId) : undefined;
@@ -146,6 +204,14 @@ export function createOrchestrator({
       });
     };
     try {
+      // A run that waited re-checks its folder; a follow-up queued behind its source resumes the
+      // sessions that source ended with.
+      sessionGuard?.(run);
+      const source = resume && run.parentRunId ? store.getRun(run.parentRunId) : undefined;
+      if (source?.executionMode) change(run.id, { sessions: source.sessions });
+      // Follow-ups keep the baseline of the run they continue.
+      if (run.executionMode === 'personal' && !run.plain && !run.parentRunId)
+        change(run.id, await baseline(run));
       while (!controller.signal.aborted) {
         run = store.getRun(run.id)!;
         const reviewer: Provider = run.implementer === 'codex' ? 'claude' : 'codex';
@@ -328,8 +394,6 @@ export function createOrchestrator({
       });
     } finally {
       clearPending(run.id);
-      busy = false;
-      current = undefined;
     }
   }
   return {
@@ -337,141 +401,126 @@ export function createOrchestrator({
       sessionGuard = guard;
     },
     async start(raw: StartInput) {
-      if (busy) throw new Error('진행 중인 작업을 먼저 완료하거나 중단해 주세요.');
-      busy = true;
-      try {
-        const { allowPlain, ...input } = startSchema.parse(raw);
-        const project = await inspectProject(input.projectPath, { allowPlain });
-        if (project.plain && input.executionMode === 'isolated')
-          throw new Error('git 저장소가 아닌 폴더는 개인 실행만 지원해요.');
-        const providers: Provider[] =
-          input.mode === 'collaborate' ? ['codex', 'claude'] : [input.mode];
-        for (const p of providers) {
-          const s = await adapters[p].probe();
-          if (!s.installed || s.authenticated === false) throw new Error(`${p}: ${s.detail}`);
-        }
-        const id = randomUUID();
-        // A folder of repositories runs as a bundle: one worktree per chosen repository.
-        if (project.repositories && !input.repositories?.length)
-          throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
-        let workspace: { path: string; branch: string; baseCommit: string };
-        let bundle: RunRepo[] | undefined;
-        if (project.plain) workspace = { path: project.root, branch: '', baseCommit: '' };
-        else if (input.executionMode !== 'isolated') {
-          const w = await personalWorkspace(project, input.repositories);
-          workspace = w;
-          bundle = w.repos;
-        } else if (project.repositories) {
-          const w = await createBundleWorkspace(project.root, input.repositories!, id, dataDir);
-          workspace = w;
-          bundle = w.repos;
-        } else workspace = await createWorkspace(project.root, id, dataDir);
-        const run: Run = {
-          ...input,
-          executionMode: input.executionMode ?? 'personal',
-          pullRequestRequested: pullRequestIntent(input.prompt) === true,
-          initialChanges: project.plain
-            ? {}
-            : await workingState(
-                bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
-              ),
-          ...(project.plain ? { plain: true as const } : {}),
-          team: structuredClone(input.team),
-          harness: store.getHarness(project.root),
-          id,
-          projectPath: project.root,
-          worktreePath: workspace.path,
-          branch: workspace.branch,
-          baseCommit: workspace.baseCommit,
-          ...(bundle ? { repos: bundle } : {}),
-          status: 'queued',
-          phase: 'implement',
-          revision: 0,
-          createdAt: new Date().toISOString(),
-        };
-        sessionGuard?.(run);
-        store.createRun(run);
-        const controller = new AbortController();
-        const task = Promise.resolve().then(() => execute(run, controller));
-        current = { id, controller, task };
-        return run;
-      } catch (e) {
-        busy = false;
-        throw e;
+      const { allowPlain, ...input } = startSchema.parse(raw);
+      const project = await inspectProject(input.projectPath, { allowPlain });
+      if (project.plain && input.executionMode === 'isolated')
+        throw new Error('git 저장소가 아닌 폴더는 개인 실행만 지원해요.');
+      const providers: Provider[] =
+        input.mode === 'collaborate' ? ['codex', 'claude'] : [input.mode];
+      for (const p of providers) {
+        const s = await adapters[p].probe();
+        if (!s.installed || s.authenticated === false) throw new Error(`${p}: ${s.detail}`);
       }
+      const id = randomUUID();
+      // A folder of repositories runs as a bundle: one worktree per chosen repository.
+      if (project.repositories && !input.repositories?.length)
+        throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
+      let workspace: { path: string; branch: string; baseCommit: string };
+      let bundle: RunRepo[] | undefined;
+      if (project.plain) workspace = { path: project.root, branch: '', baseCommit: '' };
+      else if (input.executionMode !== 'isolated') {
+        const w = await personalWorkspace(project, input.repositories);
+        workspace = w;
+        bundle = w.repos;
+      } else if (project.repositories) {
+        const w = await createBundleWorkspace(project.root, input.repositories!, id, dataDir);
+        workspace = w;
+        bundle = w.repos;
+      } else workspace = await createWorkspace(project.root, id, dataDir);
+      const run: Run = {
+        ...input,
+        executionMode: input.executionMode ?? 'personal',
+        pullRequestRequested: pullRequestIntent(input.prompt) === true,
+        initialChanges: project.plain
+          ? {}
+          : await workingState(
+              bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
+            ),
+        ...(project.plain ? { plain: true as const } : {}),
+        team: structuredClone(input.team),
+        harness: store.getHarness(project.root),
+        id,
+        projectPath: project.root,
+        worktreePath: workspace.path,
+        branch: workspace.branch,
+        baseCommit: workspace.baseCommit,
+        ...(bundle ? { repos: bundle } : {}),
+        status: 'queued',
+        phase: 'implement',
+        revision: 0,
+        createdAt: new Date().toISOString(),
+      };
+      sessionGuard?.(run);
+      store.createRun(run);
+      return enqueue(run);
     },
-    async followUp(id: string, prompt: string) {
-      if (busy) throw new Error('진행 중인 작업을 먼저 완료하거나 중단해 주세요.');
-      busy = true;
-      try {
-        const input = followUpSchema.parse({ prompt });
-        const source = store.getRun(id);
-        if (!source) throw new Error('이전 작업 기록을 찾을 수 없습니다.');
-        if (!terminal(source.status))
-          throw new Error('진행 중인 작업에는 아직 추가 요청을 보낼 수 없습니다.');
-        if (source.removedWorktrees?.length)
-          throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
-        sessionGuard?.(source);
-        // Never silently start from HEAD if the preserved workspace is missing.
-        for (const path of source.repos?.map((r) => r.worktreePath) ?? [source.worktreePath]) {
-          try {
-            if (source.plain) {
-              if (!(await stat(path)).isDirectory()) throw new Error('not a folder');
-              continue;
-            }
-            const root = (await git(path, ['rev-parse', '--show-toplevel'])).trim();
-            if ((await realpath(root)) !== (await realpath(path)))
-              throw new Error('workspace mismatch');
-          } catch {
-            throw new Error('이전 작업 폴더를 찾을 수 없습니다. 새 작업으로 시작해 주세요.');
+    async followUp(id: string, prompt: string, opts: { whenDone?: boolean } = {}) {
+      const input = followUpSchema.parse({ prompt });
+      const source = store.getRun(id);
+      if (!source) throw new Error('이전 작업 기록을 찾을 수 없습니다.');
+      if (!terminal(source.status) && opts.whenDone !== true)
+        throw new Error('진행 중인 작업에는 아직 추가 요청을 보낼 수 없습니다.');
+      if (source.removedWorktrees?.length)
+        throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
+      sessionGuard?.(source);
+      // Never silently start from HEAD if the preserved workspace is missing.
+      for (const path of source.repos?.map((r) => r.worktreePath) ?? [source.worktreePath]) {
+        try {
+          if (source.plain) {
+            if (!(await stat(path)).isDirectory()) throw new Error('not a folder');
+            continue;
           }
+          const root = (await git(path, ['rev-parse', '--show-toplevel'])).trim();
+          if ((await realpath(root)) !== (await realpath(path)))
+            throw new Error('workspace mismatch');
+        } catch {
+          throw new Error('이전 작업 폴더를 찾을 수 없습니다. 새 작업으로 시작해 주세요.');
         }
-        const providers: Provider[] =
-          source.mode === 'collaborate' ? ['codex', 'claude'] : [source.mode];
-        for (const provider of providers) {
-          const connection = await adapters[provider].probe();
-          if (!connection.installed || connection.authenticated === false)
-            throw new Error(`${provider}: ${connection.detail}`);
-        }
-        const run: Run = {
-          ...structuredClone(source),
-          id: randomUUID(),
-          parentRunId: source.id,
-          executionMode: source.executionMode ?? 'personal',
-          // Old isolated runs had no persistent sessions; do not attempt to resume them.
-          sessions: source.executionMode ? source.sessions : undefined,
-          pullRequests: undefined,
-          pullRequestRequested:
-            pullRequestIntent(input.prompt) ??
-            source.pullRequestRequested ??
-            pullRequestIntent(source.prompt) === true,
-          prompt: input.prompt,
-          summary: undefined,
-          error: undefined,
-          status: 'queued',
-          phase: 'implement',
-          revision: 0,
-          createdAt: new Date().toISOString(),
-        };
-        if (store.getRun(id)?.removedWorktrees?.length)
-          throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
-        sessionGuard?.(run);
-        store.createRun(run);
-        const controller = new AbortController();
-        const task = Promise.resolve().then(() => execute(run, controller));
-        current = { id: run.id, controller, task };
-        return run;
-      } catch (e) {
-        busy = false;
-        throw e;
       }
+      const providers: Provider[] =
+        source.mode === 'collaborate' ? ['codex', 'claude'] : [source.mode];
+      for (const provider of providers) {
+        const connection = await adapters[provider].probe();
+        if (!connection.installed || connection.authenticated === false)
+          throw new Error(`${provider}: ${connection.detail}`);
+      }
+      const run: Run = {
+        ...structuredClone(source),
+        id: randomUUID(),
+        parentRunId: source.id,
+        executionMode: source.executionMode ?? 'personal',
+        // Old isolated runs had no persistent sessions; do not attempt to resume them.
+        sessions: source.executionMode ? source.sessions : undefined,
+        pullRequests: undefined,
+        pullRequestRequested:
+          pullRequestIntent(input.prompt) ??
+          source.pullRequestRequested ??
+          pullRequestIntent(source.prompt) === true,
+        prompt: input.prompt,
+        summary: undefined,
+        error: undefined,
+        status: 'queued',
+        phase: 'implement',
+        revision: 0,
+        createdAt: new Date().toISOString(),
+      };
+      if (store.getRun(id)?.removedWorktrees?.length)
+        throw new Error('정리한 작업 폴더입니다. 기록을 참고해 새 작업을 시작해주세요.');
+      sessionGuard?.(run);
+      store.createRun(run);
+      return enqueue(run, opts.whenDone === true);
     },
     async cancel(id: string) {
-      if (!current || current.id !== id) {
+      const job = running.get(id);
+      if (!job) {
+        if (waiting.some((e) => e.run.id === id)) {
+          waiting = waiting.filter((e) => e.run.id !== id);
+          change(id, { status: 'cancelled' });
+          return;
+        }
         if (store.getRun(id) && terminal(store.getRun(id)!.status)) return;
         throw new Error('실행 중인 작업이 아닙니다.');
       }
-      const job = current;
       job.controller.abort();
       clearPending(id);
       await job.task;
@@ -509,16 +558,23 @@ export function createOrchestrator({
       handler.resolve(answer);
     },
     async shutdown() {
-      if (current) {
-        const job = current;
+      // Waiting runs stay queued; the store marks them interrupted on the next start.
+      closed = true;
+      waiting = [];
+      const jobs = [...running.entries()];
+      for (const [id, job] of jobs) {
         job.controller.abort();
-        clearPending(job.id);
-        await job.task;
+        clearPending(id);
       }
+      await Promise.all(jobs.map(([, job]) => job.task));
       await Promise.all(Object.values(adapters).map((a) => a.close()));
     },
-    get activeId() {
-      return current?.id;
+    drain,
+    queuePosition(id: string) {
+      return waiting.findIndex((e) => e.run.id === id) + 1;
+    },
+    get activeIds() {
+      return [...running.keys()];
     },
   };
 }

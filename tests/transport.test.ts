@@ -83,6 +83,51 @@ test('approval settings default to manual, require authentication and validate p
     store.close();
   }
 });
+test('concurrency settings default to 3, validate the limit, and health lists active runs', async () => {
+  const store = createStore(':memory:');
+  const adapter: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: '' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: adapter, claude: adapter };
+  const o = createOrchestrator({ store, adapters, dataDir: '/tmp/pixel-concurrency-settings' });
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: o,
+    token: 'test',
+    port: 4317,
+  });
+  const headers = { host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317' };
+  try {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers,
+      payload: { token: 'test' },
+    });
+    const authed = { ...headers, cookie: login.headers['set-cookie'] as string };
+    const url = '/api/settings/concurrency';
+    expect((await app.inject({ url, headers })).statusCode).toBe(401);
+    expect((await app.inject({ url, headers: authed })).json()).toEqual({ limit: 3 });
+    for (const payload of [{}, { limit: 0 }, { limit: 9 }, { limit: 2.5 }, { limit: 2, x: 1 }])
+      expect((await app.inject({ method: 'POST', url, headers: authed, payload })).statusCode).toBe(
+        400,
+      );
+    expect(
+      (await app.inject({ method: 'POST', url, headers: authed, payload: { limit: 5 } })).json(),
+    ).toEqual({ limit: 5 });
+    expect(store.getSetting('concurrency', {})).toEqual({ limit: 5 });
+    expect((await app.inject({ url, headers: authed })).json()).toEqual({ limit: 5 });
+    const health = (await app.inject({ url: '/api/health', headers: authed })).json();
+    expect(health).toMatchObject({ activeIds: [], activeId: null });
+  } finally {
+    await app.close();
+    await o.shutdown();
+    store.close();
+  }
+});
 test('rejects foreign origins and unauthenticated actions; bootstrap grants a session', async () => {
   const store = createStore(':memory:');
   const a: Adapter = {

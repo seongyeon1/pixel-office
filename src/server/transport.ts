@@ -23,6 +23,7 @@ import {
   answerSchema,
   directSettingsSchema,
   approvalSettingsSchema,
+  concurrencySettingsSchema,
   type Adapter,
   type DirectSettings,
   type ObservedSession,
@@ -33,7 +34,7 @@ import {
   type SessionConversation,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
-import type { Orchestrator } from './orchestrator.js';
+import { concurrencySettings, type Orchestrator } from './orchestrator.js';
 import { inspectProject, collectRunChanges } from './projects.js';
 import { listModels } from './models.js';
 import { harnessCatalog } from './harness.js';
@@ -385,7 +386,9 @@ export async function createServer({
     features: { agentLauncher: true },
     providers: { codex: await adapters.codex.probe(), claude: await adapters.claude.probe() },
     demo,
-    activeId: orchestrator.activeId ?? null,
+    activeIds: orchestrator.activeIds,
+    // Kept for one release while clients move to activeIds.
+    activeId: orchestrator.activeIds[0] ?? null,
   }));
   app.post('/api/projects/inspect', async (req) => {
     const project = await inspectProject(z.object({ path: z.string() }).parse(req.body).path);
@@ -475,6 +478,13 @@ export async function createServer({
       await orchestrator.approvePending();
       chat?.approvePending();
     }
+    return next;
+  });
+  app.get('/api/settings/concurrency', async () => concurrencySettings(store));
+  app.post('/api/settings/concurrency', async (req) => {
+    const next = concurrencySettingsSchema.parse(req.body);
+    store.setSetting('concurrency', next);
+    orchestrator.drain();
     return next;
   });
   const harnessList = (): LaunchHarnessList => ({
