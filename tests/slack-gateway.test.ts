@@ -379,6 +379,46 @@ test('ignores other users, bots, subtypes and unbound channels without a mention
   expect(t.calls).toEqual([]);
 });
 
+test('owner file shares and thread broadcasts count; edits and deletions do not', async () => {
+  const t = await start();
+  await t.send({ ts: '1', subtype: 'message_deleted' });
+  await t.send({ ts: '2', subtype: 'bot_message' });
+  await t.send({ ts: '3', subtype: 'file_share', text: '이 파일 요약해줘' });
+  await t.send({ ts: '4', subtype: 'thread_broadcast', text: '이것도 해줘' });
+  expect(t.coordinator.wake.mock.calls.map((c) => c[1])).toEqual([
+    { kind: 'new', text: '이 파일 요약해줘' },
+    { kind: 'new', text: '이것도 해줘' },
+  ]);
+});
+
+test('a mention with no request gets a short hint instead of a job', async () => {
+  const t = await start();
+  await t.send({
+    channel: 'C9',
+    channelType: 'channel',
+    ts: '5.5',
+    text: '<@B1> ',
+    mentionsBot: true,
+  });
+  expect(t.names()).toEqual(['post']);
+  expect(t.calls[0].slice(1, 3)).toEqual(['C9', '5.5']);
+  expect(t.calls[0][4]).toBe('무엇을 할지 함께 적어 주세요.');
+  expect(t.store.getJobByThread('T1:C9:5.5')).toBeUndefined();
+  // An empty reply in a job's thread is not sent on as a follow-up either.
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  t.calls.length = 0;
+  await t.send({
+    channel: 'C1',
+    channelType: 'channel',
+    ts: '1.2',
+    threadTs: '1.1',
+    text: '<@B1>',
+  });
+  expect(t.names()).toEqual(['post']);
+  expect(t.calls[0][4]).toBe('무엇을 할지 함께 적어 주세요.');
+});
+
 test('a DM gets the eyes reaction before the coordinator wakes', async () => {
   const t = await start();
   await t.send();

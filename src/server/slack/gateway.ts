@@ -68,6 +68,10 @@ export async function readRunDocuments(store: Store, run: Run): Promise<RunDocum
   return docs;
 }
 
+// What the owner writes; edits, deletions and bot posts carry other subtypes and are ignored.
+const OWNER_SUBTYPES = new Set(['file_share', 'thread_broadcast']);
+const EMPTY_REQUEST = '무엇을 할지 함께 적어 주세요.';
+
 export function createSlackGateway({
   store,
   port,
@@ -171,15 +175,20 @@ export function createSlackGateway({
     } catch (e) {
       return fail(e);
     }
-    if (m.user !== ownerId || m.botId || m.subtype) return;
+    if (m.user !== ownerId || m.botId || (m.subtype && !OWNER_SUBTYPES.has(m.subtype))) return;
     const threadKey = `${m.teamId}:${m.channel}:${m.threadTs ?? m.ts}`;
     return serial(threadKey, async () => {
       const text = m.text.replace(/^(\s*<@[A-Z0-9]+>)+\s*/, '').trim();
       const job = store.getJobByThread(threadKey);
       const bound = m.channelType === 'im' ? undefined : coworkers.forChannel(m.channel);
+      const hint = () =>
+        port
+          .post(m.channel, m.threadTs ?? m.ts, planBlocks(EMPTY_REQUEST), EMPTY_REQUEST)
+          .catch(fail);
       // In a channel, a reply in a job's thread needs no mention; a new message does.
-      if (job) return continueJob(job, text);
+      if (job) return text ? continueJob(job, text) : void (await hint());
       if (m.channelType !== 'im' && !m.mentionsBot && !bound) return;
+      if (!text) return void (await hint());
       await port.react(m.channel, m.ts, 'eyes').catch(fail);
       const created = store.createJob({
         threadKey,
