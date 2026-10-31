@@ -281,7 +281,7 @@ export function createSlackGateway({
       return a.respond([], text, false);
     }
     drop();
-    const text = `동료 ${draft.name}를 만들었어요.`;
+    const text = `새 동료를 만들었어요: ${draft.name}`;
     await a.respond(resolvedBlocks(text), text);
     coordinator.wake(jobId, { kind: 'reply', text });
   };
