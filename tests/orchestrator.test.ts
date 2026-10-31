@@ -743,6 +743,49 @@ test('a coworker folder applies its tool rules from every entry, and startFor ru
     store.close();
   }
 });
+test('one coworker keeps its saved rule order: the first match wins', async () => {
+  const { realpath } = await import('node:fs/promises');
+  const { matchToolRule } = await import('../src/shared/coworkers.js');
+  const folder = await realpath(await mkdtemp(join(tmpdir(), 'pixel-coworker-order-')));
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const adapter = fake(async (input) => {
+    inputs.push(input);
+    return { outcome: 'completed', text: 'done' };
+  });
+  const rules: Coworker['rules'] = [
+    { pattern: 'mcp__atlassian__createConfluencePage', action: 'auto' },
+    { pattern: '*create*', action: 'ask' },
+  ];
+  const coworker: Coworker = {
+    id: 'docs',
+    name: 'docs',
+    folder,
+    engine: 'claude',
+    role: '',
+    mode: 'solo',
+    bindings: [],
+    rules,
+    createdBy: 'user',
+  };
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-order-data-')),
+    coworkers: () => [coworker],
+  });
+  try {
+    const run = await o.startFor(coworker, 'task');
+    await wait(() => store.getRun(run.id)!.status === 'completed');
+    const got = inputs[0].toolRules ?? [];
+    expect(got).toEqual(rules);
+    expect(matchToolRule(got, 'mcp__atlassian__createConfluencePage')).toBe('auto');
+    expect(matchToolRule(got, 'mcp__atlassian__createJiraIssue')).toBe('ask');
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
 test('a coworker on a repository subfolder: its rules reach runs at the root, and startFor works in the subfolder', async () => {
   const { realpath, mkdir } = await import('node:fs/promises');
   const repo = await realpath(await project());

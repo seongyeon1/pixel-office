@@ -68,8 +68,9 @@ export function createOrchestrator({
   coworkers?: () => Coworker[];
 }) {
   // The run's own coworker and every coworker whose folder is, holds or sits inside the run's
-  // folder: a run at a repository root can reach a subfolder coworker's tools too. Every `ask`
-  // comes first, so it wins over an `auto` for the same tool.
+  // folder: a run at a repository root can reach a subfolder coworker's tools too. One coworker's
+  // rules keep their saved order (first match wins); across coworkers every `ask` comes first, so
+  // one coworker's `ask` wins over another's `auto` for the same tool.
   const toolRulesFor = (run: Run): ToolRule[] | undefined => {
     const related = (coworkers?.() ?? []).filter(
       (c) =>
@@ -78,6 +79,7 @@ export function createOrchestrator({
         isWithin(run.projectPath, c.folder),
     );
     if (!related.length) return undefined;
+    if (related.length === 1) return related[0].rules;
     const rules = related.flatMap((c) => c.rules);
     return [...rules.filter((r) => r.action === 'ask'), ...rules.filter((r) => r.action !== 'ask')];
   };
