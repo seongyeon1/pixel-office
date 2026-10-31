@@ -24,7 +24,8 @@ export type InboundAction = {
   messageTs: string;
   actionId: string;
   value: string;
-  respond(blocks: Block[], text: string): Promise<void>;
+  // Replaces the clicked message by default; `replace: false` answers only the clicker.
+  respond(blocks: Block[], text: string, replace?: boolean): Promise<void>;
 };
 
 export interface SlackPort {
@@ -96,8 +97,12 @@ export function createBoltPort(config: SlackConfig): SlackPort {
           messageTs,
           actionId: a.action_id,
           value: a.value ?? '',
-          respond: async (blocks, text) => {
-            await respond({ replace_original: true, blocks: blocksOf(blocks), text });
+          respond: async (blocks, text, replace = true) => {
+            await respond(
+              replace
+                ? { replace_original: true, blocks: blocksOf(blocks), text }
+                : { response_type: 'ephemeral', replace_original: false, text },
+            );
           },
         });
       });
