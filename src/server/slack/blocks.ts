@@ -108,8 +108,12 @@ export function questionBlocks(interaction: Interaction): Block[] {
           type: 'actions',
           elements: single
             .options!.slice(0, 25)
-            .map((o) =>
-              button(o.label, 'pixel:answer', { interactionId: interaction.id, option: o.label }),
+            // Slack needs a distinct action_id per button in one block.
+            .map((o, i) =>
+              button(o.label, `pixel:answer:${i}`, {
+                interactionId: interaction.id,
+                option: o.label,
+              }),
             ),
         }
       : context('이 스레드에 답글로 답해 주세요.'),

@@ -384,7 +384,7 @@ export function createSlackGateway({
         const approve = a.actionId === 'pixel:approve';
         answer = { decision: approve ? 'approve' : 'deny' };
         label = approve ? '승인됨' : '거절됨';
-      } else if (a.actionId === 'pixel:answer') {
+      } else if (a.actionId.startsWith('pixel:answer:')) {
         const req = store.getInteraction(id);
         const questions = req ? questionsOf(req) : [];
         const index = questions.findIndex((q) => q.options?.some((o) => o.label === option));
