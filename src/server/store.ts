@@ -16,6 +16,7 @@ import {
   type Department,
   emptyHarness,
 } from '../shared/contracts.js';
+import type { Coworker } from '../shared/coworkers.js';
 export function createStore(path: string) {
   const db = new DatabaseSync(path);
   const bus = new EventEmitter();
@@ -28,6 +29,7 @@ export function createStore(path: string) {
     CREATE INDEX IF NOT EXISTS chat_session ON chat_messages(session_id);`);
   db.exec('CREATE TABLE IF NOT EXISTS retired_sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS repo_harness(root TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS coworkers(id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS room_aliases(source TEXT PRIMARY KEY, target TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, data TEXT NOT NULL)');
   // An observed session whose instructions went to a forked provider session keep going there.
@@ -149,6 +151,19 @@ export function createStore(path: string) {
     },
     splitRoom(source: string) {
       db.prepare('DELETE FROM room_aliases WHERE source=?').run(source);
+    },
+    listCoworkers(): Coworker[] {
+      return (
+        db.prepare('SELECT data FROM coworkers ORDER BY rowid').all() as { data: string }[]
+      ).map((row) => JSON.parse(row.data) as Coworker);
+    },
+    putCoworker(coworker: Coworker) {
+      db.prepare(
+        'INSERT INTO coworkers(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
+      ).run(coworker.id, JSON.stringify(coworker));
+    },
+    deleteCoworker(id: string) {
+      db.prepare('DELETE FROM coworkers WHERE id=?').run(id);
     },
     getHarness(root: string): RepoHarness {
       const row = db.prepare('SELECT data FROM repo_harness WHERE root=?').get(root) as

@@ -918,3 +918,57 @@ test('observed-only folders that are not repositories say so in the project list
   await app.close();
   store.close();
 });
+
+test('coworker routes require authentication and enforce the roster rules', async () => {
+  const { mkdtempSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dataDir = realpathSync(mkdtempSync(join(tmpdir(), 'pixel-coworker-routes-')));
+  const store = createStore(':memory:');
+  const adapter: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: '' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: adapter, claude: adapter };
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: createOrchestrator({ store, adapters, dataDir }),
+    token: 't',
+    port: 4317,
+    dataDir,
+  });
+  const headers = { host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317' };
+  expect((await app.inject({ url: '/api/coworkers', headers })).statusCode).toBe(401);
+  const login = await app.inject({
+    method: 'POST',
+    url: '/api/session',
+    headers,
+    payload: { token: 't' },
+  });
+  const authed = { ...headers, cookie: login.headers['set-cookie'] as string };
+  const body = {
+    id: 'dev',
+    name: 'dev',
+    folder: dataDir,
+    engine: 'claude',
+    role: '',
+    mode: 'solo',
+    bindings: ['C1'],
+    createdBy: 'user',
+  };
+  const call = (method: 'POST' | 'DELETE' | 'GET', url: string, payload?: object) =>
+    app.inject({ method, url, headers: authed, payload });
+  const saved = await call('POST', '/api/coworkers', body);
+  expect(saved.statusCode).toBe(200);
+  expect(saved.json().rules.length).toBeGreaterThan(0);
+  expect((await call('POST', '/api/coworkers', { ...body, id: 'Bad Id' })).statusCode).toBe(400);
+  const list = (await call('GET', '/api/coworkers')).json();
+  expect(list.map((c: { id: string }) => c.id)).toEqual(['coordinator', 'dev']);
+  expect((await call('GET', '/api/coworkers/suggestions')).json()).toEqual([]);
+  expect((await call('DELETE', '/api/coworkers/coordinator')).statusCode).toBe(400);
+  expect((await call('DELETE', '/api/coworkers/dev')).statusCode).toBe(200);
+  await app.close();
+  store.close();
+});

@@ -59,6 +59,7 @@ const { app, origin } = await createServer({
   chat,
   questions: createQuestionDesk(),
   hookToken,
+  dataDir,
   hookSetup: {
     claudeHome: process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
     command: `PIXEL_HOOK_FILE=${q(hookFile)} node ${q(resolve('scripts/ask-hook.mjs'))}`,

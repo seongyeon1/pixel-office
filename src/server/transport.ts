@@ -15,7 +15,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { IncomingMessage } from 'node:http';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { realpath, stat } from 'node:fs/promises';
 import {
   startSchema,
@@ -34,6 +34,8 @@ import {
   type SessionConversation,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
+import { createCoworkers } from './coworkers.js';
+import { tmpdir } from 'node:os';
 import { concurrencySettings, type Orchestrator } from './orchestrator.js';
 import { inspectProject, collectRunChanges } from './projects.js';
 import { listModels } from './models.js';
@@ -59,6 +61,7 @@ export async function createServer({
   questions,
   hookToken,
   hookSetup,
+  dataDir,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -76,7 +79,9 @@ export async function createServer({
   questions?: QuestionDesk;
   hookToken?: string;
   hookSetup?: { claudeHome: string; command: string };
+  dataDir?: string;
 }) {
+  const coworkers = createCoworkers(store, { dataDir: dataDir ?? join(tmpdir(), 'pixel-office') });
   const sessions = createSessionRegistry(store, observation);
   chat?.useSessions(sessions);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -479,6 +484,13 @@ export async function createServer({
       chat?.approvePending();
     }
     return next;
+  });
+  app.get('/api/coworkers', async () => coworkers.list());
+  app.get('/api/coworkers/suggestions', async () => coworkers.suggestions());
+  app.post('/api/coworkers', async (req) => coworkers.save(req.body));
+  app.delete<{ Params: { id: string } }>('/api/coworkers/:id', async (req) => {
+    coworkers.remove(req.params.id);
+    return { ok: true };
   });
   app.get('/api/settings/concurrency', async () => concurrencySettings(store));
   app.post('/api/settings/concurrency', async (req) => {
