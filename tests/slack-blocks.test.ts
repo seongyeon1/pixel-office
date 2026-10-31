@@ -87,3 +87,26 @@ test('statusBlocks shows each assignment with its state and queue position', () 
   expect(text).toContain('앞에 2개');
   expect(text).toContain('자동 승인: git diff');
 });
+
+test('statusBlocks shows a follow-up queued behind its running source as 후속 지시 대기', () => {
+  const job = {
+    id: 'j1',
+    assignments: [
+      { id: 'a1', coworkerId: 'meeting', runId: 'r1', task: '회의록' },
+      { id: 'a2', coworkerId: 'meeting', runId: 'r2', task: '표로' },
+      { id: 'a3', coworkerId: 'meeting', runId: 'r3', task: '굵게' },
+    ],
+  } as Job;
+  const runs = [
+    { id: 'r1', status: 'completed' },
+    { id: 'r2', status: 'running', parentRunId: 'r1' },
+    { id: 'r3', status: 'queued', parentRunId: 'r2' },
+  ] as Run[];
+  const text = JSON.stringify(statusBlocks(job, runs, { r3: 2 }));
+  expect(text).toContain('굵게');
+  expect(text).toContain('후속 지시 대기');
+  expect(text).not.toContain('앞에');
+  // A follow-up whose source already finished waits like any other run.
+  const done = runs.map((r) => (r.id === 'r2' ? { ...r, status: 'completed' } : r)) as Run[];
+  expect(JSON.stringify(statusBlocks(job, done, { r3: 2 }))).toContain('앞에 1개');
+});

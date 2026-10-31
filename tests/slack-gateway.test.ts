@@ -441,6 +441,22 @@ test('a bound channel goes straight to its coworker and replies follow up when d
   expect(t.coordinator.wake).not.toHaveBeenCalled();
 });
 
+test('a follow-up waiting on the running run reads 후속 지시 대기 in the status message', async () => {
+  vi.useFakeTimers();
+  const t = await start();
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  const job = t.store.getJobByThread('T1:C1:1.1')!;
+  t.store.updateJob(job.id, { statusTs: 's1' });
+  t.store.updateRun('run1', { status: 'running' });
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.2', threadTs: '1.1', text: '표로' });
+  t.orchestrator.queuePosition.mockImplementation((id) => (id === 'run2' ? 1 : 0));
+  t.updated(t.store.getRun('run2')!);
+  await vi.advanceTimersByTimeAsync(1000);
+  const edit = t.calls.filter((c) => c[0] === 'update' && c[2] === 's1').at(-1)!;
+  expect(JSON.stringify(edit[3])).toContain('후속 지시 대기');
+});
+
 test('a failed start is told in the thread', async () => {
   const t = await start();
   t.bind('C1');
