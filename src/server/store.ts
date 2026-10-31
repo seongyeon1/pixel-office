@@ -17,6 +17,26 @@ import {
   emptyHarness,
 } from '../shared/contracts.js';
 import type { Coworker } from '../shared/coworkers.js';
+export interface Assignment {
+  id: string;
+  coworkerId: string;
+  runId: string;
+  task: string;
+  after?: string;
+}
+// One Slack thread's work: where it lives, who handles it, and the runs it has started.
+export interface Job {
+  id: string;
+  threadKey: string;
+  channel: string;
+  threadTs: string;
+  statusTs?: string;
+  route: { kind: 'coordinator' } | { kind: 'coworker'; coworkerId: string };
+  assignments: Assignment[];
+  state: 'open' | 'done';
+  createdAt: string;
+}
+const SEEN_MS = 24 * 3600_000;
 export function createStore(path: string) {
   const db = new DatabaseSync(path);
   const bus = new EventEmitter();
@@ -39,6 +59,8 @@ export function createStore(path: string) {
   db.exec(
     'CREATE TABLE IF NOT EXISTS departments(id TEXT PRIMARY KEY, name TEXT NOT NULL, root TEXT NOT NULL UNIQUE)',
   );
+  db.exec(`CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, thread_key TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS slack_seen(event_id TEXT PRIMARY KEY, at INTEGER NOT NULL);`);
   const aliases = () =>
     new Map(
       (
@@ -113,9 +135,60 @@ export function createStore(path: string) {
     bus.emit('event', complete);
     return complete;
   };
+  const jobOf = (row: unknown) =>
+    row ? (JSON.parse((row as { data: string }).data) as Job) : undefined;
+  const getJob = (id: string) => jobOf(db.prepare('SELECT data FROM jobs WHERE id=?').get(id));
   return {
     bus,
     getRun,
+    createJob(input: Pick<Job, 'threadKey' | 'channel' | 'threadTs' | 'route'>): Job {
+      const job: Job = {
+        ...input,
+        id: randomUUID(),
+        assignments: [],
+        state: 'open',
+        createdAt: new Date().toISOString(),
+      };
+      db.prepare('INSERT INTO jobs(id,thread_key,data) VALUES(?,?,?)').run(
+        job.id,
+        job.threadKey,
+        JSON.stringify(job),
+      );
+      return job;
+    },
+    getJob,
+    getJobByThread: (threadKey: string) =>
+      jobOf(db.prepare('SELECT data FROM jobs WHERE thread_key=?').get(threadKey)),
+    updateJob(id: string, patch: Partial<Omit<Job, 'id' | 'threadKey'>>): Job {
+      const job = getJob(id);
+      if (!job) throw new Error('일을 찾을 수 없어요.');
+      const updated = { ...job, ...patch, id, threadKey: job.threadKey };
+      db.prepare('UPDATE jobs SET data=? WHERE id=?').run(JSON.stringify(updated), id);
+      return updated;
+    },
+    // An assignment's run, or any run started for the job (a follow-up keeps its source's origin).
+    jobForRun(runId: string): Job | undefined {
+      const listed = jobOf(
+        db
+          .prepare(
+            `SELECT data FROM jobs WHERE EXISTS (SELECT 1 FROM json_each(jobs.data, '$.assignments') AS a
+            WHERE json_extract(a.value, '$.runId')=?) ORDER BY rowid DESC LIMIT 1`,
+          )
+          .get(runId),
+      );
+      const origin = getRun(runId)?.origin;
+      return listed ?? (origin?.kind === 'slack' ? getJob(origin.jobId) : undefined);
+    },
+    // True the first time a key is seen; keys older than a day are forgotten.
+    markSlackSeen(eventId: string, now = Date.now()) {
+      db.prepare('DELETE FROM slack_seen WHERE at<?').run(now - SEEN_MS);
+      return (
+        Number(
+          db.prepare('INSERT OR IGNORE INTO slack_seen(event_id,at) VALUES(?,?)').run(eventId, now)
+            .changes,
+        ) === 1
+      );
+    },
     listRuns,
     cleanupRuns: () =>
       (db.prepare('SELECT data FROM runs ORDER BY rowid DESC').all() as { data: string }[]).map(
