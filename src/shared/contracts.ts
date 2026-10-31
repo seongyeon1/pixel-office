@@ -62,6 +62,8 @@ export interface Run {
   coworkerId?: string;
   executable?: string;
   origin?: { kind: 'slack'; jobId: string };
+  // A personal run of a coworker on a repository subfolder works there, inside worktreePath.
+  cwd?: string;
   pullRequestRequested?: boolean;
   initialChanges?: Record<string, string>;
   projectPath: string;

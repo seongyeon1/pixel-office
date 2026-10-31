@@ -28,7 +28,7 @@ const orchestrator = createOrchestrator({
   store,
   adapters,
   dataDir,
-  coworkerFor: (root) => coworkers.forFolder(root),
+  coworkers: () => coworkers.list(),
 });
 const observation = createObservation({
   excludeRoots: [resolve(dataDir, 'chat')],

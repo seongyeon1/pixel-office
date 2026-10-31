@@ -35,6 +35,7 @@ import {
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
 import { createCoworkers } from './coworkers.js';
+import { CODEX_LOCKDOWN_WARNING } from './adapters/codex.js';
 import { tmpdir } from 'node:os';
 import { concurrencySettings, type Orchestrator } from './orchestrator.js';
 import { inspectProject, collectRunChanges } from './projects.js';
@@ -489,11 +490,12 @@ export async function createServer({
   app.get('/api/coworkers/suggestions', async () => coworkers.suggestions());
   app.post('/api/coworkers', async (req) => {
     const saved = coworkers.save(req.body);
-    // Codex raises no per-tool approval for MCP calls, so its runs turn external MCP off instead.
+    // Codex raises no per-tool approval for MCP calls, so its runs turn external tools off instead
+    // (see mcpLockdown in adapters/codex.ts).
     return saved.engine === 'codex' && saved.rules.some((rule) => rule.action === 'ask')
       ? {
           ...saved,
-          warnings: ['Codex는 외부 도구 승인을 강제할 수 없어 외부 MCP를 끄고 실행해요.'],
+          warnings: [CODEX_LOCKDOWN_WARNING],
         }
       : saved;
   });

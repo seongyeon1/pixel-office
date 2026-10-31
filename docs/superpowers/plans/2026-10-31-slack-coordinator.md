@@ -359,4 +359,17 @@
 - 도구별 승인은 `apps.*.tools.*.approval_mode`(`AppToolApproval`: auto/prompt/writes/approve) 설정에만 있고, 개인 실행 auto 모드(`approvalPolicy: 'never'`)에서 승인 요청이 온다고 확신할 근거가 없다.
 - 결론: 확실히 확인되지 않음 → **Step 6b** 구현. `ask` 규칙이 하나라도 있으면 `~/.codex/config.toml`(`CODEX_HOME` 우선)의 `[mcp_servers.<name>]`마다 `-c mcp_servers.<name>.enabled=false`를 붙인다.
 - 끄기 플래그 확인: `codex -c mcp_servers.voicekit.enabled=false mcp list` → voicekit만 `disabled`로 바뀜. `-c 'mcp_servers."voicekit".enabled=false'`는 `invalid transport in mcp_servers."voicekit"`로 **시작 자체가 실패**한다(`-c`는 점으로 나누고 따옴표 구간을 지원하지 않음). 그래서 따옴표 이름은 따옴표를 벗겨 쓰고, 영문·숫자·`-`·`_`가 아닌 이름(예: `"my.docs"`)이 있으면 실행을 거부한다.
-- 남는 구멍: config.toml 밖에서 들어오는 MCP(플러그인 번들 서버, 예: `codex mcp list`의 `codex_app`/`cua_repl`)와 ChatGPT 앱 커넥터(`apps.*`)는 이 방식으로 꺼지지 않는다.
+- 남는 구멍: config.toml 밖에서 들어오는 MCP(플러그인 번들 서버, 예: `codex mcp list`의 `codex_app`/`cua_repl`)와 ChatGPT 앱 커넥터(`apps.*`)는 이 방식으로 꺼지지 않는다. → 아래 수정 1차에서 막음.
+
+### Task 4 수정 1차 — Codex 외부 도구 전부 끄기 (Ruling R12, 2026-10-31)
+
+모델 호출 없이 `mcp list --json` / `features list` / `app-server --print-startup-config`만 돌려 확인했다.
+
+- `codex mcp list --json`은 `[{ name, enabled, ... }]` 배열을 준다. config.toml에 없는 플러그인 번들 서버(`codex_app`, `cua_repl`)도 나온다.
+- 플러그인 서버에 `-c mcp_servers.cua_repl.enabled=false`를 붙이면 `invalid transport in mcp_servers.cua_repl`로 **시작이 실패**한다. `-c`로는 config에 없는 서버를 못 끈다.
+- `codex --disable plugins mcp list --json` → `codex_app`, `cua_repl`이 목록에서 사라진다. `codex features list`에서 `apps stable true`였고, `--disable apps`(= `-c features.apps=false`)를 붙이면 `apps stable false`가 된다.
+- 그래서 `ask` 규칙이 있는 Codex 실행은 이렇게 간다: 실행할 명령·앞 플래그·폴더 그대로 `<cmd> <pre> --disable plugins --disable apps mcp list --json`로 남은 서버를 읽는다 → 이름마다 `-c mcp_servers.<name>.enabled=false`를 붙인다 → 같은 플래그로 다시 목록을 읽어 하나라도 `enabled: true`면 거부한다. 목록 실패, `-c`로 못 쓰는 이름(점 포함 등)도 실행을 거부한다(한국어 오류).
+- 실제 함수(`mcpLockdown`)를 이 기기에서 `codex`, `syc --safe`, `syc`로 돌린 결과: 끄기 전 `codex_app=false, computer-use=false, cua_repl=true, node_repl=true, openaiDeveloperDocs=true, voicekit=true` → 끈 뒤 `computer-use=false, node_repl=false, openaiDeveloperDocs=false, voicekit=false`(플러그인 서버는 목록에서 빠짐), `features list`는 `apps false | plugins false`.
+- `codex --sandbox workspace-write --ask-for-approval on-request --disable plugins --disable apps -c mcp_servers.voicekit.enabled=false app-server --print-startup-config` → exit 0. app-server가 이 플래그 조합을 받는다.
+- `--safe`는 `syc` 전용 플래그다(`syc` 스크립트가 `codex --sandbox workspace-write --ask-for-approval on-request`로 펼친다). 그래서 다른 명령에는 이 두 플래그를 직접 넘긴다. `codex --help`에서 `-s, --sandbox`, `-a, --ask-for-approval`이 있는 것을 확인했다.
+- 대가: 승인 규칙이 있는 동안 Codex 실행에서는 플러그인(그 안의 스킬 포함)과 앱 연결도 꺼진다. 동료 저장 응답의 경고 문구에 이 내용을 적었다.

@@ -19,7 +19,7 @@ import {
   type ConcurrencySettings,
   defaultTeam,
 } from '../shared/contracts.js';
-import type { Coworker } from '../shared/coworkers.js';
+import type { Coworker, ToolRule } from '../shared/coworkers.js';
 import type { Store } from './store.js';
 import {
   inspectProject,
@@ -28,6 +28,7 @@ import {
   createBundleWorkspace,
   collectRunChanges,
   git,
+  isWithin,
 } from './projects.js';
 import { phasePrompt } from './prompts.js';
 import { harnessDirFor } from './harness.js';
@@ -57,15 +58,29 @@ export function createOrchestrator({
   adapters,
   dataDir,
   verifyDelivery = verifyPullRequests,
-  coworkerFor,
+  coworkers,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
   dataDir: string;
   verifyDelivery?: (run: Run) => Promise<DeliveryResult>;
-  // The coworker that works in a folder: its tool rules apply to every run there.
-  coworkerFor?: (root: string) => Coworker | undefined;
+  // Coworkers whose tool rules apply to the runs in and around their folders.
+  coworkers?: () => Coworker[];
 }) {
+  // The run's own coworker and every coworker whose folder is, holds or sits inside the run's
+  // folder: a run at a repository root can reach a subfolder coworker's tools too. Every `ask`
+  // comes first, so it wins over an `auto` for the same tool.
+  const toolRulesFor = (run: Run): ToolRule[] | undefined => {
+    const related = (coworkers?.() ?? []).filter(
+      (c) =>
+        c.id === run.coworkerId ||
+        isWithin(c.folder, run.projectPath) ||
+        isWithin(run.projectPath, c.folder),
+    );
+    if (!related.length) return undefined;
+    const rules = related.flatMap((c) => c.rules);
+    return [...rules.filter((r) => r.action === 'ask'), ...rules.filter((r) => r.action !== 'ask')];
+  };
   // One lane per folder: runs in a folder go one at a time, folders run side by side up to the limit.
   const running = new Map<
     string,
@@ -247,7 +262,7 @@ export function createOrchestrator({
                   ? undefined
                   : run.sessions?.[provider]?.[isReview ? 'reviewer' : 'implementer'],
               approvalMode: approvalSettings(store).mode,
-              cwd: run.worktreePath,
+              cwd: run.cwd ?? run.worktreePath,
               prompt:
                 phasePrompt(
                   run,
@@ -267,7 +282,7 @@ export function createOrchestrator({
               harnessDir: harnessDirFor(dataDir, run.projectPath),
               // The coworker's command runs its own engine, not the other provider.
               executable: provider === run.implementer ? run.executable : undefined,
-              toolRules: coworkerFor?.(run.projectPath)?.rules,
+              toolRules: toolRulesFor(run),
               signal: controller.signal,
             },
             (event) => {
@@ -406,7 +421,7 @@ export function createOrchestrator({
   }
   async function start(
     raw: StartInput,
-    extra: Pick<Run, 'coworkerId' | 'executable' | 'origin'> = {},
+    extra: Pick<Run, 'coworkerId' | 'executable' | 'origin' | 'cwd'> = {},
   ) {
     const { allowPlain, ...input } = startSchema.parse(raw);
     const project = await inspectProject(input.projectPath, { allowPlain });
@@ -444,6 +459,11 @@ export function createOrchestrator({
           ),
       ...(project.plain ? { plain: true as const } : {}),
       ...extra,
+      // A coworker on a subfolder works there; the lane and baseline stay at the repository.
+      cwd:
+        extra.cwd && extra.cwd !== workspace.path && input.executionMode !== 'isolated'
+          ? extra.cwd
+          : undefined,
       team: structuredClone(input.team),
       harness: store.getHarness(project.root),
       id,
@@ -482,6 +502,7 @@ export function createOrchestrator({
         },
         {
           coworkerId: coworker.id,
+          cwd: coworker.folder,
           ...(coworker.command ? { executable: coworker.command } : {}),
           ...(origin ? { origin } : {}),
         },

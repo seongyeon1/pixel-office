@@ -708,7 +708,7 @@ test('a coworker folder applies its tool rules from every entry, and startFor ru
     store,
     adapters: { codex: adapter, claude: adapter },
     dataDir: await mkdtemp(join(tmpdir(), 'pixel-coworker-data-')),
-    coworkerFor: (root) => (root === folder ? coworker : undefined),
+    coworkers: () => [coworker],
   });
   try {
     const screen = await o.start({ ...solo(folder), allowPlain: true });
@@ -737,7 +737,96 @@ test('a coworker folder applies its tool rules from every entry, and startFor ru
     // The reviewer is the other engine: the coworker's command is not its executable.
     expect(reviewing.role).toBe('reviewer');
     expect(reviewing.executable).toBeUndefined();
-    expect(inputs.every((i) => i.toolRules === rules)).toBe(true);
+    expect(inputs.every((i) => JSON.stringify(i.toolRules) === JSON.stringify(rules))).toBe(true);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('a coworker on a repository subfolder: its rules reach runs at the root, and startFor works in the subfolder', async () => {
+  const { realpath, mkdir } = await import('node:fs/promises');
+  const repo = await realpath(await project());
+  const sub = join(repo, 'docs', 'minutes');
+  await mkdir(sub, { recursive: true });
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const adapter = fake(async (input) => {
+    inputs.push(input);
+    return { outcome: 'completed', text: 'done' };
+  });
+  const coworker = (id: string, folder: string, rules: Coworker['rules']): Coworker => ({
+    id,
+    name: id,
+    folder,
+    engine: 'codex',
+    role: '',
+    mode: 'solo',
+    bindings: [],
+    rules,
+    createdBy: 'user',
+  });
+  const minutes = coworker('minutes', sub, [
+    { pattern: 'mcp__notion__*', action: 'auto' },
+    { pattern: 'mcp__*__*create*', action: 'ask' },
+  ]);
+  const team = [
+    minutes,
+    // The whole repository's coworker, and one somewhere else entirely.
+    coworker('repo', repo, [{ pattern: 'mcp__notion__*', action: 'ask' }]),
+    coworker('other', await realpath(await mkdtemp(join(tmpdir(), 'pixel-other-'))), [
+      { pattern: 'Bash', action: 'ask' },
+    ]),
+  ];
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-sub-data-')),
+    coworkers: () => team,
+  });
+  try {
+    const screen = await o.start(solo(repo));
+    await wait(() => store.getRun(screen.id)!.status === 'completed');
+    // Every `ask` comes before any `auto`, so an ask on the same tool wins.
+    expect(inputs[0].toolRules).toEqual([
+      { pattern: 'mcp__*__*create*', action: 'ask' },
+      { pattern: 'mcp__notion__*', action: 'ask' },
+      { pattern: 'mcp__notion__*', action: 'auto' },
+    ]);
+    expect(inputs[0].cwd).toBe(repo);
+    const run = await o.startFor(minutes, 'task');
+    await wait(() => store.getRun(run.id)!.status === 'completed');
+    expect(store.getRun(run.id)).toMatchObject({ projectPath: repo, cwd: sub });
+    expect(inputs[1].cwd).toBe(sub);
+    expect(inputs[1].toolRules?.[0]).toEqual({ pattern: 'mcp__*__*create*', action: 'ask' });
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('approvePending leaves a request a tool rule marked ask waiting', async () => {
+  const store = createStore(':memory:');
+  const adapter = fake(async (input, _emit, interact) => {
+    const answer = await interact({
+      runId: input.runId,
+      agentId: 'claude',
+      kind: 'approval',
+      title: 'createPage',
+      details: { tool: 'mcp__atlassian__createPage', policy: 'ask' },
+    });
+    return { outcome: 'decision' in answer ? 'completed' : 'failed', text: 'done' };
+  });
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-ask-data-')),
+  });
+  try {
+    store.setSetting('approvals', { mode: 'auto' });
+    const run = await o.start(solo(await project()));
+    await wait(() => store.pending(run.id).length === 1);
+    await o.approvePending();
+    expect(store.pending(run.id)).toHaveLength(1);
+    expect(store.getRun(run.id)?.status).toBe('waiting_approval');
   } finally {
     await o.shutdown();
     store.close();
