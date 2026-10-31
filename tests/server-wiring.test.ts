@@ -6,7 +6,7 @@ import { createStore } from '../src/server/store.js';
 import { createCoworkers } from '../src/server/coworkers.js';
 import { createSlackConnection } from '../src/server/slack/connection.js';
 import { writeSlackConfig } from '../src/server/slack/secrets.js';
-import type { CoordinatorTurn } from '../src/server/coordinator.js';
+import type { CoordinatorRun, CoordinatorTurn } from '../src/server/coordinator.js';
 import type { InboundMessage, SlackPort } from '../src/server/slack/port.js';
 import type { Run } from '../src/shared/contracts.js';
 
@@ -14,7 +14,7 @@ const OWNER = 'U0OWNER';
 const config = { botToken: 'xoxb-1-secret', appToken: 'xapp-1-secret', ownerId: OWNER };
 type Call = [string, ...unknown[]];
 
-function setup(opts: { startFails?: boolean } = {}) {
+function setup(opts: { startFails?: boolean; runCoordinator?: CoordinatorRun } = {}) {
   const store = createStore(':memory:');
   const dataDir = mkdtempSync(join(tmpdir(), 'pixel-wiring-'));
   const coworkers = createCoworkers(store, { dataDir });
@@ -57,6 +57,7 @@ function setup(opts: { startFails?: boolean } = {}) {
     createPort,
     runCoordinator: async (turn) => {
       turns.push(turn);
+      if (opts.runCoordinator) return opts.runCoordinator(turn);
       const reply = turn.tools.find((t) => t.name === 'reply')!;
       await reply.handler({ text: '읽어볼게요.' } as never, {});
       return { sessionId: 's1' };
@@ -143,4 +144,30 @@ test('boot without a saved config does nothing', async () => {
   await t.connection.boot();
   expect(t.createPort).not.toHaveBeenCalled();
   expect(t.connection.error()).toBeUndefined();
+});
+
+test('reconnecting stops the old coordinator: its turn is aborted and only the new one acts', async () => {
+  let release!: () => void;
+  const hung = new Promise<void>((r) => (release = r));
+  const t = (current = setup({
+    runCoordinator: async (turn) => {
+      if (t.turns.length === 1) await hung;
+      const reply = turn.tools.find((x) => x.name === 'reply')!;
+      const result = await reply.handler({ text: `답 ${t.turns.length}` } as never, {});
+      return result.isError ? {} : { sessionId: 's1' };
+    },
+  }));
+  await t.connection.connect(config);
+  t.ports[0]!.onMessage!(dm('1.1'));
+  await until(() => t.turns.length === 1);
+  await t.connection.connect(config);
+  expect(t.turns[0]!.abortController.signal.aborted).toBe(true);
+  release();
+  t.ports[1]!.onMessage!(dm('2.2'));
+  await until(() => t.turns.length === 2);
+  await until(() => t.calls.filter((c) => c[0] === 'post').length === 1);
+  await new Promise((r) => setTimeout(r, 30));
+  const posts = t.calls.filter((c) => c[0] === 'post');
+  expect(posts).toHaveLength(1);
+  expect(String(posts[0]![4])).toBe('답 2');
 });

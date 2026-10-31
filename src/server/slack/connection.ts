@@ -1,4 +1,4 @@
-import { createCoordinator, type CoordinatorRun } from '../coordinator.js';
+import { createCoordinator, type Coordinator, type CoordinatorRun } from '../coordinator.js';
 import type { Coworkers } from '../coworkers.js';
 import type { Orchestrator } from '../orchestrator.js';
 import type { Store } from '../store.js';
@@ -32,7 +32,7 @@ export function createSlackConnection({
   log?: (code: string) => void;
 }) {
   const makePort = createPort ?? ((config: SlackConfig) => createBoltPort(config, log));
-  let gateway: SlackGateway | undefined;
+  let active: { gateway: SlackGateway; coordinator: Coordinator } | undefined;
   let pending = interrupted;
   let error: string | undefined;
   // Boot and a settings save may connect at once; one at a time keeps a single gateway.
@@ -43,9 +43,10 @@ export function createSlackConnection({
     return next;
   };
   const stopGateway = async () => {
-    const current = gateway;
-    gateway = undefined;
-    await current?.stop();
+    const current = active;
+    active = undefined;
+    current?.coordinator.stop();
+    await current?.gateway.stop();
   };
   const open = async (config: SlackConfig) => {
     await stopGateway().catch(() => {});
@@ -73,11 +74,12 @@ export function createSlackConnection({
     try {
       await live.start();
     } catch (e) {
+      coordinator.stop();
       await port.stop().catch(() => {});
       error = slackErrorCode(e);
       throw new Error(error);
     }
-    gateway = live;
+    active = { gateway: live, coordinator };
     error = undefined;
     const ids = pending;
     pending = [];
