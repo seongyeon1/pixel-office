@@ -13,6 +13,7 @@ import {
   type Run,
 } from '../src/shared/contracts.js';
 import { personaInstructions } from '../src/server/personas.js';
+import type { Coworker } from '../src/shared/coworkers.js';
 async function project() {
   const p = await mkdtemp(join(tmpdir(), 'pixel-orch-'));
   execFileSync('git', ['init'], { cwd: p, stdio: 'pipe' });
@@ -673,6 +674,70 @@ test('plain folder runs without git and follow-ups reuse the folder', async () =
     const next = await o.followUp(run.id, 'again');
     await wait(() => store.getRun(next.id)!.status === 'completed');
     expect(store.getRun(next.id)?.plain).toBe(true);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});
+test('a coworker folder applies its tool rules from every entry, and startFor runs as that coworker', async () => {
+  const { realpath } = await import('node:fs/promises');
+  const folder = await realpath(await mkdtemp(join(tmpdir(), 'pixel-coworker-run-')));
+  const store = createStore(':memory:');
+  const inputs: PhaseInput[] = [];
+  const adapter = fake(async (input) => {
+    inputs.push(input);
+    return input.role === 'reviewer'
+      ? { outcome: 'completed', text: 'ok', review: pass }
+      : { outcome: 'completed', text: 'done' };
+  });
+  const rules = [{ pattern: 'mcp__*__*create*', action: 'ask' as const }];
+  const coworker: Coworker = {
+    id: 'minutes',
+    name: '회의록',
+    folder,
+    engine: 'claude',
+    command: 'pstack-claude',
+    model: 'claude-test',
+    role: '회의록을 정리해요.',
+    mode: 'collaborate',
+    bindings: [],
+    rules,
+    createdBy: 'user',
+  };
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-coworker-data-')),
+    coworkerFor: (root) => (root === folder ? coworker : undefined),
+  });
+  try {
+    const screen = await o.start({ ...solo(folder), allowPlain: true });
+    await wait(() => store.getRun(screen.id)!.status === 'completed');
+    expect(inputs[0].toolRules).toEqual(rules);
+    expect(inputs[0].executable).toBeUndefined();
+    expect(store.getRun(screen.id)?.coworkerId).toBeUndefined();
+    inputs.length = 0;
+    const origin = { kind: 'slack' as const, jobId: 'job-1' };
+    const run = await o.startFor(coworker, '어제 회의록 정리해줘', origin);
+    await wait(() => store.getRun(run.id)!.status === 'completed');
+    const saved = store.getRun(run.id)!;
+    expect(saved).toMatchObject({
+      coworkerId: 'minutes',
+      origin,
+      projectPath: folder,
+      mode: 'collaborate',
+      implementer: 'claude',
+      plain: true,
+      prompt: '역할:\n회의록을 정리해요.\n\n어제 회의록 정리해줘',
+    });
+    expect(saved.team.claude.model).toBe('claude-test');
+    const [implement, reviewing] = inputs;
+    expect(implement).toMatchObject({ role: 'implementer', executable: 'pstack-claude' });
+    expect(implement.profile.model).toBe('claude-test');
+    // The reviewer is the other engine: the coworker's command is not its executable.
+    expect(reviewing.role).toBe('reviewer');
+    expect(reviewing.executable).toBeUndefined();
+    expect(inputs.every((i) => i.toolRules === rules)).toBe(true);
   } finally {
     await o.shutdown();
     store.close();

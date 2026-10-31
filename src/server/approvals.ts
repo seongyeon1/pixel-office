@@ -18,10 +18,12 @@ export function recordAutomaticApproval(store: Store, request: Interaction) {
   });
 }
 
-// Permission grants stay explicit, including pending requests stored by older adapters.
+// Permission grants stay explicit, including pending requests stored by older adapters, and so
+// does a tool a coworker's rules mark `ask`.
 export function isToolApproval(request: Pick<Interaction, 'kind' | 'details'>) {
   return (
     request.kind === 'approval' &&
+    request.details.policy !== 'ask' &&
     !String(request.details.approvalMethod ?? '').includes('/permissions/') &&
     request.details.permissions == null &&
     request.details.additionalPermissions == null &&

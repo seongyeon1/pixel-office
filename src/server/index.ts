@@ -10,6 +10,7 @@ import { createStore } from './store.js';
 import { createCodexAdapter } from './adapters/codex.js';
 import { createClaudeAdapter } from './adapters/claude.js';
 import { createOrchestrator } from './orchestrator.js';
+import { createCoworkers } from './coworkers.js';
 import { createServer } from './transport.js';
 import { createObservation } from './observation/observer.js';
 import { dropParentSession } from './env.js';
@@ -22,7 +23,13 @@ const token = randomBytes(24).toString('hex');
 const store = createStore(resolve(dataDir, 'office.sqlite'));
 store.interruptActive();
 const adapters = { codex: createCodexAdapter(), claude: createClaudeAdapter() };
-const orchestrator = createOrchestrator({ store, adapters, dataDir });
+const coworkers = createCoworkers(store, { dataDir });
+const orchestrator = createOrchestrator({
+  store,
+  adapters,
+  dataDir,
+  coworkerFor: (root) => coworkers.forFolder(root),
+});
 const observation = createObservation({
   excludeRoots: [resolve(dataDir, 'chat')],
 });

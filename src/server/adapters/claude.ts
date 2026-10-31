@@ -7,6 +7,7 @@ import { prepareClaudeHarness } from '../harness.js';
 import { realpath } from 'node:fs/promises';
 import { z } from 'zod';
 import { reviewSchema, reviewJsonSchema, type Adapter } from '../../shared/contracts.js';
+import { matchToolRule } from '../../shared/coworkers.js';
 import { isWithin } from '../projects.js';
 import { normalizeClaude, activityForTool } from './normalize.js';
 import { isUsageLimit } from './usage-limit.js';
@@ -78,7 +79,7 @@ export function createClaudeAdapter({
             env: { ...process.env, PIXEL_MANAGED_QUESTIONS: '1' },
             ...(personal
               ? {
-                  pathToClaudeCodeExecutable: 'sy',
+                  pathToClaudeCodeExecutable: input.executable ?? 'sy',
                   systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
                 }
               : {}),
@@ -170,15 +171,17 @@ export function createClaudeAdapter({
                         type: 'activity',
                         payload: { activity: activityForTool(tool), tool, input: args },
                       });
-                      // sy itself enables bypass mode. Enforce the app's manual setting
-                      // here, before execution, instead of relying on canUseTool.
-                      if (personal && input.approvalMode === 'manual') {
+                      // sy itself enables bypass mode. Enforce the app's manual setting, and a
+                      // coworker's `ask` rule in any mode, here before execution instead of
+                      // relying on canUseTool.
+                      const ask = matchToolRule(input.toolRules ?? [], tool) === 'ask';
+                      if (ask || (personal && input.approvalMode === 'manual')) {
                         const answer = await interact({
                           runId: input.runId,
                           agentId: 'claude',
                           kind: 'approval',
                           title: String(args.command ?? `${tool} 작업 승인`),
-                          details: { tool, ...args },
+                          details: { ...args, tool, ...(ask ? { policy: 'ask' } : {}) },
                         });
                         if (!('decision' in answer) || answer.decision !== 'approve')
                           return deny('사용자가 작업을 거절했습니다.');

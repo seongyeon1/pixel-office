@@ -963,6 +963,11 @@ test('coworker routes require authentication and enforce the roster rules', asyn
   const saved = await call('POST', '/api/coworkers', body);
   expect(saved.statusCode).toBe(200);
   expect(saved.json().rules.length).toBeGreaterThan(0);
+  expect(saved.json()).not.toHaveProperty('warnings');
+  const codex = (await call('POST', '/api/coworkers', { ...body, engine: 'codex' })).json();
+  expect(codex.warnings).toEqual([
+    'Codex는 외부 도구 승인을 강제할 수 없어 외부 MCP를 끄고 실행해요.',
+  ]);
   expect((await call('POST', '/api/coworkers', { ...body, id: 'Bad Id' })).statusCode).toBe(400);
   const list = (await call('GET', '/api/coworkers')).json();
   expect(list.map((c: { id: string }) => c.id)).toEqual(['coordinator', 'dev']);
