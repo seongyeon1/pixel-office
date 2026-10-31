@@ -75,10 +75,8 @@ test('bundle history is discoverable from a member repo and follow-ups survive r
       'title',
       folder,
     );
-    await expect(page.getByRole('region', { name: '이전 작업과 추가 요청' })).toContainText(
-      '작업 기록에 저장됨',
-    );
-    await page.getByLabel('이 작업에 추가 요청').fill('회귀 테스트 추가 요청');
+    await expect(page.getByRole('region', { name: '작업 지시' })).toContainText('이어갈 작업');
+    await page.getByLabel('작업 내용', { exact: true }).fill('회귀 테스트 추가 요청');
     const response = page.waitForResponse(
       (r) => r.url().endsWith(`/runs/${first.id}/follow-up`) && r.request().method() === 'POST',
     );
@@ -88,15 +86,15 @@ test('bundle history is discoverable from a member repo and follow-ups survive r
     expect(next.repos).toEqual(first.repos);
     expect(next.parentRunId).toBe(first.id);
     expect(next.executionMode).toBe('personal');
-    await expect(page.getByRole('region', { name: '이전 작업과 추가 요청' })).toContainText(
+    await expect(page.getByRole('region', { name: '작업 지시' })).toContainText(
       '회귀 테스트 추가 요청',
     );
     await page.reload();
-    await expect(page.getByRole('region', { name: '이전 작업과 추가 요청' })).toContainText(
+    await expect(page.getByRole('region', { name: '작업 지시' })).toContainText(
       '회귀 테스트 추가 요청',
     );
     await page.screenshot({ path: info.outputPath('follow-up.png'), fullPage: true });
-    await page.getByRole('button', { name: '이 작업의 기록 보기', exact: true }).click();
+    await page.getByRole('button', { name: '전체 작업 기록 열기', exact: true }).click();
     await expect(page.locator('.history-list')).toContainText('묶음 기록 원본 요청');
     await expect(page.locator('.history-list')).toContainText('추가 요청 · 회귀 테스트 추가 요청');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(

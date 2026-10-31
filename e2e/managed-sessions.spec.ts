@@ -1,3 +1,4 @@
+import { newWork, showSessions } from './workbench-helpers';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 test('app implementer and reviewer have independent conversations and native resume controls', async ({
@@ -21,20 +22,26 @@ test('app implementer and reviewer have independent conversations and native res
     });
   });
   try {
+    await newWork(page);
     await page.getByLabel('작업 내용').fill(`개별 대화 통합 ${info.project.name}`);
     const response = page.waitForResponse(
       (r) => r.url().endsWith('/api/runs') && r.request().method() === 'POST',
     );
     await page.getByRole('button', { name: '작업 시작', exact: true }).click();
     const run = await (await response).json();
+    await expect(page.locator('.current-task')).toContainText(
+      `개별 대화 통합 ${info.project.name}`,
+    );
     await expect(page.locator('.run-result.success')).toBeVisible();
     await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
     await page
       .locator('.app-session-actions')
       .getByRole('button', { name: '말 걸기', exact: true })
       .click();
-    await page.getByRole('tab', { name: '지시 · 실제 실행', exact: true }).click();
-    await page.getByLabel('동료에게 지시').fill('이 구현 세션에만 회귀 테스트를 추가해줘');
+    await page.getByLabel('지시 방식').selectOption('say');
+    await page
+      .getByLabel('작업 내용', { exact: true })
+      .fill('이 구현 세션에만 회귀 테스트를 추가해줘');
     await page.getByRole('button', { name: '지시 보내기', exact: true }).click();
     await expect(page.locator('.chat-message.assistant')).toContainText(
       '지시대로 처리했어요: 이 구현 세션에만 회귀 테스트를 추가해줘',
@@ -61,6 +68,7 @@ test('app implementer and reviewer have independent conversations and native res
     await expect(dock).toContainText(native);
     await dock.getByRole('button', { name: '터미널 종료', exact: true }).click();
     await page.reload();
+    await showSessions(page);
     await page
       .locator('.observed-sessions button')
       .filter({ hasText: '이 구현 세션에만 회귀 테스트를 추가해줘' })

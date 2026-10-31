@@ -1,6 +1,7 @@
 import { WorktreeCleanup } from './components/WorktreeCleanup';
 import { SessionChat } from './components/SessionChat';
-import { RunFollowUp } from './components/RunFollowUp';
+import { WorkComposer, type ComposerState } from './components/WorkComposer';
+import { TerminalWorkbench } from './components/TerminalWorkbench';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   Armchair,
@@ -113,6 +114,11 @@ export function App() {
   });
   // Which kind of coworker the office inspector shows: the app's own run, or an observed session.
   const [runFocus, setRunFocus] = useState(false);
+  const [composerStates, setComposerStates] = useState<Record<string, ComposerState>>({});
+  const [workMode, setWorkMode] = useState<'terminal' | 'team'>(() =>
+    localStorage.getItem('pixel.workMode') === 'team' ? 'team' : 'terminal',
+  );
+  const nativeMode = workMode === 'terminal' && !!health?.features?.agentLauncher;
   const [loadingProject, setLoadingProject] = useState(false);
   // Repositories chosen for a bundle run (paths inside the bundle folder), remembered per folder.
   const [bundle, setBundle] = useState<string[]>([]);
@@ -131,7 +137,6 @@ export function App() {
   const [harnessOpen, setHarnessOpen] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [path, setPath] = useState(() => localStorage.getItem('pixel.project') ?? '');
-  const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<Mode>('collaborate');
   const [executionMode, setExecutionMode] = useState<'personal' | 'isolated'>('personal');
   const [team, setTeam] = useState<TeamConfig>(defaultTeam);
@@ -249,7 +254,6 @@ export function App() {
     setProjectHistory([]);
     setDocumentTarget(undefined);
     setChanges([]);
-    setPrompt('');
     setSocketStatus('');
     setError('');
     setModal(null);
@@ -257,6 +261,10 @@ export function App() {
     setResumeSessionId(undefined);
     setTargetSessionId(options?.worker?.run ? undefined : options?.worker?.session?.id);
     if (options?.worker) setSelected(options.worker.provider);
+    if (options?.worker?.run) {
+      setWorkMode('team');
+      localStorage.setItem('pixel.workMode', 'team');
+    }
     setRunFocus(!!options?.worker?.run);
     setLoadingProject(true);
     try {
@@ -461,12 +469,12 @@ export function App() {
     localStorage.setItem(`pixel.bundle.${project.root}`, JSON.stringify(next));
   };
   const bundleMissing = !!project?.repositories && bundle.length === 0;
-  const start = async () => {
+  const start = async (prompt: string): Promise<boolean> => {
     if (!project || project.unavailable) {
       setModal('project');
-      return;
+      return false;
     }
-    if (!prompt.trim() || loadingProject || busy || bundleMissing) return;
+    if (!prompt.trim() || loadingProject || busy || bundleMissing) return false;
     setPending(true);
     setError('');
     setStartError('');
@@ -482,13 +490,16 @@ export function App() {
       });
       await selectRun(run.id);
       // Show the coworker who just got the task.
+      setTab('activity');
       setSelected(mode === 'collaborate' ? implementer : mode);
       await refreshRuns();
       setView('office');
       setRunFocus(true);
       setInspector(true);
+      return true;
     } catch (e) {
       setStartError((e as Error).message);
+      return false;
     } finally {
       setPending(false);
     }
@@ -505,17 +516,6 @@ export function App() {
     } finally {
       setPending(false);
     }
-  };
-  const newTask = () => {
-    if (active) return;
-    setStartError('');
-    snapshotVersion.current++;
-    const empty = emptyState();
-    stateRef.current = empty;
-    setState(empty);
-    setPrompt('');
-    setChanges([]);
-    setView('office');
   };
   if (!booted)
     return (
@@ -564,20 +564,18 @@ export function App() {
     if (version !== selectionVersion.current || run.projectPath !== projectRef.current) return;
     if (!(await selectRun(run.id))) return;
     if (version !== selectionVersion.current || run.projectPath !== projectRef.current) return;
+    setComposerStates((previous) => ({
+      ...previous,
+      [run.projectPath]: { drafts: previous[run.projectPath]?.drafts ?? {} },
+    }));
     setRunFocus(true);
+    setWorkMode('team');
+    localStorage.setItem('pixel.workMode', 'team');
     setView('office');
     setInspector(true);
   };
-  const appComposer = (
+  const appAgents = (
     <>
-      {providerNotice && (
-        <div className="provider-notice" role="status" aria-label="사용량 한도 안내">
-          <strong>{String(providerNotice.payload.text)}</strong>
-          {typeof providerNotice.payload.reason === 'string' && (
-            <p>{providerNotice.payload.reason}</p>
-          )}
-        </div>
-      )}
       {/* Phones collapse the sidebar; this row is how they reach the app's two coworkers. */}
       <div className="mobile-agents">
         {(['claude', 'codex'] as const).map((id) => (
@@ -602,42 +600,24 @@ export function App() {
           </button>
         ))}
       </div>
-      {state.run && terminal(state.run.status) && (
-        <RunFollowUp
-          key={state.run.id}
-          run={state.run}
-          disabled={busy || loadingProject || pending}
-          onHistory={() => {
-            setHistoryScope('all');
-            setView('history');
-          }}
-          onStarted={async (run) => {
-            await selectRun(run.id);
-            await refreshRuns();
-            setSelected(run.mode === 'collaborate' ? run.implementer : run.mode);
-            setRunFocus(true);
-            setInspector(true);
-          }}
-        />
-      )}
-      <section className="task-composer">
-        <div className="composer-title">
-          <MessageSquare size={17} />
-          <strong>{active ? '동료들이 작업하고 있어요' : '어떤 일을 함께 해볼까요?'}</strong>
-          {state.run && (
-            <button className="text-button" disabled={!!active} onClick={newTask}>
-              <Plus size={14} />새 작업
-            </button>
-          )}
-        </div>
-        <textarea
-          aria-label="작업 내용"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          disabled={!!active}
-          placeholder="예: 로그인 화면을 만들어줘. Codex가 구현하고 Claude가 검토해줘."
-          rows={3}
-        />
+    </>
+  );
+  const appComposer = (
+    <>
+      <section className="task-settings">
+        {health?.features?.agentLauncher && (
+          <button
+            className="text-button"
+            onClick={() => {
+              setWorkspaceOpen(false);
+              setResumeSessionId(undefined);
+              setLauncherOpen(true);
+            }}
+          >
+            <Terminal size={14} />
+            터미널에서 새 세션 시작
+          </button>
+        )}
         <label className="execution-mode">
           실행 환경
           <select
@@ -674,38 +654,7 @@ export function App() {
             <option value="codex">Codex 단독</option>
             <option value="claude">Claude 단독</option>
           </select>
-          {active ? (
-            <button className="stop-button" disabled={pending} onClick={() => void stop()}>
-              <Square size={13} />
-              {pending ? '중단하는 중' : '작업 중단'}
-            </button>
-          ) : (
-            <button
-              className="primary start-button"
-              disabled={
-                pending ||
-                loadingProject ||
-                busy ||
-                !prompt.trim() ||
-                !!project?.unavailable ||
-                bundleMissing
-              }
-              onClick={() => void start()}
-            >
-              {pending ? <LoaderCircle size={15} className="spin" /> : <ArrowUp size={17} />}
-              작업 시작
-            </button>
-          )}
         </div>
-        {startError && (
-          <div className="error-banner start-error" role="alert" tabIndex={-1} ref={startErrorRef}>
-            <AlertCircle size={17} />
-            <span>{startError}</span>
-            <button aria-label="작업 시작 오류 닫기" onClick={() => setStartError('')}>
-              <X size={16} />
-            </button>
-          </div>
-        )}
         {project?.repositories && (
           <fieldset className="bundle-picker" disabled={!!active}>
             <legend>
@@ -868,7 +817,14 @@ export function App() {
             <Terminal size={14} />
             이어서 작업
           </button>
-          <button onClick={() => setTab('chat')}>
+          <button
+            onClick={() => {
+              setTab('chat');
+              requestAnimationFrame(() =>
+                document.querySelector<HTMLTextAreaElement>('.work-composer textarea')?.focus(),
+              );
+            }}
+          >
             <MessageSquare size={14} />말 걸기
           </button>
         </div>
@@ -902,7 +858,12 @@ export function App() {
             />
           ))}
         {tab === 'chat' && selectedSession ? (
-          <SessionChat key={selectedSession.id} session={selectedSession} onReply={() => {}} />
+          <SessionChat
+            key={selectedSession.id}
+            session={selectedSession}
+            onReply={() => {}}
+            hideComposer
+          />
         ) : tab !== 'files' ? (
           <>
             {state.run && (
@@ -1031,9 +992,46 @@ export function App() {
       </div>
     </aside>
   );
+  const workDock = (
+    <>
+      {launcherOpen && project && (
+        <AgentLauncher
+          key={`launcher:${project.root}`}
+          root={project.root}
+          onClose={() => setLauncherOpen(false)}
+          onStarted={async (agent) => {
+            await switchProject(agent.root);
+            await refreshRuns();
+            setTargetSessionId(`launch-${agent.id}`);
+            setSelected(agent.provider);
+            setRunFocus(false);
+          }}
+        />
+      )}
+      {workspaceOpen && project && (
+        <Suspense fallback={<p role="status">작업 공간을 여는 중…</p>}>
+          <WorkspacePanel
+            key={`workspace:${project.root}`}
+            root={project.root}
+            run={state.run}
+            changes={changes}
+            document={documentTarget}
+            onClose={() => setWorkspaceOpen(false)}
+          />
+        </Suspense>
+      )}
+      {resumeSession && (
+        <ResumeDock
+          key={resumeSession.id}
+          session={resumeSession}
+          onClose={() => setResumeSessionId(undefined)}
+        />
+      )}
+    </>
+  );
   return (
     <div
-      className={`app-shell ${(workspaceOpen && project) || resumeSession ? 'workspace-is-open' : ''}`}
+      className={`app-shell ${view === 'office' ? 'coding-workspace' : ''} ${view === 'office' && nativeMode ? 'native-mode' : ''} ${(workspaceOpen && project) || resumeSession ? 'workspace-is-open' : ''}`}
     >
       <aside className="sidebar">
         <a
@@ -1111,6 +1109,9 @@ export function App() {
               onClick={() => {
                 setSelected(id);
                 setRunFocus(true);
+                setWorkspaceOpen(false);
+                setLauncherOpen(false);
+                setResumeSessionId(undefined);
                 setInspector(true);
                 setView('office');
               }}
@@ -1185,7 +1186,9 @@ export function App() {
               {view === 'overview'
                 ? '전체 맵'
                 : view === 'office'
-                  ? '오피스'
+                  ? nativeMode
+                    ? '터미널'
+                    : '오피스'
                   : view === 'history'
                     ? '작업 기록'
                     : view === 'records'
@@ -1194,6 +1197,27 @@ export function App() {
             </strong>
           </div>
           <div className="topbar-right">
+            {health?.features?.agentLauncher && (
+              <div className="work-mode-switch" role="group" aria-label="작업 모드">
+                {(['terminal', 'team'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    aria-label={mode === 'terminal' ? '터미널 모드' : '팀 작업 모드'}
+                    aria-pressed={workMode === mode}
+                    onClick={() => {
+                      localStorage.setItem('pixel.workMode', mode);
+                      setWorkMode(mode);
+                      setWorkspaceOpen(false);
+                      setLauncherOpen(false);
+                      setResumeSessionId(undefined);
+                      setView('office');
+                    }}
+                  >
+                    {mode === 'terminal' ? '터미널' : '팀 작업'}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               className="open-workspace"
               aria-label="전체 작업 기록 열기"
@@ -1208,16 +1232,18 @@ export function App() {
             {health?.features?.agentLauncher && (
               <button
                 className="open-workspace"
-                aria-label="새 동료"
+                aria-label={nativeMode ? '새 터미널 세션 작성' : '새 작업 작성'}
                 disabled={!project || view === 'overview' || view === 'records'}
                 onClick={() => {
                   setWorkspaceOpen(false);
                   setResumeSessionId(undefined);
-                  setLauncherOpen((v) => !v);
+                  setLauncherOpen(false);
+                  setView('office');
+                  requestAnimationFrame(() => dispatchEvent(new Event('pixel:new-task')));
                 }}
               >
                 <Plus size={16} />
-                <span>새 동료</span>
+                <span>{nativeMode ? '새 세션' : '새 작업'}</span>
               </button>
             )}
             <button
@@ -1263,39 +1289,7 @@ export function App() {
             <span className="user-avatar">나</span>
           </div>
         </header>
-        {launcherOpen && project && (
-          <AgentLauncher
-            key={`launcher:${project.root}`}
-            root={project.root}
-            onClose={() => setLauncherOpen(false)}
-            onStarted={async (agent) => {
-              await switchProject(agent.root);
-              await refreshRuns();
-              setTargetSessionId(`launch-${agent.id}`);
-              setSelected(agent.provider);
-              setRunFocus(false);
-            }}
-          />
-        )}
-        {workspaceOpen && project && (
-          <Suspense fallback={<p role="status">작업 공간을 여는 중…</p>}>
-            <WorkspacePanel
-              key={`workspace:${project.root}`}
-              root={project.root}
-              run={state.run}
-              changes={changes}
-              document={documentTarget}
-              onClose={() => setWorkspaceOpen(false)}
-            />
-          </Suspense>
-        )}
-        {resumeSession && (
-          <ResumeDock
-            key={resumeSession.id}
-            session={resumeSession}
-            onClose={() => setResumeSessionId(undefined)}
-          />
-        )}
+        {view !== 'office' && workDock}
         {otherActive && view !== 'overview' && (
           <div className="other-repository" role="status">
             <span>
@@ -1352,6 +1346,21 @@ export function App() {
           />
         ) : view === 'records' ? (
           <RecordsPage sessions={observation.sessions} />
+        ) : view === 'office' && nativeMode ? (
+          <TerminalWorkbench
+            key={`terminals:${project?.root ?? 'none'}`}
+            root={project?.root ?? ''}
+            sessions={observedSessions}
+            initialSessionId={targetSessionId}
+            available={!!health?.features?.agentLauncher && !!project && !project.unavailable}
+            onConnect={() => setModal('project')}
+            onShowTerminal={() => {
+              setWorkspaceOpen(false);
+              setLauncherOpen(false);
+              setResumeSessionId(undefined);
+            }}
+            workspace={workspaceOpen ? workDock : null}
+          />
         ) : view === 'office' ? (
           <ObservedOffice
             key={`office:${project?.root ?? 'none'}`}
@@ -1361,13 +1370,101 @@ export function App() {
             run={state.run}
             runFocus={runFocus}
             onFocusRun={(id) => {
+              setWorkspaceOpen(false);
+              setLauncherOpen(false);
+              setResumeSessionId(undefined);
               setSelected(id);
               setRunFocus(true);
               setInspector(true);
             }}
-            onFocusSession={() => setRunFocus(false)}
-            appComposer={appComposer}
+            onFocusSession={() => {
+              setRunFocus(false);
+              setWorkspaceOpen(false);
+              setLauncherOpen(false);
+              setResumeSessionId(undefined);
+            }}
+            appComposer={(session, onSent, onCompose) => (
+              <>
+                <WorkComposer
+                  session={session ?? (runFocus && tab === 'chat' ? selectedSession : undefined)}
+                  run={state.run}
+                  state={composerStates[project?.root ?? ''] ?? { drafts: {} }}
+                  onStateChange={(update) => {
+                    const root = project?.root ?? '';
+                    setComposerStates((previous) => ({
+                      ...previous,
+                      [root]: update(previous[root] ?? { drafts: {} }),
+                    }));
+                  }}
+                  busy={busy || !!active || pending || loadingProject}
+                  disabled={!project || !!project.unavailable || loadingProject || bundleMissing}
+                  onStart={start}
+                  onFollowUp={async (text) => {
+                    if (!state.run) return;
+                    const next = await api<Run>(`/runs/${state.run.id}/follow-up`, {
+                      prompt: text,
+                    });
+                    await selectRun(next.id);
+                    await refreshRuns();
+                    setTab('activity');
+                    setSelected(next.mode === 'collaborate' ? next.implementer : next.mode);
+                    setRunFocus(true);
+                    setInspector(true);
+                  }}
+                  onSessionSent={onSent}
+                  onFocus={onCompose}
+                  feedback={
+                    <>
+                      {providerNotice && (
+                        <div
+                          className="provider-notice"
+                          role="status"
+                          aria-label="사용량 한도 안내"
+                        >
+                          <strong>{String(providerNotice.payload.text)}</strong>
+                          {typeof providerNotice.payload.reason === 'string' && (
+                            <p>{providerNotice.payload.reason}</p>
+                          )}
+                        </div>
+                      )}
+                      {startError && (
+                        <div
+                          className="error-banner start-error"
+                          role="alert"
+                          tabIndex={-1}
+                          ref={startErrorRef}
+                        >
+                          <AlertCircle size={17} />
+                          <span>{startError}</span>
+                          <button
+                            aria-label="작업 시작 오류 닫기"
+                            onClick={() => setStartError('')}
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  }
+                >
+                  {appComposer}
+                </WorkComposer>
+
+                {active && (
+                  <button
+                    className="stop-button work-stop"
+                    disabled={pending}
+                    onClick={() => void stop()}
+                  >
+                    <Square size={13} />
+                    {pending ? '중단하는 중' : '작업 중단'}
+                  </button>
+                )}
+              </>
+            )}
             appInspector={appInspector}
+            appAgents={appAgents}
+            workspace={launcherOpen || workspaceOpen || resumeSession ? workDock : null}
             onTeam={() => setModal('team')}
             initialSessionId={targetSessionId}
             root={project?.root ?? ''}
@@ -1421,6 +1518,7 @@ export function App() {
                   추가 요청도 별도 기록으로 남아요.
                 </p>
               </div>
+              <button onClick={() => setView('office')}>오피스로 돌아가기</button>
             </div>
             <button className="text-button" onClick={() => setCleanupOpen(true)}>
               작업 폴더 정리

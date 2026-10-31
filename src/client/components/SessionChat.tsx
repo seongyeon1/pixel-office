@@ -13,7 +13,7 @@ import './session-chat.css';
 type Mode = 'ask' | 'say';
 const providerName = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude');
 // What an instruction would do right now, in one sentence.
-function channelNote(c: NonNullable<SessionConversation['channels']>) {
+export function channelNote(c: NonNullable<SessionConversation['channels']>) {
   if (c.blockedReason) return c.blockedReason;
   if (c.fresh)
     return '원본 세션이 남아 있지 않아, 보관된 작업 기록과 같은 폴더에서 새 대화를 시작해요.';
@@ -28,7 +28,7 @@ function channelNote(c: NonNullable<SessionConversation['channels']>) {
     ? '원래 터미널이 아직 살아 있어서, 복제한 세션의 이어가기 터미널을 열고 전달해요.'
     : '이어가기 터미널을 열고 전달해요.';
 }
-function DirectSettingsForm() {
+export function DirectSettingsForm() {
   const [settings, setSettings] = useState<DirectSettings>();
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -89,15 +89,24 @@ function DirectSettingsForm() {
     </form>
   );
 }
+function conversationScroller(list: HTMLDivElement | null, embedded: boolean) {
+  if (!embedded) return list;
+  const pane = list?.closest<HTMLElement>('.work-primary, .work-pinned');
+  if (pane && getComputedStyle(pane).overflowY === 'visible') return pane.parentElement;
+  return pane;
+}
+
 export function SessionChat({
   session,
   onReply,
+  hideComposer = false,
 }: {
+  hideComposer?: boolean;
   session: ObservedSession;
   onReply: (message: ChatMessage | undefined) => void;
 }) {
   const [data, setData] = useState<SessionConversation>();
-  const [mode, setMode] = useState<Mode>('ask');
+  const [mode, setMode] = useState<Mode>(hideComposer ? 'say' : 'ask');
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
@@ -107,7 +116,9 @@ export function SessionChat({
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
   const listRef = useRef<HTMLDivElement>(null);
-  const follow = useRef(true);
+  // Embedded in the workbench, the chat shares a pane with the session's pending question:
+  // opening a session must not scroll that question away. Follow once the user sends or scrolls down.
+  const follow = useRef(!hideComposer);
   const messages = data?.messages ?? [];
   const loaded = !!data;
   const pending = messages.some((m) => m.status === 'pending');
@@ -142,8 +153,33 @@ export function SessionChat({
     };
   }, [session.id]);
   useEffect(() => {
-    if (follow.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages]);
+    const sent = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== session.id) return;
+      follow.current = true;
+      const scroller = conversationScroller(listRef.current, hideComposer);
+      if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    };
+    addEventListener('pixel:session-sent', sent);
+    return () => removeEventListener('pixel:session-sent', sent);
+  }, [session.id, hideComposer]);
+  useEffect(() => {
+    const list = listRef.current;
+    const scroller = conversationScroller(list, hideComposer);
+    if (!scroller) return;
+    const root = hideComposer ? list?.closest('.work-area') : scroller;
+    const track = (event: Event) => {
+      const current = conversationScroller(listRef.current, hideComposer);
+      if (current && event.target === current)
+        follow.current = current.scrollHeight - current.scrollTop - current.clientHeight < 70;
+    };
+    root?.addEventListener('scroll', track, { passive: true, capture: true });
+    return () => root?.removeEventListener('scroll', track, true);
+  }, [hideComposer]);
+  useEffect(() => {
+    const list = listRef.current;
+    const scroller = conversationScroller(list, hideComposer);
+    if (follow.current && scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [messages, hideComposer]);
   const mutate = async (action: () => Promise<SessionConversation>) => {
     mutating.current = true;
     revision.current++;
@@ -194,62 +230,61 @@ export function SessionChat({
   };
   return (
     <section className="session-chat" aria-label="선택한 에이전트와 대화">
-      <div className="chat-mode" role="tablist" aria-label="대화 방식">
-        <button
-          role="tab"
-          aria-selected={mode === 'ask'}
-          onClick={() => setMode('ask')}
-          disabled={sending}
-        >
-          <MessageCircle size={14} />
-          질문 · 기록 기반
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === 'say'}
-          onClick={() => setMode('say')}
-          disabled={sending || !data?.directAvailable}
-        >
-          <TerminalSquare size={14} />
-          지시 · 실제 실행
-        </button>
-      </div>
-      {mode === 'ask' ? (
-        <div className="chat-context">
-          <MessageCircle size={16} />
-          <div>
-            <strong>작업 기록 기반 답변</strong>
-            <p>
-              선택한 세션의 최근 기록으로 {name}가 답해요. 원래 작업에 명령을 전달하지 않습니다.
-            </p>
-            <small>질문할 때 로그인된 계정의 모델 사용량이 발생합니다.</small>
+      {!hideComposer && (
+        <>
+          <div className="chat-mode" role="tablist" aria-label="대화 방식">
+            <button
+              role="tab"
+              aria-selected={mode === 'ask'}
+              onClick={() => setMode('ask')}
+              disabled={sending}
+            >
+              <MessageCircle size={14} />
+              질문 · 기록 기반
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === 'say'}
+              onClick={() => setMode('say')}
+              disabled={sending || !data?.directAvailable}
+            >
+              <TerminalSquare size={14} />
+              지시 · 실제 실행
+            </button>
           </div>
-        </div>
-      ) : (
-        <div className="chat-context chat-context-say">
-          <TerminalSquare size={16} />
-          <div>
-            <strong>{name}에게 지시하기</strong>
-            <p>{data?.channels ? channelNote(data.channels) : '전달 방법을 확인하고 있어요.'}</p>
-            <small>내 컴퓨터에서 실행되며 실제 파일을 변경할 수 있어요.</small>
-            <details>
-              <summary>
-                <Settings2 size={13} />
-                이어가기 명령 설정
-              </summary>
-              <DirectSettingsForm />
-            </details>
-          </div>
-        </div>
+          {mode === 'ask' ? (
+            <div className="chat-context">
+              <MessageCircle size={16} />
+              <div>
+                <strong>작업 기록 기반 답변</strong>
+                <p>
+                  선택한 세션의 최근 기록으로 {name}가 답해요. 원래 작업에 명령을 전달하지 않습니다.
+                </p>
+                <small>질문할 때 로그인된 계정의 모델 사용량이 발생합니다.</small>
+              </div>
+            </div>
+          ) : (
+            <div className="chat-context chat-context-say">
+              <TerminalSquare size={16} />
+              <div>
+                <strong>{name}에게 지시하기</strong>
+                <p>
+                  {data?.channels ? channelNote(data.channels) : '전달 방법을 확인하고 있어요.'}
+                </p>
+                <small>내 컴퓨터에서 실행되며 실제 파일을 변경할 수 있어요.</small>
+                <details>
+                  <summary>
+                    <Settings2 size={13} />
+                    이어가기 명령 설정
+                  </summary>
+                  <DirectSettingsForm />
+                </details>
+              </div>
+            </div>
+          )}
+        </>
       )}
-      <div
-        ref={listRef}
-        className="chat-messages"
-        onScroll={() => {
-          const el = listRef.current;
-          if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 70;
-        }}
-      >
+      <div ref={listRef} className="chat-messages">
         {loaded && !messages.length && (
           <div className="chat-empty">
             <MessageCircle size={28} />
@@ -323,7 +358,7 @@ export function SessionChat({
           {error}
         </p>
       )}
-      {mode === 'ask' && (
+      {!hideComposer && mode === 'ask' && (
         <div className="quick-questions">
           {[
             '지금 무슨 작업을 하고 있어?',
@@ -336,50 +371,52 @@ export function SessionChat({
           ))}
         </div>
       )}
-      <form
-        className="chat-composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <textarea
-          aria-label={mode === 'ask' ? '에이전트에게 질문' : '동료에게 지시'}
-          placeholder={
-            mode === 'ask' ? '이 동료의 작업에 대해 물어보세요…' : '이 동료가 할 일을 적어주세요…'
-          }
-          maxLength={mode === 'ask' ? 4000 : 20000}
-          rows={3}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <div>
-          <small>
-            {mode === 'ask'
-              ? `최근 기록 기준 · ${draft.length}/4,000`
-              : `실제 실행 · ${draft.length}/20,000`}
-          </small>
-          {pending ? (
-            <button type="button" disabled={sending} onClick={() => void cancel()}>
-              <Square size={13} />
-              {mode === 'ask' ? '답변 중단' : '기다리기 중단'}
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={
-                !loaded ||
-                sending ||
-                !draft.trim() ||
-                (mode === 'say' && !!data?.channels?.blockedReason)
-              }
-            >
-              <Send size={14} />
-              {sending ? '보내는 중' : mode === 'ask' ? '질문 보내기' : '지시 보내기'}
-            </button>
-          )}
-        </div>
-      </form>
+      {!hideComposer && (
+        <form
+          className="chat-composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+        >
+          <textarea
+            aria-label={mode === 'ask' ? '에이전트에게 질문' : '동료에게 지시'}
+            placeholder={
+              mode === 'ask' ? '이 동료의 작업에 대해 물어보세요…' : '이 동료가 할 일을 적어주세요…'
+            }
+            maxLength={mode === 'ask' ? 4000 : 20000}
+            rows={3}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div>
+            <small>
+              {mode === 'ask'
+                ? `최근 기록 기준 · ${draft.length}/4,000`
+                : `실제 실행 · ${draft.length}/20,000`}
+            </small>
+            {pending ? (
+              <button type="button" disabled={sending} onClick={() => void cancel()}>
+                <Square size={13} />
+                {mode === 'ask' ? '답변 중단' : '기다리기 중단'}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={
+                  !loaded ||
+                  sending ||
+                  !draft.trim() ||
+                  (mode === 'say' && !!data?.channels?.blockedReason)
+                }
+              >
+                <Send size={14} />
+                {sending ? '보내는 중' : mode === 'ask' ? '질문 보내기' : '지시 보내기'}
+              </button>
+            )}
+          </div>
+        </form>
+      )}
     </section>
   );
 }

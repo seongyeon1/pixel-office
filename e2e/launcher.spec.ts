@@ -1,3 +1,4 @@
+import { newWork, showSessions } from './workbench-helpers';
 import { test, expect } from '@playwright/test';
 import { readFile, mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,8 @@ test('a new personal-harness agent starts and remains reachable after hiding and
     .getByRole('button', { name: '프로젝트 연결', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button', { name: '새 동료', exact: true }).click();
+  await newWork(page);
+  await page.getByRole('button', { name: '터미널에서 새 세션 시작', exact: true }).click();
   const launcher = page.getByRole('region', { name: '새 동료 시작', exact: true });
   await launcher.getByRole('combobox', { name: '동료', exact: true }).selectOption('codex');
   await expect(launcher.getByRole('combobox', { name: '실행 하네스', exact: true })).toContainText(
@@ -49,16 +51,26 @@ test('a new personal-harness agent starts and remains reachable after hiding and
     'title',
     folder,
   );
+  await showSessions(page);
   await expect(page.locator('.observed-sessions')).toContainText(prompt);
-  await page.getByRole('button', { name: '터미널에서 이어서 작업', exact: true }).click();
+  if (await page.getByRole('button', { name: '동료 목록 열기' }).isVisible())
+    await page.getByRole('button', { name: '동료 목록 열기' }).click();
+  await page
+    .locator('.session-task-card')
+    .getByRole('button', { name: '이어서 작업', exact: true })
+    .click();
   const terminal = page.getByRole('region', { name: '세션 이어서 작업 터미널', exact: true });
   await expect(terminal).toContainText('FAKE-SYC');
   await expect(terminal).toContainText('gpt-6-astra');
   await expect(terminal).toContainText(prompt);
   await page.getByRole('button', { name: '이어서 작업 숨기기' }).click();
   await page.reload();
+  await showSessions(page);
   await page.locator('.observed-sessions button').filter({ hasText: prompt }).click();
-  await page.getByRole('button', { name: '터미널에서 이어서 작업', exact: true }).click();
+  await page
+    .locator('.session-task-card')
+    .getByRole('button', { name: '이어서 작업', exact: true })
+    .click();
   await expect(terminal).toContainText(prompt);
   const info = await page.evaluate(
     async (id) => await (await fetch(`/api/observed/launch-${id}/terminal`)).json(),
@@ -78,5 +90,8 @@ test('new agent launch stays hidden while an older server is still running', asy
   });
   await page.goto('/#token=e2e-token');
   await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: '새 동료', exact: true })).toHaveCount(0);
+  await newWork(page);
+  await expect(
+    page.getByRole('button', { name: '터미널에서 새 세션 시작', exact: true }),
+  ).toHaveCount(0);
 });

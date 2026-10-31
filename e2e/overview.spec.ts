@@ -1,3 +1,4 @@
+import { showOffice } from './workbench-helpers';
 import { expect, test } from '@playwright/test';
 import { readFile, mkdtemp, mkdir, realpath, writeFile, appendFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -239,6 +240,7 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
       'title',
       roots[0],
     );
+    await showOffice(page);
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex campus-a4', exact: true }),
     ).toHaveAttribute('aria-pressed', 'true');
@@ -336,9 +338,17 @@ test('whole map shows app approvals and opens the managed task without mixing ex
       name: `전체 맵 동료 ${root} app-${run.id}-codex-implementer`,
       exact: true,
     });
-    await expect(manager).toHaveAttribute('data-mark', 'approval');
-    await expect(manager).toHaveAttribute('title', /앱 작업[\s\S]*승인 기다려요/);
-    await manager.click();
+    if (await manager.count()) {
+      await expect(manager).toHaveAttribute('data-mark', 'approval');
+      await expect(manager).toHaveAttribute('title', /앱 작업[\s\S]*승인 기다려요/);
+      await manager.click();
+    } else {
+      // A crowded room caps its sprites; the room's overflow entry opens all coworkers.
+      await room
+        .getByRole('button', { name: `프로젝트 동료 모두 보기 ${root}`, exact: true })
+        .click();
+      await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
+    }
     await expect(page.getByRole('heading', { name: '승인 필요', exact: true })).toBeVisible();
     await expect(page.locator('.current-task')).toContainText('전체 맵 승인 테스트');
     await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
