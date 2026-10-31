@@ -26,17 +26,47 @@ export type Coworker = z.infer<typeof coworkerSchema>;
 // What the coordinator proposes; the owner's approval fills in the rest.
 export type CoworkerDraft = Pick<Coworker, 'id' | 'name' | 'folder' | 'role' | 'engine'>;
 
+// Approval toggles, each owning its patterns: write tools per destination first, then the generic
+// write verbs, so a destination toggle turned off is not overridden by a verb rule (first match wins).
+const atlassian = (verb: string, what: string) => `mcp__*atlassian*__${verb}*${what}*`;
+export const APPROVAL_GROUPS: { label: string; patterns: string[] }[] = [
+  {
+    label: 'Confluence 게시',
+    patterns: ['create', 'update'].map((v) => atlassian(v, 'Confluence')),
+  },
+  {
+    label: 'Jira 발급',
+    patterns: [
+      ...['create', 'edit', 'transition'].map((v) => atlassian(v, 'Jira')),
+      atlassian('add', 'Comment'),
+    ],
+  },
+  {
+    label: 'Notion 페이지',
+    patterns: ['create', 'update', 'move'].map((v) => `mcp__*notion*__*${v}*`),
+  },
+  {
+    label: 'Slack 다른 채널 발송',
+    patterns: ['send', 'schedule', 'create', 'update'].map((v) => `mcp__*slack*__*${v}*`),
+  },
+  {
+    label: '그 외 외부 쓰기',
+    patterns: [
+      'create',
+      'update',
+      'delete',
+      'publish',
+      'send',
+      'post',
+      'comment',
+      'transition',
+    ].map((v) => `mcp__*__*${v}*`),
+  },
+];
 // A write-looking tool is asked about; anything unsure leans to `ask`.
-export const DEFAULT_RULES: ToolRule[] = [
-  'create',
-  'update',
-  'delete',
-  'publish',
-  'send',
-  'post',
-  'comment',
-  'transition',
-].map((verb) => ({ pattern: `mcp__*__*${verb}*`, action: 'ask' as const }));
+export const DEFAULT_RULES: ToolRule[] = APPROVAL_GROUPS.flatMap((g) =>
+  g.patterns.map((pattern) => ({ pattern, action: 'ask' as const })),
+);
 
 const globToRegExp = (pattern: string) =>
   new RegExp(
