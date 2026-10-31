@@ -45,6 +45,15 @@ import type { QuestionDesk } from './questions.js';
 import { hookStatus, installHook, uninstallHook } from './hook-install.js';
 import { runningElsewhere, type ChatService } from './chat.js';
 import type { Observation } from './observation/observer.js';
+import {
+  slackConfigSchema,
+  readSlackConfig,
+  writeSlackConfig,
+  clearSlackConfig,
+  maskSlack,
+  type SlackConfig,
+} from './slack/secrets.js';
+import { slackErrorCode } from './slack/port.js';
 import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
 export async function createServer({
   store,
@@ -63,6 +72,7 @@ export async function createServer({
   hookToken,
   hookSetup,
   dataDir,
+  slack,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
@@ -81,6 +91,12 @@ export async function createServer({
   hookToken?: string;
   hookSetup?: { claudeHome: string; command: string };
   dataDir?: string;
+  // Slack gateway control; `test` checks a config (auth + hello DM) before it is saved.
+  slack?: {
+    test(config: SlackConfig): Promise<void>;
+    connect(config: SlackConfig): Promise<void>;
+    disconnect(): Promise<void>;
+  };
 }) {
   const coworkers = createCoworkers(store, { dataDir: dataDir ?? join(tmpdir(), 'pixel-office') });
   const sessions = createSessionRegistry(store, observation);
@@ -475,6 +491,30 @@ export async function createServer({
     } catch (e) {
       return reply.code(409).send({ error: (e as Error).message });
     }
+  });
+  const slackDir = dataDir ?? join(tmpdir(), 'pixel-office');
+  app.get('/api/settings/slack', async () => {
+    const saved = await readSlackConfig(slackDir);
+    return saved ? maskSlack(saved) : { configured: false };
+  });
+  app.post('/api/settings/slack', async (req, reply) => {
+    const config = slackConfigSchema.parse(req.body);
+    if (!slack) return reply.code(503).send({ error: 'Slack 연결 기능을 사용할 수 없어요.' });
+    try {
+      await slack.test(config);
+    } catch (e) {
+      const code =
+        e instanceof Error && /^[a-z0-9_]+$/i.test(e.message) ? e.message : slackErrorCode(e);
+      return reply.code(400).send({ error: `Slack 연결을 확인하지 못했어요: ${code}` });
+    }
+    await writeSlackConfig(slackDir, config);
+    await slack.connect(config);
+    return maskSlack(config);
+  });
+  app.delete('/api/settings/slack', async () => {
+    await slack?.disconnect();
+    await clearSlackConfig(slackDir);
+    return { ok: true };
   });
   app.get('/api/settings/approvals', async () => approvalSettings(store));
   app.post('/api/settings/approvals', async (req) => {
