@@ -487,7 +487,16 @@ export async function createServer({
   });
   app.get('/api/coworkers', async () => coworkers.list());
   app.get('/api/coworkers/suggestions', async () => coworkers.suggestions());
-  app.post('/api/coworkers', async (req) => coworkers.save(req.body));
+  app.post('/api/coworkers', async (req) => {
+    const saved = coworkers.save(req.body);
+    // Codex raises no per-tool approval for MCP calls, so its runs turn external MCP off instead.
+    return saved.engine === 'codex' && saved.rules.some((rule) => rule.action === 'ask')
+      ? {
+          ...saved,
+          warnings: ['Codex는 외부 도구 승인을 강제할 수 없어 외부 MCP를 끄고 실행해요.'],
+        }
+      : saved;
+  });
   app.delete<{ Params: { id: string } }>('/api/coworkers/:id', async (req) => {
     coworkers.remove(req.params.id);
     return { ok: true };

@@ -17,7 +17,9 @@ import {
   type PhaseResult,
   concurrencySettingsSchema,
   type ConcurrencySettings,
+  defaultTeam,
 } from '../shared/contracts.js';
+import type { Coworker } from '../shared/coworkers.js';
 import type { Store } from './store.js';
 import {
   inspectProject,
@@ -55,11 +57,14 @@ export function createOrchestrator({
   adapters,
   dataDir,
   verifyDelivery = verifyPullRequests,
+  coworkerFor,
 }: {
   store: Store;
   adapters: Record<Provider, Adapter>;
   dataDir: string;
   verifyDelivery?: (run: Run) => Promise<DeliveryResult>;
+  // The coworker that works in a folder: its tool rules apply to every run there.
+  coworkerFor?: (root: string) => Coworker | undefined;
 }) {
   // One lane per folder: runs in a folder go one at a time, folders run side by side up to the limit.
   const running = new Map<
@@ -260,6 +265,9 @@ export function createOrchestrator({
               profile: run.team[provider],
               harness: run.harness?.[provider],
               harnessDir: harnessDirFor(dataDir, run.projectPath),
+              // The coworker's command runs its own engine, not the other provider.
+              executable: provider === run.implementer ? run.executable : undefined,
+              toolRules: coworkerFor?.(run.projectPath)?.rules,
               signal: controller.signal,
             },
             (event) => {
@@ -396,63 +404,88 @@ export function createOrchestrator({
       clearPending(run.id);
     }
   }
+  async function start(
+    raw: StartInput,
+    extra: Pick<Run, 'coworkerId' | 'executable' | 'origin'> = {},
+  ) {
+    const { allowPlain, ...input } = startSchema.parse(raw);
+    const project = await inspectProject(input.projectPath, { allowPlain });
+    if (project.plain && input.executionMode === 'isolated')
+      throw new Error('git 저장소가 아닌 폴더는 개인 실행만 지원해요.');
+    const providers: Provider[] = input.mode === 'collaborate' ? ['codex', 'claude'] : [input.mode];
+    for (const p of providers) {
+      const s = await adapters[p].probe();
+      if (!s.installed || s.authenticated === false) throw new Error(`${p}: ${s.detail}`);
+    }
+    const id = randomUUID();
+    // A folder of repositories runs as a bundle: one worktree per chosen repository.
+    if (project.repositories && !input.repositories?.length)
+      throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
+    let workspace: { path: string; branch: string; baseCommit: string };
+    let bundle: RunRepo[] | undefined;
+    if (project.plain) workspace = { path: project.root, branch: '', baseCommit: '' };
+    else if (input.executionMode !== 'isolated') {
+      const w = await personalWorkspace(project, input.repositories);
+      workspace = w;
+      bundle = w.repos;
+    } else if (project.repositories) {
+      const w = await createBundleWorkspace(project.root, input.repositories!, id, dataDir);
+      workspace = w;
+      bundle = w.repos;
+    } else workspace = await createWorkspace(project.root, id, dataDir);
+    const run: Run = {
+      ...input,
+      executionMode: input.executionMode ?? 'personal',
+      pullRequestRequested: pullRequestIntent(input.prompt) === true,
+      initialChanges: project.plain
+        ? {}
+        : await workingState(
+            bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
+          ),
+      ...(project.plain ? { plain: true as const } : {}),
+      ...extra,
+      team: structuredClone(input.team),
+      harness: store.getHarness(project.root),
+      id,
+      projectPath: project.root,
+      worktreePath: workspace.path,
+      branch: workspace.branch,
+      baseCommit: workspace.baseCommit,
+      ...(bundle ? { repos: bundle } : {}),
+      status: 'queued',
+      phase: 'implement',
+      revision: 0,
+      createdAt: new Date().toISOString(),
+    };
+    sessionGuard?.(run);
+    store.createRun(run);
+    return enqueue(run);
+  }
   return {
     useSessionGuard(guard: (run: Run) => void) {
       sessionGuard = guard;
     },
-    async start(raw: StartInput) {
-      const { allowPlain, ...input } = startSchema.parse(raw);
-      const project = await inspectProject(input.projectPath, { allowPlain });
-      if (project.plain && input.executionMode === 'isolated')
-        throw new Error('git 저장소가 아닌 폴더는 개인 실행만 지원해요.');
-      const providers: Provider[] =
-        input.mode === 'collaborate' ? ['codex', 'claude'] : [input.mode];
-      for (const p of providers) {
-        const s = await adapters[p].probe();
-        if (!s.installed || s.authenticated === false) throw new Error(`${p}: ${s.detail}`);
-      }
-      const id = randomUUID();
-      // A folder of repositories runs as a bundle: one worktree per chosen repository.
-      if (project.repositories && !input.repositories?.length)
-        throw new Error('이 폴더는 저장소 묶음이에요. 함께 작업할 저장소를 골라 주세요.');
-      let workspace: { path: string; branch: string; baseCommit: string };
-      let bundle: RunRepo[] | undefined;
-      if (project.plain) workspace = { path: project.root, branch: '', baseCommit: '' };
-      else if (input.executionMode !== 'isolated') {
-        const w = await personalWorkspace(project, input.repositories);
-        workspace = w;
-        bundle = w.repos;
-      } else if (project.repositories) {
-        const w = await createBundleWorkspace(project.root, input.repositories!, id, dataDir);
-        workspace = w;
-        bundle = w.repos;
-      } else workspace = await createWorkspace(project.root, id, dataDir);
-      const run: Run = {
-        ...input,
-        executionMode: input.executionMode ?? 'personal',
-        pullRequestRequested: pullRequestIntent(input.prompt) === true,
-        initialChanges: project.plain
-          ? {}
-          : await workingState(
-              bundle ?? [{ worktreePath: workspace.path, baseCommit: workspace.baseCommit }],
-            ),
-        ...(project.plain ? { plain: true as const } : {}),
-        team: structuredClone(input.team),
-        harness: store.getHarness(project.root),
-        id,
-        projectPath: project.root,
-        worktreePath: workspace.path,
-        branch: workspace.branch,
-        baseCommit: workspace.baseCommit,
-        ...(bundle ? { repos: bundle } : {}),
-        status: 'queued',
-        phase: 'implement',
-        revision: 0,
-        createdAt: new Date().toISOString(),
-      };
-      sessionGuard?.(run);
-      store.createRun(run);
-      return enqueue(run);
+    start: (raw: StartInput) => start(raw),
+    // A coworker's assignment: its folder, engine, model and command, with its role ahead of the
+    // request. It queues in the folder's lane like any other run.
+    startFor(coworker: Coworker, prompt: string, origin?: Run['origin']) {
+      const team = defaultTeam();
+      if (coworker.model) team[coworker.engine].model = coworker.model;
+      return start(
+        {
+          projectPath: coworker.folder,
+          allowPlain: true,
+          prompt: coworker.role ? `역할:\n${coworker.role}\n\n${prompt}` : prompt,
+          mode: coworker.mode === 'solo' ? coworker.engine : 'collaborate',
+          implementer: coworker.engine,
+          team,
+        },
+        {
+          coworkerId: coworker.id,
+          ...(coworker.command ? { executable: coworker.command } : {}),
+          ...(origin ? { origin } : {}),
+        },
+      );
     },
     async followUp(id: string, prompt: string, opts: { whenDone?: boolean } = {}) {
       const input = followUpSchema.parse({ prompt });

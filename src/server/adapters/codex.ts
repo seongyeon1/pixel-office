@@ -1,5 +1,8 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { z } from 'zod';
 import {
   reviewSchema,
@@ -13,7 +16,21 @@ import { codexHarnessConfig } from '../harness.js';
 import { normalizeCodex } from './normalize.js';
 import { isUsageLimit } from './usage-limit.js';
 const exec = promisify(execFile);
-export function createCodexAdapter(): Adapter {
+// `[mcp_servers.<name>]` tables in config.toml. `-c` splits its path on dots and takes no quoted
+// segments, so a name it cannot address is returned for the caller to refuse.
+export async function mcpServerNames(codexHome: string) {
+  const text = await readFile(join(codexHome, 'config.toml'), 'utf8').catch(() => '');
+  const names = new Set(
+    [...text.matchAll(/^\s*\[\s*mcp_servers\.([A-Za-z0-9_-]+|"[^"]*"|'[^']*')\s*\]/gm)].map((m) =>
+      m[1].replace(/^["']|["']$/g, ''),
+    ),
+  );
+  const bare = (name: string) => /^[A-Za-z0-9_-]+$/.test(name);
+  return { names: [...names].filter(bare), unaddressable: [...names].filter((n) => !bare(n)) };
+}
+export function createCodexAdapter({
+  codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex'),
+}: { codexHome?: string } = {}): Adapter {
   let active: RpcClient | undefined;
   return {
     async probe() {
@@ -36,13 +53,26 @@ export function createCodexAdapter(): Adapter {
     async execute(input, emit, interact) {
       if (input.signal.aborted) return { outcome: 'cancelled', text: '' };
       const personal = input.executionMode !== 'isolated';
+      // The app server raises no approval naming an MCP tool before it runs, so an `ask` rule
+      // cannot be enforced per tool: the configured MCP servers are turned off instead.
+      const mcp = input.toolRules?.some((rule) => rule.action === 'ask')
+        ? await mcpServerNames(codexHome)
+        : { names: [], unaddressable: [] };
+      if (mcp.unaddressable.length)
+        return {
+          outcome: 'failed',
+          text: '',
+          error: `Codex MCP 서버 ${mcp.unaddressable.join(', ')}는 이름 때문에 끌 수 없어 외부 도구 승인 규칙을 지킬 수 없어요. config.toml에서 서버 이름을 영문·숫자·-·_로 바꿔 주세요.`,
+        };
+      const mcpOff = mcp.names.flatMap((name) => ['-c', `mcp_servers.${name}.enabled=false`]);
       const rpc = new RpcClient(
         spawn(
-          personal ? 'syc' : 'codex',
+          input.executable ?? (personal ? 'syc' : 'codex'),
           [
             ...(personal && input.approvalMode === 'manual' ? ['--safe'] : []),
             'app-server',
             '--stdio',
+            ...mcpOff,
           ],
           {
             stdio: ['pipe', 'pipe', 'pipe'],

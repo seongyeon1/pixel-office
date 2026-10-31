@@ -323,3 +323,132 @@ test('a Claude coworker with a synthetic error model resumes using personal mode
   expect(queries[0].options.resume).toBe('saved-claude');
   expect(queries[0].options.model).toBeUndefined();
 });
+
+test('personal Claude runs the coworker command when one is given', async () => {
+  queries.length = 0;
+  const personal = {
+    ...base('/repo'),
+    executionMode: 'personal' as const,
+    approvalMode: 'auto' as const,
+  };
+  const approve = async () => ({ decision: 'approve' as const });
+  await createClaudeAdapter().execute(
+    { ...personal, executable: 'pstack-claude' },
+    () => {},
+    approve,
+  );
+  await createClaudeAdapter().execute(personal, () => {}, approve);
+  expect(queries[0].options.pathToClaudeCodeExecutable).toBe('pstack-claude');
+  expect(queries[1].options.pathToClaudeCodeExecutable).toBe('sy');
+});
+
+test.each(['auto', 'manual'] as const)(
+  'a Claude tool rule asks before an external write tool in %s approval mode',
+  async (approvalMode) => {
+    queries.length = 0;
+    const interact = vi.fn(async () => ({ decision: 'deny' as const }));
+    await createClaudeAdapter().execute(
+      {
+        ...base('/repo'),
+        executionMode: 'personal',
+        approvalMode,
+        toolRules: [{ pattern: 'mcp__*__*create*', action: 'ask' }],
+      },
+      () => {},
+      interact,
+    );
+    const hook = queries[0].options.hooks.PreToolUse[0].hooks[0];
+    const tool = 'mcp__atlassian__createConfluencePage';
+    const result = await hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: tool,
+      tool_input: { title: 'x' },
+    });
+    expect(interact).toHaveBeenCalledTimes(1);
+    expect(interact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'approval',
+        details: expect.objectContaining({ policy: 'ask', tool }),
+      }),
+    );
+    expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+    // A tool no rule names keeps the global setting: auto runs it without asking.
+    if (approvalMode === 'auto') {
+      const read = await hook({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__atlassian__getPage',
+        tool_input: {},
+      });
+      expect(interact).toHaveBeenCalledTimes(1);
+      expect(read).toEqual({});
+    }
+  },
+);
+
+test('Codex runs the coworker command and turns off MCP servers when a rule asks', async () => {
+  const { mkdtemp, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawn } = await import('node:child_process');
+  const codexHome = await mkdtemp(join(tmpdir(), 'pixel-codex-home-'));
+  await writeFile(
+    join(codexHome, 'config.toml'),
+    [
+      'model = "x"',
+      '[mcp_servers.atlassian]',
+      'url = "https://a"',
+      '[mcp_servers.atlassian.env]',
+      'A = "1"',
+      '[mcp_servers."docs"]',
+      'command = "d"',
+      '[mcp_servers.node-repl]',
+      'command = "n"',
+    ].join('\n'),
+  );
+  const personal = {
+    ...base('/repo'),
+    executionMode: 'personal' as const,
+    approvalMode: 'auto' as const,
+  };
+  const approve = async () => ({ decision: 'approve' as const });
+  await createCodexAdapter({ codexHome }).execute(
+    {
+      ...personal,
+      executable: 'pstack-codex',
+      toolRules: [{ pattern: 'mcp__*', action: 'ask' }],
+    },
+    () => {},
+    approve,
+  );
+  expect(spawn).toHaveBeenLastCalledWith(
+    'pstack-codex',
+    [
+      'app-server',
+      '--stdio',
+      '-c',
+      'mcp_servers.atlassian.enabled=false',
+      '-c',
+      'mcp_servers.docs.enabled=false',
+      '-c',
+      'mcp_servers.node-repl.enabled=false',
+    ],
+    expect.anything(),
+  );
+  // Only `auto` rules: nothing to enforce, the MCP servers stay on.
+  await createCodexAdapter({ codexHome }).execute(
+    { ...personal, toolRules: [{ pattern: 'mcp__*', action: 'auto' }] },
+    () => {},
+    approve,
+  );
+  expect(spawn).toHaveBeenLastCalledWith('syc', ['app-server', '--stdio'], expect.anything());
+  // `-c` cannot address a dotted name: the run refuses instead of leaving that server on.
+  await writeFile(join(codexHome, 'config.toml'), '[mcp_servers."my.docs"]\ncommand = "d"\n');
+  vi.mocked(spawn).mockClear();
+  const refused = await createCodexAdapter({ codexHome }).execute(
+    { ...personal, toolRules: [{ pattern: 'mcp__*', action: 'ask' }] },
+    () => {},
+    approve,
+  );
+  expect(refused).toMatchObject({ outcome: 'failed', error: expect.stringContaining('my.docs') });
+  expect(spawn).not.toHaveBeenCalled();
+});

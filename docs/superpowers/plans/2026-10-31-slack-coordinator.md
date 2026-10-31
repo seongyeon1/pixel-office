@@ -348,3 +348,15 @@
 ## 실측 기록
 
 (Task 4 Step 5, Task 7 Step 6, Task 10 Step 2 결과를 여기 적는다.)
+
+### Task 4 Step 5 — Codex MCP 승인 (2026-10-31, codex-cli 0.166.0)
+
+외부 서비스에 실제로 쓰는 호출은 하지 않고(동의 없는 외부 게시 방지), app-server 프로토콜 자체로 확인했다.
+
+- `codex app-server generate-ts --out <dir>`로 프로토콜 타입을 뽑아 `ServerRequest.ts`(서버 → 클라이언트 요청 전체)를 봤다. 승인/입력 요청은 `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput`, `mcpServer/elicitation/request`, (구버전) `applyPatchApproval`, `execCommandApproval`뿐이다. **MCP 도구 호출 전용 승인 요청은 없다.**
+- `mcpServer/elicitation/request`의 params(`McpServerElicitationRequestParams`)는 `threadId`, `turnId`, `serverName`, `message`, `requestedSchema`/`url`만 있고 **도구 이름이 없다.** MCP 서버가 스스로 elicitation을 보낼 때만 오는 요청이라, 도구 이름 기준 `matchToolRule`을 적용할 수 없다.
+- MCP 호출은 `ThreadItem`의 `mcpToolCall` 항목(`server`, `tool`, `arguments`)으로 알림(`item/started`)만 온다. 응답을 기다리지 않는 알림이라 실행 전에 막을 수 없다.
+- 도구별 승인은 `apps.*.tools.*.approval_mode`(`AppToolApproval`: auto/prompt/writes/approve) 설정에만 있고, 개인 실행 auto 모드(`approvalPolicy: 'never'`)에서 승인 요청이 온다고 확신할 근거가 없다.
+- 결론: 확실히 확인되지 않음 → **Step 6b** 구현. `ask` 규칙이 하나라도 있으면 `~/.codex/config.toml`(`CODEX_HOME` 우선)의 `[mcp_servers.<name>]`마다 `-c mcp_servers.<name>.enabled=false`를 붙인다.
+- 끄기 플래그 확인: `codex -c mcp_servers.voicekit.enabled=false mcp list` → voicekit만 `disabled`로 바뀜. `-c 'mcp_servers."voicekit".enabled=false'`는 `invalid transport in mcp_servers."voicekit"`로 **시작 자체가 실패**한다(`-c`는 점으로 나누고 따옴표 구간을 지원하지 않음). 그래서 따옴표 이름은 따옴표를 벗겨 쓰고, 영문·숫자·`-`·`_`가 아닌 이름(예: `"my.docs"`)이 있으면 실행을 거부한다.
+- 남는 구멍: config.toml 밖에서 들어오는 MCP(플러그인 번들 서버, 예: `codex mcp list`의 `codex_app`/`cua_repl`)와 ChatGPT 앱 커넥터(`apps.*`)는 이 방식으로 꺼지지 않는다.

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ToolRule } from './coworkers.js';
 export type Provider = 'codex' | 'claude';
 export type Seniority = 'senior' | 'junior' | 'intern';
 export type Activity = 'idle' | 'responding' | 'reading' | 'editing' | 'executing' | 'reviewing';
@@ -57,6 +58,10 @@ export interface Run {
   pullRequests?: string[];
   // A folder that is not a git repository: no workspace, changes or delivery to track.
   plain?: true;
+  // Started as a coworker's assignment: its id, and the command its engine runs with.
+  coworkerId?: string;
+  executable?: string;
+  origin?: { kind: 'slack'; jobId: string };
   pullRequestRequested?: boolean;
   initialChanges?: Record<string, string>;
   projectPath: string;
@@ -169,6 +174,10 @@ export interface PhaseInput {
   harness?: HarnessChoice;
   // Per-repository folder for files the adapter generates from the harness.
   harnessDir?: string;
+  // The CLI (or wrapper) a personal run starts instead of sy/syc.
+  executable?: string;
+  // The folder's coworker rules: an `ask` tool waits for a person even in auto approval mode.
+  toolRules?: ToolRule[];
 }
 export interface PhaseResult {
   outcome: 'completed' | 'failed' | 'cancelled';

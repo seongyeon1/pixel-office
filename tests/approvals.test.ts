@@ -26,3 +26,21 @@ test.each([
     store.close();
   }
 });
+
+test('auto mode leaves a request a tool rule marked ask unresolved', () => {
+  const store = createStore(':memory:');
+  try {
+    store.setSetting('approvals', { mode: 'auto' });
+    const request = {
+      runId: 'run',
+      agentId: 'claude' as const,
+      kind: 'approval' as const,
+      title: 'mcp__atlassian__createConfluencePage 작업 승인',
+      details: { policy: 'ask', tool: 'mcp__atlassian__createConfluencePage' },
+    };
+    expect(automaticApproval(store, request)).toBeUndefined();
+    expect(store.events('run', 0)).toEqual([]);
+  } finally {
+    store.close();
+  }
+});
