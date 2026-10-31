@@ -215,6 +215,7 @@ const { app } = await createServer({
   adapters,
   orchestrator,
   token: 'e2e-token',
+  dataDir: dir,
   terminalShell: '/bin/sh',
   port: 4318,
   demo: true,
