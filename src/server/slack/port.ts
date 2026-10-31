@@ -1,5 +1,6 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { SlackConfig } from './secrets.js';
+import { slackErrorCode } from './errors.js';
 
 export type Block = Record<string, unknown>;
 
@@ -154,12 +155,4 @@ export async function testSlackConnection(
   } finally {
     await port.stop().catch(() => {});
   }
-}
-
-// Slack API errors carry the code in `data.error`; fall back to a generic label so tokens never leak.
-export function slackErrorCode(e: unknown): string {
-  const data = (e as { data?: { error?: unknown } } | null)?.data;
-  if (typeof data?.error === 'string') return data.error;
-  const code = (e as { code?: unknown } | null)?.code;
-  return typeof code === 'string' && /^[a-z_]+$/i.test(code) ? code : 'unknown_error';
 }

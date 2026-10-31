@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { mkdtemp, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -35,4 +35,14 @@ test('masked config never contains the original tokens', () => {
   expect(json).not.toContain(config.botToken);
   expect(json).not.toContain(config.appToken);
   expect(json).not.toContain('secret');
+});
+
+test('rewriting a looser existing file never leaves loose permissions', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pixel-slack-'));
+  const file = join(dir, 'slack.json');
+  await writeFile(file, '{}');
+  await chmod(file, 0o644);
+  await writeSlackConfig(dir, config);
+  expect((await stat(file)).mode & 0o777).toBe(0o600);
+  expect(await readSlackConfig(dir)).toEqual(config);
 });
