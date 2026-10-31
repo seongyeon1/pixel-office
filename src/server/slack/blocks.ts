@@ -137,6 +137,20 @@ export const resolvedBlocks = (text: string, title?: string): Block[] => [
   section(title ? `${esc(title)}\n_${esc(text)}_` : `_${esc(text)}_`),
 ];
 
+// Clips so the escaped text still fits one section; `clipped` means the full text needs attaching.
+export function fitReport(summary: string, max = SECTION): { text: string; clipped: boolean } {
+  if (esc(summary).length <= max) return { text: summary, clipped: false };
+  let out = '';
+  let used = 0;
+  for (const ch of summary) {
+    const len = esc(ch).length;
+    if (used + len > max - 1) break;
+    out += ch;
+    used += len;
+  }
+  return { text: `${out}…`, clipped: true };
+}
+
 export const reportBlocks = (summary: string, links: string[]): Block[] => [
   section(esc(summary)),
   ...(links.length ? [section(links.map((l) => `<${l}>`).join('\n'))] : []),

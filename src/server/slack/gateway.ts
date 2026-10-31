@@ -18,6 +18,7 @@ import {
   approvalBlocks,
   buttonQuestion,
   clip,
+  fitReport,
   planBlocks,
   proposalBlocks,
   questionBlocks,
@@ -40,6 +41,15 @@ const INTERRUPTED = '서버가 재시작되어 작업이 중단됐어요. 스레
 const SUMMARY_MAX = 3000;
 const DOC_MAX_BYTES = 200 * 1024;
 const DOC_MAX_COUNT = 3;
+// Cuts at a byte limit without leaving half of a multi-byte character behind.
+function capBytes(text: string): string {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= DOC_MAX_BYTES) return text;
+  const cut = new TextDecoder('utf-8', { fatal: false })
+    .decode(bytes.subarray(0, DOC_MAX_BYTES))
+    .replace(/\uFFFD+$/, '');
+  return `${cut}\n\n…(200KB를 넘어 잘렸어요)`;
+}
 export type RunDocument = { path: string; content: string };
 
 // The markdown a run produced, read from its workspace; unreadable or oversized files are skipped.
@@ -212,12 +222,12 @@ export function createSlackGateway({
   };
   // Bound coworker: the server itself reports. Failures and cancellations keep their own path.
   const reportBound = async (job: Job, run: Run) => {
-    const { text, clipped } = clip(run.summary?.trim() || '작업을 마쳤어요.', SUMMARY_MAX);
+    const { text, clipped } = fitReport(run.summary?.trim() || '작업을 마쳤어요.', SUMMARY_MAX);
     await port
       .post(job.channel, job.threadTs, reportBlocks(text, [...(run.pullRequests ?? [])]), text)
       .catch(fail);
     if (clipped && run.summary)
-      await port.upload(job.channel, job.threadTs, 'summary.md', run.summary).catch(fail);
+      await port.upload(job.channel, job.threadTs, 'summary.md', capBytes(run.summary)).catch(fail);
   };
   // Coordinator: its reply is the report; the server only attaches the documents of finished runs.
   const uploadDocuments = async (job: Job) => {
@@ -234,10 +244,17 @@ export function createSlackGateway({
         if (!files.has(d.path) && Buffer.byteLength(d.content, 'utf8') <= DOC_MAX_BYTES)
           files.set(d.path, d);
     }
-    for (const d of [...files.values()].slice(0, DOC_MAX_COUNT))
-      await port
-        .upload(job.channel, job.threadTs, d.path.split('/').at(-1) || d.path, d.content)
-        .catch(fail);
+    // Two documents with the same basename get their parent folder (then a number) as a prefix.
+    const names = new Set<string>();
+    for (const d of [...files.values()].slice(0, DOC_MAX_COUNT)) {
+      const parts = d.path.split('/');
+      const base = parts.at(-1) || d.path;
+      const candidates = [base, `${parts.at(-2) ?? 'doc'}-${base}`];
+      let name = candidates.find((n) => !names.has(n));
+      for (let i = 2; !name; i++) if (!names.has(`${i}-${base}`)) name = `${i}-${base}`;
+      names.add(name);
+      await port.upload(job.channel, job.threadTs, name, d.content).catch(fail);
+    }
   };
   const runUpdated = (run: Run) => {
     if (run.origin?.kind !== 'slack') return;
