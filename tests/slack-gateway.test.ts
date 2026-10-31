@@ -573,10 +573,10 @@ test('a proposed coworker is created only when the owner presses 만들기', asy
     bindings: [],
   });
   expect(t.coworkers.get('skt-dev')!.rules.length).toBeGreaterThan(0);
-  expect(JSON.stringify(done[0][0])).toContain('동료 SKT 개발를 만들었어요.');
+  expect(JSON.stringify(done[0][0])).toContain('새 동료를 만들었어요: SKT 개발');
   expect(t.coordinator.wake).toHaveBeenLastCalledWith(job.id, {
     kind: 'reply',
-    text: '동료 SKT 개발를 만들었어요.',
+    text: '새 동료를 만들었어요: SKT 개발',
   });
   expect(t.store.getJob(job.id)!.proposals).toEqual({});
 
