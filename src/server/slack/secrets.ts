@@ -5,7 +5,7 @@ import { z } from 'zod';
 export const slackConfigSchema = z.object({
   botToken: z.string().regex(/^xoxb-/),
   appToken: z.string().regex(/^xapp-/),
-  ownerId: z.string().regex(/^U[A-Z0-9]+$/),
+  ownerId: z.string().regex(/^[UW][A-Z0-9]+$/),
 });
 export type SlackConfig = z.infer<typeof slackConfigSchema>;
 

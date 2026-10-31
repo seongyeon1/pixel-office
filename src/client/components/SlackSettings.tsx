@@ -41,8 +41,8 @@ export function SlackSettings() {
       const owner = ownerId.trim();
       if (!botToken.startsWith('xoxb-')) throw new Error('Bot 토큰은 xoxb-로 시작해야 해요.');
       if (!appToken.startsWith('xapp-')) throw new Error('App 토큰은 xapp-로 시작해야 해요.');
-      if (!/^U[A-Z0-9]+$/.test(owner))
-        throw new Error('Slack member ID는 U로 시작하는 영문 대문자·숫자예요. 예: U0123ABCD');
+      if (!/^[UW][A-Z0-9]+$/.test(owner))
+        throw new Error('Slack member ID는 U나 W로 시작하는 영문 대문자·숫자예요. 예: U0123ABCD');
       try {
         setStatus(
           await api<SlackStatus>('/settings/slack', { botToken, appToken, ownerId: owner }),

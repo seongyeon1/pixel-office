@@ -1,4 +1,4 @@
-import { App, LogLevel } from '@slack/bolt';
+import { App, LogLevel, type Logger } from '@slack/bolt';
 import type { SlackConfig } from './secrets.js';
 import { slackErrorCode } from './errors.js';
 
@@ -47,12 +47,34 @@ export interface SlackPort {
   authTest(): Promise<{ teamId: string; botUserId: string }>;
 }
 
+// Bolt's default handler logs raw error objects, and a web-api request error keeps its axios
+// `original` (Authorization header included); only a Slack code ever leaves this logger.
+export function quietLogger(log: (code: string) => void): Logger {
+  let level = LogLevel.ERROR;
+  const ignore = () => {};
+  return {
+    debug: ignore,
+    info: ignore,
+    warn: ignore,
+    error: (...msg: unknown[]) => log(slackErrorCode(msg.find((m) => typeof m !== 'string'))),
+    setLevel: (next) => void (level = next),
+    getLevel: () => level,
+    setName: ignore,
+  };
+}
+
+const logCode = (code: string) => console.error(`Slack 오류: ${code}`);
+
 // Thin Bolt adapter (Socket Mode). Not unit-tested against real Slack; callers are tested with a fake SlackPort.
-export function createBoltPort(config: SlackConfig): SlackPort {
+export function createBoltPort(
+  config: SlackConfig,
+  log: (code: string) => void = logCode,
+): SlackPort {
   const app = new App({
     token: config.botToken,
     appToken: config.appToken,
     socketMode: true,
+    logger: quietLogger(log),
     logLevel: LogLevel.ERROR,
   });
   const client = app.client;

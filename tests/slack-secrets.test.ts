@@ -6,6 +6,7 @@ import {
   clearSlackConfig,
   maskSlack,
   readSlackConfig,
+  slackConfigSchema,
   writeSlackConfig,
 } from '../src/server/slack/secrets.js';
 
@@ -26,6 +27,14 @@ test('Slack credentials are stored owner-only and can be read and cleared', asyn
   await clearSlackConfig(dir);
   expect(await readSlackConfig(dir)).toBeUndefined();
   await clearSlackConfig(dir);
+});
+
+test('owner member IDs may start with U or W, uppercase only', () => {
+  const ok = (ownerId: string) => slackConfigSchema.safeParse({ ...config, ownerId }).success;
+  expect(ok('U01ABC')).toBe(true);
+  expect(ok('W01ABC')).toBe(true);
+  expect(ok('u01abc')).toBe(false);
+  expect(ok('B01ABC')).toBe(false);
 });
 
 test('masked config never contains the original tokens', () => {
