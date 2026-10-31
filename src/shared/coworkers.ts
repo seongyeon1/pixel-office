@@ -37,8 +37,9 @@ export const APPROVAL_GROUPS: { label: string; patterns: string[] }[] = [
   {
     label: 'Jira 발급',
     patterns: [
-      ...['create', 'edit', 'transition'].map((v) => atlassian(v, 'Jira')),
+      ...['create', 'edit', 'transition', 'add'].map((v) => atlassian(v, 'Jira')),
       atlassian('add', 'Comment'),
+      atlassian('create', 'IssueLink'),
     ],
   },
   {
@@ -51,16 +52,13 @@ export const APPROVAL_GROUPS: { label: string; patterns: string[] }[] = [
   },
   {
     label: '그 외 외부 쓰기',
+    // Verbs only, never nouns like "comment": read tools such as getComments must stay automatic.
     patterns: [
-      'create',
-      'update',
-      'delete',
-      'publish',
-      'send',
-      'post',
-      'comment',
-      'transition',
-    ].map((v) => `mcp__*__*${v}*`),
+      ...['create', 'update', 'delete', 'publish', 'send', 'post', 'add', 'duplicate', 'move'].map(
+        (v) => `mcp__*__*${v}*`,
+      ),
+      'mcp__*__transition*',
+    ],
   },
 ];
 // A write-looking tool is asked about; anything unsure leans to `ask`.

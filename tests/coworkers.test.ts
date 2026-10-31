@@ -78,6 +78,24 @@ test('default rules ask per destination before the generic write verbs', () => {
   expect(DEFAULT_RULES.map((r) => r.pattern)).toEqual(APPROVAL_GROUPS.flatMap((g) => g.patterns));
 });
 
+test('read tools stay automatic and every Jira write follows the Jira toggle', () => {
+  const ask = (tool: string) => matchToolRule(DEFAULT_RULES, tool);
+  for (const tool of [
+    'mcp__atlassian__getConfluencePageFooterComments',
+    'mcp__atlassian__getConfluenceCommentChildren',
+    'mcp__atlassian__getTransitionsForJiraIssue',
+    'mcp__notion__notion-get-comments',
+  ])
+    expect(ask(tool), tool).toBeUndefined();
+  expect(ask('mcp__notion__notion-duplicate-page')).toBe('ask');
+  const jira = APPROVAL_GROUPS.find((g) => g.label === 'Jira 발급')!;
+  const off = DEFAULT_RULES.map((r) =>
+    jira.patterns.includes(r.pattern) ? { ...r, action: 'auto' as const } : r,
+  );
+  for (const tool of ['mcp__atlassian__createIssueLink', 'mcp__atlassian__addWorklogToJiraIssue'])
+    expect(matchToolRule(off, tool), tool).toBe('auto');
+});
+
 test('coworkers round-trip, default rules and coordinator first', () => {
   const { coworkers, folder, input } = setup();
   const saved = coworkers.save(input('skt-dev', folder('a'), { bindings: ['C123'] }));
