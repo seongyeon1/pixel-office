@@ -977,3 +977,92 @@ test('coworker routes require authentication and enforce the roster rules', asyn
   await app.close();
   store.close();
 });
+
+test('Slack settings test the connection, store it privately and never echo tokens', async () => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const dataDir = await mkdtemp(join(tmpdir(), 'pixel-slack-transport-'));
+  const calls: string[] = [];
+  let failWith: string | undefined;
+  const slack = {
+    test: async () => {
+      calls.push('test');
+      if (failWith) throw new Error(failWith);
+    },
+    connect: async () => void calls.push('connect'),
+    disconnect: async () => void calls.push('disconnect'),
+  };
+  const make = (withSlack: boolean) =>
+    createServer({
+      store,
+      adapters,
+      orchestrator: createOrchestrator({ store, adapters, dataDir }),
+      token: 't',
+      port: 4317,
+      dataDir,
+      ...(withSlack ? { slack } : {}),
+    });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const login = async (server: Awaited<ReturnType<typeof make>>['app']) =>
+    (
+      await server.inject({
+        method: 'POST',
+        url: '/api/session',
+        headers: { host, origin },
+        payload: { token: 't' },
+      })
+    ).headers['set-cookie'] as string;
+  const { app } = await make(true);
+  const cookie = await login(app);
+  const call = (method: 'GET' | 'POST' | 'DELETE', payload?: Record<string, unknown>) =>
+    app.inject({ method, url: '/api/settings/slack', headers: { host, origin, cookie }, payload });
+  const body = {
+    botToken: 'xoxb-111-secret-wxyz',
+    appToken: 'xapp-1-secret-app',
+    ownerId: 'U01ABC',
+  };
+  try {
+    expect((await call('GET')).json()).toEqual({ configured: false });
+    expect((await call('POST', { ...body, botToken: 'bad' })).statusCode).toBe(400);
+    expect((await call('POST', { ...body, ownerId: 'u01' })).statusCode).toBe(400);
+    failWith = 'invalid_auth';
+    const failed = await call('POST', body);
+    expect(failed.statusCode).toBe(400);
+    expect(failed.json().error).toBe('Slack 연결을 확인하지 못했어요: invalid_auth');
+    expect(failed.body).not.toContain('secret');
+    expect((await call('GET')).json()).toEqual({ configured: false });
+    expect(calls).toEqual(['test']);
+    failWith = undefined;
+    const ok = await call('POST', body);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.body).not.toContain('secret');
+    const got = await call('GET');
+    expect(got.json()).toEqual({ configured: true, ownerId: 'U01ABC', botToken: 'xoxb-…wxyz' });
+    expect(got.body).not.toContain('secret');
+    expect(calls).toEqual(['test', 'test', 'connect']);
+    expect((await call('DELETE')).statusCode).toBe(200);
+    expect((await call('GET')).json()).toEqual({ configured: false });
+    expect(calls.at(-1)).toBe('disconnect');
+  } finally {
+    await app.close();
+  }
+  const { app: bare } = await make(false);
+  const res = await bare.inject({
+    method: 'POST',
+    url: '/api/settings/slack',
+    headers: { host, origin, cookie: await login(bare) },
+    payload: body,
+  });
+  expect(res.statusCode).toBe(503);
+  expect(res.json().error).toBe('Slack 연결 기능을 사용할 수 없어요.');
+  await bare.close();
+});
