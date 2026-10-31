@@ -11,7 +11,7 @@ import type { Interaction, Run } from '../src/shared/contracts.js';
 const OWNER = 'U0OWNER';
 type Call = [string, ...unknown[]];
 
-function setup() {
+function setup(opts: { port?: Partial<SlackPort>; onError?: (code: string) => void } = {}) {
   const store = createStore(':memory:');
   const dataDir = mkdtempSync(join(tmpdir(), 'pixel-gw-'));
   const coworkers = createCoworkers(store, { dataDir });
@@ -34,6 +34,7 @@ function setup() {
     upload: async (...args) => void calls.push(['upload', ...args]),
     openDm: async () => 'D0',
     authTest: async () => ({ teamId: 'T1', botUserId: 'B1' }),
+    ...opts.port,
   };
   let runs = 0;
   const answered = new Set<string>();
@@ -56,6 +57,7 @@ function setup() {
       calls.push(['answer', id, answer]);
       if (answered.has(id)) throw new Error('이미 해결되었거나 종료된 요청입니다.');
       answered.add(id);
+      store.resolveInteraction(id);
       const req = store.getInteraction(id)!;
       store.append({
         runId: req.runId,
@@ -77,6 +79,7 @@ function setup() {
     coordinator,
     ownerId: OWNER,
     debounceMs: 1000,
+    ...(opts.onError ? { onError: opts.onError } : {}),
   });
   const message = (over: Partial<InboundMessage> = {}): InboundMessage => ({
     eventId: `Ev${Math.random()}`,
@@ -132,6 +135,8 @@ function setup() {
   const settle = () => new Promise((r) => setTimeout(r, 0));
   return {
     store,
+    dataDir,
+    coworkers,
     calls,
     gateway,
     orchestrator,
@@ -146,8 +151,8 @@ function setup() {
   };
 }
 let current: ReturnType<typeof setup> | undefined;
-const start = async () => {
-  current = setup();
+const start = async (opts?: Parameters<typeof setup>[0]) => {
+  current = setup(opts);
   await current.gateway.start();
   return current;
 };
@@ -454,4 +459,150 @@ test('slack_seen forgets keys after a day and jobs are found by run', () => {
   expect(store.jobForRun('r10')?.id).toBe(job.id);
   expect(store.jobForRun('nope')).toBeUndefined();
   store.close();
+});
+
+test('a failed start can be retried without doubling the event listener', async () => {
+  let attempts = 0;
+  const t = setup({
+    port: {
+      start: async () => {
+        if (++attempts === 1) throw new Error('socket');
+      },
+    },
+  });
+  current = t;
+  await expect(t.gateway.start()).rejects.toThrow('socket');
+  expect(t.store.bus.listenerCount('event')).toBe(0);
+  await t.gateway.start();
+  expect(t.store.bus.listenerCount('event')).toBe(1);
+});
+
+test('a throwing onError never becomes an unhandled rejection', async () => {
+  const unhandled = vi.fn();
+  process.on('unhandledRejection', unhandled);
+  try {
+    const t = await start({
+      port: { react: async () => Promise.reject(new Error('ratelimited')) },
+      onError: () => {
+        throw new Error('logger down');
+      },
+    });
+    await t.send();
+    await t.settle();
+    await t.settle();
+    expect(t.coordinator.wake).toHaveBeenCalledTimes(1);
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally {
+    process.off('unhandledRejection', unhandled);
+  }
+});
+
+test('a failed answer that left the request open goes to the error path, not "이미 처리됨"', async () => {
+  const errors: string[] = [];
+  const t = await start({ onError: (code) => void errors.push(code) });
+  await t.send();
+  const run = t.runFor(t.store.getJobByThread('T1:D1:100.1')!.id);
+  const req = approval(run.id);
+  request(t, req);
+  await t.settle();
+  t.orchestrator.answer.mockRejectedValueOnce(new Error('응답 형식이 맞지 않습니다.'));
+  const responses = await t.click({ value: JSON.stringify({ interactionId: req.id }) });
+  expect(responses).toEqual([]);
+  expect(errors).toHaveLength(1);
+});
+
+test('a request closed because its run ended says so', async () => {
+  const t = await start();
+  await t.send();
+  const run = t.runFor(t.store.getJobByThread('T1:D1:100.1')!.id);
+  const req = approval(run.id);
+  request(t, req);
+  await t.settle();
+  t.store.append({
+    runId: run.id,
+    agentId: 'claude',
+    type: 'interaction.resolved',
+    payload: { id: req.id, closed: true },
+  });
+  await t.settle();
+  expect(JSON.stringify(t.calls.find((c) => c[0] === 'update')![3])).toContain(
+    '작업이 끝나 닫혔어요',
+  );
+});
+
+test('the coordinator replies in the job thread', async () => {
+  const t = await start();
+  await t.send();
+  const job = t.store.getJobByThread('T1:D1:100.1')!;
+  await t.gateway.reply(job.id, '회의록 동료에게 맡길게요.');
+  const post = t.calls.at(-1)!;
+  expect(post.slice(1, 3)).toEqual(['D1', '100.1']);
+  expect(post[4]).toBe('회의록 동료에게 맡길게요.');
+});
+
+test('a proposed coworker is created only when the owner presses 만들기', async () => {
+  const t = await start();
+  await t.send();
+  const job = t.store.getJobByThread('T1:D1:100.1')!;
+  const draft = {
+    id: 'skt-dev',
+    name: 'SKT 개발',
+    folder: t.dataDir,
+    role: 'SKT 담당',
+    engine: 'codex' as const,
+  };
+  await t.gateway.propose(job.id, draft);
+  const post = t.calls.at(-1)!;
+  const blocks = JSON.stringify(post[3]);
+  expect(blocks).toContain('pixel:propose-create');
+  expect(blocks).toContain('pixel:propose-cancel');
+  expect(blocks).toContain('SKT 개발');
+  const proposalId = Object.keys(t.store.getJob(job.id)!.proposals ?? {})[0];
+  const value = JSON.stringify({ jobId: job.id, proposalId });
+
+  const stranger = await t.click({ userId: 'U0OTHER', actionId: 'pixel:propose-create', value });
+  expect(stranger[0].slice(1)).toEqual(['이 작업은 소유자만 처리할 수 있어요.', false]);
+  expect(t.coworkers.get('skt-dev')).toBeUndefined();
+
+  const done = await t.click({ actionId: 'pixel:propose-create', value });
+  expect(t.coworkers.get('skt-dev')).toMatchObject({
+    name: 'SKT 개발',
+    engine: 'codex',
+    createdBy: 'coordinator',
+    mode: 'solo',
+    bindings: [],
+  });
+  expect(t.coworkers.get('skt-dev')!.rules.length).toBeGreaterThan(0);
+  expect(JSON.stringify(done[0][0])).toContain('동료 SKT 개발를 만들었어요.');
+  expect(t.coordinator.wake).toHaveBeenLastCalledWith(job.id, {
+    kind: 'reply',
+    text: '동료 SKT 개발를 만들었어요.',
+  });
+  expect(t.store.getJob(job.id)!.proposals).toEqual({});
+
+  const again = await t.click({ actionId: 'pixel:propose-create', value });
+  expect(JSON.stringify(again[0][0])).toContain('이미 처리됨');
+});
+
+test('a cancelled proposal creates nothing; a bad folder is told', async () => {
+  const t = await start();
+  await t.send();
+  const job = t.store.getJobByThread('T1:D1:100.1')!;
+  const base = { name: '없는 폴더', role: '', engine: 'claude' as const };
+  await t.gateway.propose(job.id, { ...base, id: 'a', folder: t.dataDir });
+  await t.gateway.propose(job.id, { ...base, id: 'b', folder: '/nope/missing' });
+  const [first, second] = Object.keys(t.store.getJob(job.id)!.proposals!);
+  const cancelled = await t.click({
+    actionId: 'pixel:propose-cancel',
+    value: JSON.stringify({ jobId: job.id, proposalId: first }),
+  });
+  expect(JSON.stringify(cancelled[0][0])).toContain('제안을 취소했어요');
+  expect(t.coworkers.get('a')).toBeUndefined();
+  const failed = await t.click({
+    actionId: 'pixel:propose-create',
+    value: JSON.stringify({ jobId: job.id, proposalId: second }),
+  });
+  expect(failed[0][1]).toContain('폴더를 찾을 수 없어요');
+  expect(t.coworkers.get('b')).toBeUndefined();
+  expect(t.coordinator.wake).toHaveBeenCalledTimes(1);
 });

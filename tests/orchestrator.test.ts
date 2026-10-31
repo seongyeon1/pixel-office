@@ -1054,3 +1054,41 @@ test('shutdown stops every running run and drops the queue', async () => {
   expect(o.activeIds).toEqual([]);
   store.close();
 });
+test('a request left open when its run ends is resolved as closed', async () => {
+  const store = createStore(':memory:');
+  const resolved: unknown[] = [];
+  store.bus.on(
+    'event',
+    (e) => void (e.type === 'interaction.resolved' && resolved.push(e.payload)),
+  );
+  const adapter = fake(async (input, _emit, interact) => {
+    await interact({
+      runId: input.runId,
+      agentId: 'codex',
+      kind: 'approval',
+      title: 'git push',
+      details: {},
+    }).catch(() => {});
+    return { outcome: 'cancelled', text: '' } as never;
+  });
+  const o = createOrchestrator({
+    store,
+    adapters: { codex: adapter, claude: adapter },
+    dataDir: await mkdtemp(join(tmpdir(), 'pixel-closed-')),
+  });
+  try {
+    const run = await o.start({
+      projectPath: await project(),
+      prompt: 'task',
+      mode: 'codex',
+      implementer: 'codex',
+      team: defaultTeam(),
+    });
+    await wait(() => store.pending(run.id).length === 1);
+    await o.cancel(run.id);
+    expect(resolved).toEqual([{ id: expect.any(String), closed: true }]);
+  } finally {
+    await o.shutdown();
+    store.close();
+  }
+});

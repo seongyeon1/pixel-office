@@ -115,7 +115,8 @@ export function createOrchestrator({
         runId: id,
         agentId: req.agentId,
         type: 'interaction.resolved',
-        payload: { id: req.id },
+        // Closed because the run or phase ended, not answered.
+        payload: { id: req.id, closed: true },
       });
     }
   };
