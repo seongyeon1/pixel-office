@@ -222,63 +222,91 @@ test('a short summary is not attached, a failed bound run gets no report, and a 
 });
 
 test('coordinator jobs upload at most 3 run documents under 200KB once the last assignment ends', async () => {
-  const docs: Doc[] = [
-    { path: 'a.md', content: 'A' },
-    { path: 'big.md', content: 'x'.repeat(200 * 1024 + 1) },
-    { path: 'b.md', content: 'B' },
-    { path: 'c.md', content: 'C' },
-    { path: 'd.md', content: 'D' },
-  ];
-  const t = await start({ documents: async () => docs });
+  const docs: Record<string, Doc[]> = {
+    ra: [
+      { path: 'a.md', content: 'A' },
+      { path: 'big.md', content: 'x'.repeat(200 * 1024 + 1) },
+      { path: 'x/notes.md', content: 'N1' },
+    ],
+    rb: [
+      { path: 'a.md', content: 'A again' },
+      { path: 'y/notes.md', content: 'N2' },
+      { path: 'c.md', content: 'C' },
+    ],
+    rc: [{ path: 'only-follow-up.md', content: 'F' }],
+  };
+  const t = await start({ documents: async (run) => docs[run.id] ?? [] });
   await t.send();
   const job = t.store.getJobByThread('T1:D1:100.1')!;
-  const r1 = t.runFor(job.id, { id: 'ra' });
-  const r2 = t.runFor(job.id, { id: 'rb' });
-  t.store.updateJob(job.id, {
-    assignments: [
-      { id: 'a1', coworkerId: 'meeting', runId: 'ra', task: 't' },
-      { id: 'a2', coworkerId: 'meeting', runId: 'rb', task: 't' },
-      { id: 'a3', coworkerId: 'meeting', task: 'pending' },
-    ],
-  });
+  const assign = (id: string, runId?: string) =>
+    t.store.updateJob(job.id, {
+      assignments: [
+        ...t.store.getJob(job.id)!.assignments,
+        { id, coworkerId: 'meeting', task: 't', ...(runId ? { runId } : {}) },
+      ],
+    });
   const finish = (r: Run) => {
     t.store.updateRun(r.id, { status: 'completed' });
     t.updated({ ...r, status: 'completed' });
   };
-  finish(r1);
+  const uploads = () => t.calls.filter((c) => c[0] === 'upload').map((c) => c[3]);
+  const ra = t.runFor(job.id, { id: 'ra' });
+  const rb = t.runFor(job.id, { id: 'rb' });
+  assign('a1', 'ra');
+  assign('a2', 'rb');
+  assign('a3'); // pending: no run yet
+  finish(ra);
   await t.settle();
-  finish(r2);
+  finish(rb);
   await t.settle();
-  // a3 has no run yet: not the last assignment.
-  expect(t.names()).not.toContain('upload');
+  expect(uploads()).toEqual([]);
+  // The pending assignment gets its run and ends: now it is the last one.
+  const rc = t.runFor(job.id, { id: 'rc' });
   t.store.updateJob(job.id, {
-    assignments: [
-      { id: 'a1', coworkerId: 'meeting', runId: 'ra', task: 't' },
-      { id: 'a2', coworkerId: 'meeting', runId: 'rb', task: 't' },
-    ],
+    assignments: t.store
+      .getJob(job.id)!
+      .assignments.map((a) => (a.id === 'a3' ? { ...a, runId: 'rc' } : a)),
   });
-  const r3 = t.runFor(job.id, { id: 'rc' });
-  t.store.updateJob(job.id, {
-    assignments: [
-      ...t.store.getJob(job.id)!.assignments,
-      { id: 'a3', coworkerId: 'meeting', runId: 'rc', task: 't' },
-    ],
-  });
-  finish(r3);
+  docs.rc = [];
+  finish(rc);
+  // A duplicate run.updated changes nothing.
+  t.updated({ ...rc, status: 'completed' });
+  await t.settle();
+  // big.md skipped; a.md deduped across runs; the second same-basename file gets its folder as a prefix; max 3.
+  expect(uploads()).toEqual(['a.md', 'notes.md', 'y-notes.md']);
+  // A later follow-up uploads only its own run's documents.
+  const rd = t.runFor(job.id, { id: 'rd' });
+  docs.rd = [{ path: 'follow-up.md', content: 'F' }];
+  assign('a4', 'rd');
+  finish(rd);
+  t.updated({ ...rd, status: 'completed' });
+  await t.settle();
+  expect(uploads()).toEqual(['a.md', 'notes.md', 'y-notes.md', 'follow-up.md']);
+  expect(t.coordinator.wake).toHaveBeenCalledTimes(4 + 1); // new + one per finished run
+});
+
+test('summary.md is capped at 200KB without splitting a character, and escaped length decides clipping', async () => {
+  const t = await start();
+  t.bind('C1');
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '1.1' });
+  await t.send({ channel: 'C1', channelType: 'channel', ts: '2.1' });
+  const huge = bigText(80_000); // 240,000 bytes
+  t.updated({ ...t.store.getRun('run1')!, status: 'completed', summary: huge } as Run);
+  // 1,500 '&' are 7,500 characters once escaped.
+  const amps = '&'.repeat(1500);
+  t.updated({ ...t.store.getRun('run2')!, status: 'completed', summary: amps } as Run);
   await t.settle();
   const uploads = t.calls.filter((c) => c[0] === 'upload');
-  expect(uploads.map((c) => c[3])).toEqual(['a.md', 'b.md', 'c.md']);
-  // Only the new run's documents on a later completion.
-  const r4 = t.runFor(job.id, { id: 'rd' });
-  t.store.updateJob(job.id, {
-    assignments: [
-      ...t.store.getJob(job.id)!.assignments,
-      { id: 'a4', coworkerId: 'meeting', runId: 'rd', task: 't' },
-    ],
-  });
-  finish(r4);
-  await t.settle();
-  expect(t.calls.filter((c) => c[0] === 'upload')).toHaveLength(6);
+  expect(uploads).toHaveLength(2);
+  const first = uploads[0][4] as string;
+  expect(first.endsWith('\n\n…(200KB를 넘어 잘렸어요)')).toBe(true);
+  expect(first).not.toContain('\uFFFD');
+  expect(Buffer.byteLength(first, 'utf8')).toBeLessThanOrEqual(200 * 1024 + 64);
+  expect(uploads[1][4]).toBe(amps);
+  const posts = t.calls.filter((c) => c[0] === 'post');
+  const text = (posts[1][3] as { text: { text: string } }[])[0].text.text;
+  expect(text.length).toBeLessThanOrEqual(3000);
+  expect(text.endsWith('…')).toBe(true);
 });
 
 test('notifyInterrupted tells each Slack job thread once and ignores other runs', async () => {
@@ -298,7 +326,9 @@ test('notifyInterrupted tells each Slack job thread once and ignores other runs'
   const posts = t.calls.filter((c) => c[0] === 'post');
   expect(posts).toHaveLength(1);
   expect(posts[0].slice(1, 3)).toEqual(['C1', '1.1']);
-  expect(posts[0][4]).toBe('서버가 재시작되어 작업이 중단됐어요. 스레드에 답글을 달면 이어서 진행해요.');
+  expect(posts[0][4]).toBe(
+    '서버가 재시작되어 작업이 중단됐어요. 스레드에 답글을 달면 이어서 진행해요.',
+  );
 });
 
 test('the same message delivered twice makes one job', async () => {
