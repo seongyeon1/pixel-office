@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { ProjectSummary } from '../../shared/contracts';
 import type { LaunchHarnessList } from '../../shared/launcher';
 import {
+  APPROVAL_GROUPS,
   COORDINATOR_ID,
   DEFAULT_RULES,
   type Coworker,
@@ -10,18 +11,9 @@ import {
 } from '../../shared/coworkers';
 import { HarnessPanel } from './HarnessPanel';
 
-// Each toggle owns some of the default patterns; on = `ask`, off = `auto`.
-const verbPattern = (verb: string) => `mcp__*__*${verb}*`;
-const TOGGLES: { label: string; patterns: string[] }[] = [
-  { label: 'Confluence 게시', patterns: [verbPattern('publish')] },
-  { label: 'Jira 발급', patterns: [verbPattern('create')] },
-  { label: 'Notion 페이지', patterns: [verbPattern('update')] },
-  { label: 'Slack 다른 채널 발송', patterns: [verbPattern('send')] },
-  {
-    label: '그 외 외부 쓰기',
-    patterns: ['delete', 'post', 'comment', 'transition'].map(verbPattern),
-  },
-];
+// Each toggle owns some of the default patterns; on = `ask`, off = `auto`. Destination toggles
+// come before the generic write verbs that "그 외 외부 쓰기" owns.
+const TOGGLES = APPROVAL_GROUPS;
 const toggled = new Set(TOGGLES.flatMap((t) => t.patterns));
 const firstAction = (rules: ToolRule[], pattern: string): ToolRule['action'] =>
   rules.find((r) => r.pattern === pattern)?.action ?? 'auto';

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { createStore } from '../src/server/store.js';
 import { createCoworkers } from '../src/server/coworkers.js';
-import { DEFAULT_RULES, matchToolRule } from '../src/shared/coworkers.js';
+import { APPROVAL_GROUPS, DEFAULT_RULES, matchToolRule } from '../src/shared/coworkers.js';
 
 const setup = () => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'pixel-coworkers-')));
@@ -40,6 +40,42 @@ test('matchToolRule picks the first matching rule, case-insensitively', () => {
   expect(matchToolRule(rules, 'Read')).toBeUndefined();
   expect(matchToolRule([{ pattern: 'Rea', action: 'auto' }], 'Read')).toBeUndefined();
   expect(matchToolRule(DEFAULT_RULES, 'mcp__slack__slack_send_message')).toBe('ask');
+});
+
+test('default rules ask per destination before the generic write verbs', () => {
+  const ask = (tool: string) => matchToolRule(DEFAULT_RULES, tool);
+  expect(ask('mcp__atlassian__createConfluencePage')).toBe('ask');
+  expect(ask('mcp__atlassian__updateConfluencePage')).toBe('ask');
+  expect(ask('mcp__atlassian__getConfluencePage')).toBeUndefined();
+  expect(ask('mcp__notion__notion-fetch')).toBeUndefined();
+  const confluence = APPROVAL_GROUPS.find((g) => g.label === 'Confluence 게시')!;
+  expect(confluence.patterns.some((p) => /create\*Confluence/i.test(p))).toBe(true);
+  // Turning the Confluence toggle off makes Confluence writes automatic, nothing else.
+  const off = DEFAULT_RULES.map((r) =>
+    confluence.patterns.includes(r.pattern) ? { ...r, action: 'auto' as const } : r,
+  );
+  expect(matchToolRule(off, 'mcp__atlassian__createConfluencePage')).toBe('auto');
+  expect(matchToolRule(off, 'mcp__atlassian__updateConfluencePage')).toBe('auto');
+  expect(matchToolRule(off, 'mcp__atlassian__createJiraIssue')).toBe('ask');
+  expect(matchToolRule(off, 'mcp__github__create_pull_request')).toBe('ask');
+  for (const [label, tool] of [
+    ['Jira 발급', 'mcp__atlassian__createJiraIssue'],
+    ['Jira 발급', 'mcp__atlassian__transitionJiraIssue'],
+    ['Jira 발급', 'mcp__atlassian__addCommentToJiraIssue'],
+    ['Notion 페이지', 'mcp__notion__notion-create-pages'],
+    ['Notion 페이지', 'mcp__notion__notion-update-page'],
+    ['Slack 다른 채널 발송', 'mcp__claude_ai_Slack__slack_send_message'],
+  ]) {
+    const group = APPROVAL_GROUPS.find((g) => g.label === label)!;
+    const rules = DEFAULT_RULES.map((r) =>
+      group.patterns.includes(r.pattern) ? { ...r, action: 'auto' as const } : r,
+    );
+    expect(matchToolRule(rules, tool), tool).toBe('auto');
+  }
+  // The last group owns the generic verbs and comes after every destination.
+  expect(APPROVAL_GROUPS.at(-1)!.label).toBe('그 외 외부 쓰기');
+  expect(APPROVAL_GROUPS.at(-1)!.patterns).toContain('mcp__*__*create*');
+  expect(DEFAULT_RULES.map((r) => r.pattern)).toEqual(APPROVAL_GROUPS.flatMap((g) => g.patterns));
 });
 
 test('coworkers round-trip, default rules and coordinator first', () => {

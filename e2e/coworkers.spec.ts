@@ -28,8 +28,15 @@ test('coworker and Slack settings', async ({ page }) => {
     return (await r.json()) as { id: string; rules: { pattern: string; action: string }[] }[];
   });
   const rules = saved.find((c) => c.id === 'docs-friend')!.rules;
-  expect(rules.find((r) => r.pattern === 'mcp__*__*publish*')?.action).toBe('auto');
-  expect(rules.find((r) => r.pattern === 'mcp__*__*create*')?.action).toBe('ask');
+  const action = (pattern: string) => rules.find((r) => r.pattern === pattern)?.action;
+  expect(action('mcp__*atlassian*__create*Confluence*')).toBe('auto');
+  expect(action('mcp__*atlassian*__update*Confluence*')).toBe('auto');
+  expect(action('mcp__*atlassian*__create*Jira*')).toBe('ask');
+  expect(action('mcp__*__*create*')).toBe('ask');
+  // Destination toggles lead, ahead of the generic verbs.
+  const at = (pattern: string) => rules.findIndex((r) => r.pattern === pattern);
+  expect(at('mcp__*atlassian*__create*Confluence*')).toBe(0);
+  expect(at('mcp__*slack*__*update*')).toBeLessThan(at('mcp__*__*create*'));
 
   const slack = page.getByRole('region', { name: 'Slack 설정' });
   await slack.getByLabel('Bot 토큰').fill('not-a-token');
