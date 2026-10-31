@@ -569,7 +569,7 @@ test('question options are buttons; a free-form question takes the next thread r
   request(t, choice);
   await t.settle();
   await t.click({
-    actionId: 'pixel:answer',
+    actionId: 'pixel:answer:1',
     value: JSON.stringify({ interactionId: choice.id, option: 'B' }),
   });
   expect(t.orchestrator.answer).toHaveBeenLastCalledWith(choice.id, { answers: { q1: ['B'] } });

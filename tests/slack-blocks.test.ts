@@ -48,7 +48,7 @@ test('questionBlocks offers option buttons for one question and asks for a reply
     }),
   );
   const buttons = actions(choice);
-  expect(buttons.map((b) => b.action_id)).toEqual(['pixel:answer', 'pixel:answer']);
+  expect(buttons.map((b) => b.action_id)).toEqual(['pixel:answer:0', 'pixel:answer:1']);
   expect(JSON.parse(buttons[1].value)).toEqual({ interactionId: 'i1', option: 'B' });
   const free = questionBlocks(
     interaction({ kind: 'question', details: { questions: [{ question: '이름은?' }] } }),
