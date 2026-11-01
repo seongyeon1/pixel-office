@@ -38,7 +38,7 @@ const firstLine = (text: string) => text.trim().split('\n')[0].trim();
 function describe(w: ProjectWorker) {
   w.task = firstLine(w.run ? w.run.prompt : w.session?.prompt || w.label) || '(제목 없음)';
   w.source = w.run ? (w.run.origin?.kind === 'slack' ? 'slack' : 'office') : 'terminal';
-  w.action = w.waiting ? w.caption : (w.session?.action ?? w.caption);
+  w.action = w.waiting || !w.active ? w.caption : (w.session?.action ?? w.caption);
 }
 
 // Repository rooms regrouped by coworker: each registered coworker gets a room (in roster order),
@@ -165,7 +165,7 @@ export function boardRows(rooms: ProjectRoom[], interactions: Interaction[]): Bo
   const rowOf = new Map<string, string>();
   for (const room of rooms)
     for (const w of room.workers) {
-      if (w.parentId || w.visiting) continue;
+      if (w.parentId || w.visiting || !(w.active || w.waiting)) continue;
       rowOf.set(w.id, w.run ? `run:${w.run.id}` : w.id);
       const id = w.run ? `run:${w.run.id}` : w.id;
       const current = rows.get(id)?.worker;

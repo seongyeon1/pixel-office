@@ -270,3 +270,12 @@ test('the reception desk says whether Slack is on and what the coordinator is do
     deskSummary({ slack: 'connected', requests: [{ jobId: 'a', phase: 'working', tasks: 1 }] }),
   ).toBe('요청 1건 · 동료 작업 중');
 });
+
+test('an idle on-duty terminal has no row and an away worker keeps its caption', () => {
+  const idle = session('idle', '/r/app', { status: 'idle', activity: 'idle' });
+  const rooms = team({ sessions: [idle, session('busy', '/r/app')] });
+  expect(boardRows(rooms, []).map((r) => r.workerId)).toEqual(['observed:busy']);
+  const away = rooms[0].workers.find((w) => w.id === 'observed:idle')!;
+  expect(away.active).toBe(false);
+  expect(away.action).toBe(away.caption);
+});

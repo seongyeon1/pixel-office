@@ -33,3 +33,11 @@ test('action text is short', () => {
   expect(out.length).toBeLessThanOrEqual(80);
   expect(out.endsWith('…')).toBe(true);
 });
+test('results, stdin writes, todo lists and look-alike tool names', () => {
+  expect(describeAction({ ...base, kind: 'result', title: '' })).toBe('결과 확인 중');
+  expect(describeAction({ ...base, title: 'write_stdin' })).toBe('명령 실행 중');
+  expect(describeAction({ ...base, title: 'Bash' })).toBe('명령 실행 중');
+  expect(describeAction({ ...base, title: 'TodoWrite' })).toBe('할 일 정리 중');
+  expect(describeAction({ ...base, title: 'WebSearch' })).toBe('WebSearch 사용 중');
+  expect(describeAction({ ...base, title: 'ReadMcpResource' })).toBe('ReadMcpResource 사용 중');
+});
