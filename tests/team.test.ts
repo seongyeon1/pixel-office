@@ -279,3 +279,15 @@ test('an idle on-duty terminal has no row and an away worker keeps its caption',
   expect(away.active).toBe(false);
   expect(away.action).toBe(away.caption);
 });
+
+test('a waiting subagent keeps its own row when its parent is idle', () => {
+  const parent = session('p', '/r/app', { status: 'idle', activity: 'idle' });
+  const sub = session('s', '/r/app', {
+    parentId: 'p',
+    prompt: '',
+    attention: { kind: 'approval', certain: true, since: new Date(0).toISOString() },
+  });
+  const rows = boardRows(team({ sessions: [parent, sub] }), []);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ workerId: 'observed:s', waiting: true, task: 'p task' });
+});

@@ -163,40 +163,46 @@ export function boardRows(rooms: ProjectRoom[], interactions: Interaction[]): Bo
     Number(a.active) - Number(b.active) ||
     a.updatedAt.localeCompare(b.updatedAt);
   const rowOf = new Map<string, string>();
+  const put = (room: ProjectRoom, w: ProjectWorker, task = w.task ?? w.label) => {
+    const id = w.run ? `run:${w.run.id}` : w.id;
+    const current = rows.get(id)?.worker;
+    if (current && ahead(w, current) <= 0) return;
+    const runId = w.run?.id;
+    rows.set(id, {
+      worker: w,
+      row: {
+        id,
+        workerId: w.id,
+        root: room.root,
+        task,
+        source: w.source ?? 'terminal',
+        owner:
+          room.coworker?.name ||
+          room.repoName ||
+          room.root.split(/[\\/]/).filter(Boolean).at(-1) ||
+          room.root,
+        action: w.action ?? w.caption,
+        waiting: w.waiting,
+        interaction: runId ? interactions.find((i) => i.runId === runId && !i.resolved) : undefined,
+      },
+    });
+  };
   for (const room of rooms)
     for (const w of room.workers) {
       if (w.parentId || w.visiting || !(w.active || w.waiting)) continue;
       rowOf.set(w.id, w.run ? `run:${w.run.id}` : w.id);
-      const id = w.run ? `run:${w.run.id}` : w.id;
-      const current = rows.get(id)?.worker;
-      if (current && ahead(w, current) <= 0) continue;
-      const runId = w.run?.id;
-      rows.set(id, {
-        worker: w,
-        row: {
-          id,
-          workerId: w.id,
-          root: room.root,
-          task: w.task ?? w.label,
-          source: w.source ?? 'terminal',
-          owner:
-            room.coworker?.name ||
-            room.repoName ||
-            room.root.split(/[\\/]/).filter(Boolean).at(-1) ||
-            room.root,
-          action: w.action ?? w.caption,
-          waiting: w.waiting,
-          interaction: runId
-            ? interactions.find((i) => i.runId === runId && !i.resolved)
-            : undefined,
-        },
-      });
+      put(room, w);
     }
-  // A subagent blocked on a prompt makes the work it belongs to wait.
+  // A subagent blocked on a prompt makes the work it belongs to wait; with no row for its parent
+  // (an idle terminal) it keeps a row of its own so the approval stays on the board.
   for (const room of rooms)
     for (const w of room.workers) {
-      const folded = w.parentId && rows.get(rowOf.get(w.parentId) ?? '')?.row;
-      if (folded && w.waiting && !folded.waiting)
+      if (!w.parentId || !w.waiting) continue;
+      const folded = rows.get(rowOf.get(w.parentId) ?? '')?.row;
+      if (!folded) {
+        const parent = room.workers.find((p) => p.id === w.parentId);
+        put(room, w, w.session?.prompt ? w.task : (parent?.task ?? w.task));
+      } else if (!folded.waiting)
         Object.assign(folded, { waiting: true, action: w.action ?? w.caption });
     }
   return [...rows.values()]
