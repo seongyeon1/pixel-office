@@ -163,7 +163,7 @@ function RoomSigns({
     </ul>
   );
 }
-function RoomCell({
+export function RoomCell({
   cell,
   room,
   hidden,
@@ -173,6 +173,7 @@ function RoomCell({
   selectedId,
   onOpen,
   onHover,
+  onHoverRoom,
   onRegister,
 }: {
   cell: Cell;
@@ -184,6 +185,7 @@ function RoomCell({
   selectedId?: string;
   onOpen: (root: string, worker: ProjectWorker) => void;
   onHover?: (workerId?: string) => void;
+  onHoverRoom?: (root?: string) => void;
   onRegister?: (folder: string) => void;
 }) {
   const name = room.coworker?.name ?? repositoryName(room.root);
@@ -195,6 +197,10 @@ function RoomCell({
       className={`floor-cell floor-room ${cell.upper ? 'upper' : 'lower'} ${room.activeCount ? 'busy' : ''} ${room.temporary ? 'temporary' : ''} ${resting ? 'resting' : ''} ${highlight ? 'highlight' : ''}`}
       style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h } as CSSProperties}
       aria-label={room.coworker ? `동료 방 ${room.coworker.name}` : `프로젝트 공간 ${room.root}`}
+      onMouseEnter={() => onHoverRoom?.(room.root)}
+      onMouseLeave={() => onHoverRoom?.(undefined)}
+      onFocus={() => onHoverRoom?.(room.root)}
+      onBlur={() => onHoverRoom?.(undefined)}
     >
       <header>
         {onOpenRoom ? (
@@ -255,6 +261,7 @@ function RoomCell({
         {room.temporary && onRegister && (
           <button
             className="floor-register"
+            aria-label={`${name} 동료로 등록`}
             title={`${room.root} 폴더를 맡을 동료 만들기`}
             onClick={() => onRegister(room.root)}
           >
@@ -304,6 +311,7 @@ export function FloorMap({
   nameOf = mapName,
   signs,
   onHover,
+  onHoverRoom,
   onRegister,
   reception,
 }: {
@@ -326,6 +334,8 @@ export function FloorMap({
   // Board rows, shown as door signs in the room their worker sits in.
   signs?: BoardRow[];
   onHover?: (workerId?: string) => void;
+  // A hovered or focused room, so the board can light up all of its work.
+  onHoverRoom?: (root?: string) => void;
   // Temporary rooms offer to make a coworker for their folder.
   onRegister?: (folder: string) => void;
   reception?: Reception;
@@ -487,6 +497,7 @@ export function FloorMap({
                 selectedId={signs ? selectedId : undefined}
                 onOpen={onOpen}
                 onHover={onHover}
+                onHoverRoom={onHoverRoom}
                 onRegister={onRegister}
               />
             ) : (

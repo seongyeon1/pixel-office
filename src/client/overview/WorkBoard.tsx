@@ -7,6 +7,8 @@ const sourceLabel: Record<BoardRow['source'], string> = {
   office: '오피스',
   terminal: '터미널',
 };
+const opener = (row: BoardRow) =>
+  row.source === 'terminal' && !row.interaction ? '터미널에서 확인' : '열어서 답하기';
 function BoardItem({
   row,
   selected,
@@ -51,7 +53,7 @@ function BoardItem({
           {row.owner} · <span className={row.waiting ? 'wait' : 'now'}>{row.action}</span>
         </span>
       </button>
-      {row.interaction ? (
+      {row.interaction?.kind === 'approval' ? (
         <div className="work-board-actions">
           <button
             className="primary"
@@ -71,10 +73,11 @@ function BoardItem({
         </div>
       ) : (
         row.waiting && (
-          // The app cannot answer a prompt in someone's terminal; it opens that session instead.
+          // Questions take an answer form, and the app cannot answer a prompt in someone's
+          // terminal: both open the work instead.
           <div className="work-board-actions">
-            <button aria-label={`${row.task} 터미널에서 확인`} onClick={() => onOpen(row)}>
-              터미널에서 확인
+            <button aria-label={`${row.task} ${opener(row)}`} onClick={() => onOpen(row)}>
+              {opener(row)}
             </button>
           </div>
         )
@@ -91,12 +94,15 @@ function BoardItem({
 export function WorkBoard({
   rows,
   selectedId,
+  selectedRoom,
   onHover,
   onOpen,
   onAnswer,
 }: {
   rows: BoardRow[];
   selectedId?: string;
+  // A room picked on the map lights up every row of work in it.
+  selectedRoom?: string;
   onHover: (workerId?: string) => void;
   onOpen: (row: BoardRow) => void;
   onAnswer: (interactionId: string, answer: Answer) => Promise<void>;
@@ -119,7 +125,8 @@ export function WorkBoard({
               <BoardItem
                 key={row.id}
                 row={row}
-                selected={row.workerId === selectedId}
+                // A sign inside the room is the narrower pick and wins over its room.
+                selected={selectedId ? row.workerId === selectedId : row.root === selectedRoom}
                 onHover={onHover}
                 onOpen={onOpen}
                 onAnswer={onAnswer}

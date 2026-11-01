@@ -316,7 +316,9 @@
   position: absolute;
   left: 8px;
   right: 8px;
-  top: 38px;
+  /* Below the 40px header; n cards (33px + 3px gap) end before the desks layout.ts moves down
+     by signSpace(n) = 36n (+20 for the "+N" line). */
+  top: 42px;
   display: grid;
   gap: 3px;
   margin: 0;

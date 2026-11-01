@@ -69,6 +69,7 @@ export function ProjectMap({
   }, [observation]);
   // The worker a board row or sign points at; its room lights up and its row stands out.
   const [selectedId, setSelectedId] = useState<string>();
+  const [selectedRoom, setSelectedRoom] = useState<string>();
   const [query, setQuery] = useState('');
   const [onlyActive, setOnlyActive] = useState(false);
   const [family, setFamily] = useState('');
@@ -278,6 +279,7 @@ export function ProjectMap({
             signs={rows}
             selectedId={selectedId}
             onHover={setSelectedId}
+            onHoverRoom={setSelectedRoom}
             onRegister={onRegister}
             reception={reception}
           />
@@ -298,6 +300,7 @@ export function ProjectMap({
         <WorkBoard
           rows={rows}
           selectedId={selectedId}
+          selectedRoom={selectedRoom}
           onHover={setSelectedId}
           onOpen={openRow}
           onAnswer={answer}
