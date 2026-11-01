@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FolderPlus, Map, Search } from 'lucide-react';
-import type { Department, ObservationSnapshot, ProjectSummary } from '../../shared/contracts';
+import type {
+  Answer,
+  Department,
+  DeskState,
+  Interaction,
+  ObservationSnapshot,
+  ProjectSummary,
+  Run,
+} from '../../shared/contracts';
+import { COORDINATOR_ID, type Coworker } from '../../shared/coworkers';
 import { repositoryName } from '../components/RepositoryList';
-import { projectRooms, shownOnFloor, withFamily, type ProjectWorker } from './projects';
+import { shownOnFloor, withFamily, type ProjectWorker } from './projects';
+import { boardRows, deskSummary, teamRooms, type BoardRow } from './team';
+import { WorkBoard } from './WorkBoard';
 import { compareFamilies, type ModelFamily } from '../models/family';
 import './project-map.css';
 import { RetiredSessions } from '../components/RetiredSessions';
@@ -23,19 +34,42 @@ const since = (iso: string, now: number) => {
 export function ProjectMap({
   projects,
   observation,
+  runs,
   onOpen,
   onConnect,
   onRestore,
   onRoomsChanged,
+  onRegister,
 }: {
   projects: ProjectSummary[];
   observation: ObservationSnapshot;
+  runs: Run[];
   onOpen: (root: string, worker?: ProjectWorker) => void;
   onConnect: () => void;
   onRestore: (id: string) => Promise<void>;
   // Asks the app to fetch observation and projects again after rooms were merged or split.
   onRoomsChanged: () => void;
+  // Opens the coworker form for a folder nobody owns yet.
+  onRegister: (folder: string) => void;
 }) {
+  const [coworkers, setCoworkers] = useState<Coworker[]>([]);
+  const [desk, setDesk] = useState<DeskState>();
+  const [interactions, setInteractions] = useState<Interaction[]>([]);
+  // Rides the app's poll: every refresh hands over a new observation snapshot.
+  useEffect(() => {
+    api<Coworker[]>('/coworkers')
+      .then(setCoworkers)
+      .catch(() => {});
+    api<DeskState>('/office/desk')
+      .then(setDesk)
+      .catch(() => {});
+    api<Interaction[]>('/interactions')
+      .then(setInteractions)
+      .catch(() => {});
+  }, [observation]);
+  // The worker a board row or sign points at; its room lights up and its row stands out.
+  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedRoom, setSelectedRoom] = useState<string>();
   const [query, setQuery] = useState('');
   const [onlyActive, setOnlyActive] = useState(false);
   const [family, setFamily] = useState('');
@@ -83,9 +117,18 @@ export function ProjectMap({
   };
   const seen = useSeenReports();
   const rooms = useMemo(
-    () => projectRooms(projects, observation.sessions, { now: clock, seen }),
-    [projects, observation.sessions, clock, seen],
+    () =>
+      teamRooms({ projects, sessions: observation.sessions, runs, coworkers, now: clock, seen }),
+    [projects, observation.sessions, runs, coworkers, clock, seen],
   );
+  const rows = useMemo(() => boardRows(rooms, interactions), [rooms, interactions]);
+  const coordinator = coworkers.find((c) => c.id === COORDINATOR_ID);
+  const reception = {
+    name: coordinator?.name ?? '코디네이터',
+    provider: coordinator?.engine ?? 'claude',
+    summary: deskSummary(desk),
+    busy: !!desk?.requests.length,
+  };
   const needle = query.trim().toLocaleLowerCase();
   const families = useMemo(() => {
     const seen = new globalThis.Map<string, { family: ModelFamily; count: number }>();
@@ -105,7 +148,8 @@ export function ProjectMap({
           shownOnFloor(room) &&
           (!department || departmentOf(room.root, departments) === department) &&
           (!onlyActive || room.activeCount > 0) &&
-          room.root.toLocaleLowerCase().includes(needle),
+          (room.root.toLocaleLowerCase().includes(needle) ||
+            !!room.coworker?.name.toLocaleLowerCase().includes(needle)),
       ),
     [rooms, activeFamily, onlyActive, needle, departments, department],
   );
@@ -120,6 +164,15 @@ export function ProjectMap({
   const open = (root: string, worker?: ProjectWorker) => {
     if (worker?.session) markSeen(worker.session);
     onOpen(root, worker);
+  };
+  // A row names the room it sits in; the session opens from its worker's own folder and lane.
+  const openRow = (row: BoardRow) => {
+    const worker = rooms.flatMap((r) => r.workers).find((w) => w.id === row.workerId);
+    if (worker) open(worker.root, worker);
+  };
+  const answer = async (id: string, value: Answer) => {
+    await api(`/interactions/${id}/answer`, value);
+    setInteractions((list) => list.filter((i) => i.id !== id));
   };
   return (
     <main className="project-map-page">
@@ -212,31 +265,47 @@ export function ProjectMap({
           ))}
         </details>
       )}
-      {visible.length ? (
-        <FloorMap
-          rooms={visible}
-          departmentOf={departmentFor}
-          merging={{ ...merging, roots: rooms.map((r) => r.root) }}
-          roster={roster}
-          ready={!!observation.scannedAt}
-          clock={clock}
-          onOpen={open}
-          onOpenRoom={(root) => onOpen(root)}
+      <div className="project-map-floor">
+        {visible.length ? (
+          <FloorMap
+            rooms={visible}
+            departmentOf={departmentFor}
+            merging={{ ...merging, roots: rooms.filter((r) => !r.coworker).map((r) => r.root) }}
+            roster={roster}
+            ready={!!observation.scannedAt}
+            clock={clock}
+            onOpen={open}
+            onOpenRoom={(root) => onOpen(root)}
+            signs={rows}
+            selectedId={selectedId}
+            onHover={setSelectedId}
+            onHoverRoom={setSelectedRoom}
+            onRegister={onRegister}
+            reception={reception}
+          />
+        ) : (
+          <section className="project-map-empty">
+            <Map size={32} />
+            <h2>
+              {rooms.length ? '조건에 맞는 프로젝트가 없어요' : '프로젝트를 연결해 맵을 채워보세요'}
+            </h2>
+            <p>
+              {rooms.length
+                ? '검색어나 활동 필터를 바꾸면 다른 공간도 볼 수 있어요.'
+                : '연결한 폴더와 자동 감지된 에이전트 세션이 여기에 모입니다.'}
+            </p>
+            {!rooms.length && <button onClick={onConnect}>프로젝트 연결</button>}
+          </section>
+        )}
+        <WorkBoard
+          rows={rows}
+          selectedId={selectedId}
+          selectedRoom={selectedRoom}
+          onHover={setSelectedId}
+          onOpen={openRow}
+          onAnswer={answer}
         />
-      ) : (
-        <section className="project-map-empty">
-          <Map size={32} />
-          <h2>
-            {rooms.length ? '조건에 맞는 프로젝트가 없어요' : '프로젝트를 연결해 맵을 채워보세요'}
-          </h2>
-          <p>
-            {rooms.length
-              ? '검색어나 활동 필터를 바꾸면 다른 공간도 볼 수 있어요.'
-              : '연결한 폴더와 자동 감지된 에이전트 세션이 여기에 모입니다.'}
-          </p>
-          {!rooms.length && <button onClick={onConnect}>프로젝트 연결</button>}
-        </section>
-      )}
+      </div>
       <p className="project-map-legend">
         <span className="legend-mark question">?</span> 질문이나 승인을 기다려요
         <span className="legend-mark guess">?</span> 승인 대기로 보여요

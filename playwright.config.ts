@@ -5,7 +5,20 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 30000,
-  use: { baseURL: 'http://127.0.0.1:4318', trace: 'retain-on-failure' },
+  use: {
+    baseURL: 'http://127.0.0.1:4318',
+    trace: 'retain-on-failure',
+    // Existing journeys exercise managed team work. Native CLI journeys override this preference.
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: 'http://127.0.0.1:4318',
+          localStorage: [{ name: 'pixel.workMode', value: 'team' }],
+        },
+      ],
+    },
+  },
   projects: [
     {
       name: 'desktop',

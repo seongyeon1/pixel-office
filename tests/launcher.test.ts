@@ -5,6 +5,20 @@ import { join } from 'node:path';
 import { createLauncher } from '../src/server/launcher.js';
 import { createTerminals } from '../src/server/terminals.js';
 
+test('an interactive CLI opens without a fabricated first instruction', async () => {
+  const { launchCommand } = await import('../src/server/launcher.js');
+  const input = {
+    id: '25ff09ab-e861-44cd-9d3a-b5408f853db3',
+    provider: 'codex' as const,
+    prompt: '',
+  };
+  expect(launchCommand(input, 'syc')).toBe('syc');
+  expect(launchCommand({ ...input, provider: 'claude' }, 'sy')).toBe(`sy --session-id ${input.id}`);
+  expect(launchCommand({ ...input, model: 'custom model' }, 'syc')).toBe(
+    "syc --model 'custom model'",
+  );
+});
+
 // Exercise the real shell/PTY: user text must remain one literal argument.
 test('a harness launch preserves quoted tasks, deduplicates retries, and can be recovered', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pixel-launch-'));

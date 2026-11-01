@@ -34,6 +34,8 @@ export interface FloorInput {
   lanes: { key: string; branch: string; main: boolean; workers: { id: string }[] }[];
   // Department the room belongs to; each department starts its own band.
   group?: string;
+  // Door signs above the desks, one per piece of work in the room.
+  signs?: number;
 }
 export interface FloorLayout {
   width: number;
@@ -50,6 +52,8 @@ export interface FloorLayout {
   meeting: Loc[];
   lounge: Loc[];
   records: Loc[];
+  // The coordinator's reception desk in the lobby, beside the entrance.
+  reception?: { x: number; y: number; w: number; h: number };
 }
 export const MEETING = 'facility:meeting';
 export const LOUNGE = 'facility:lounge';
@@ -66,6 +70,12 @@ export const SEAT_W = 66;
 const SEAT_PAD = 26;
 const MAX_ROWS = 3;
 const LOBBY_H = 96;
+// Signs beyond the cap fold into one "+N" line, so a busy room grows by a bounded amount.
+export const MAX_SIGNS = 3;
+export const SIGN_H = 36;
+const MORE_H = 20;
+export const signSpace = (signs: number) =>
+  Math.min(signs, MAX_SIGNS) * SIGN_H + (signs > MAX_SIGNS ? MORE_H : 0);
 // Feet sit a little above the desk front so the desk hides the chair, not the character.
 export const FEET = 62;
 export interface FloorOptions {
@@ -81,6 +91,8 @@ export interface FloorOptions {
   facilityRows?: number;
   // The records room where automated work (work logs, summaries) sits while it runs.
   records?: boolean;
+  // Room in the lobby for the coordinator's reception desk.
+  reception?: boolean;
 }
 export function floorLayout(
   rooms: FloorInput[],
@@ -92,6 +104,7 @@ export function floorLayout(
     roomSpan = 1,
     facilityRows = 2,
     records = true,
+    reception = false,
   }: FloorOptions = {},
 ): FloorLayout {
   const usable = Math.max(minCell, width - SPINE_W);
@@ -100,8 +113,24 @@ export function floorLayout(
   const widthOf = (span: number) => span * cellW + (span - 1) * GAP;
   const seatsIn = (w: number) => Math.max(2, Math.min(8, Math.floor((w - 2 * SEAT_PAD) / SEAT_W)));
   const facilities = [
-    { key: MEETING, kind: 'meeting' as const, rows: facilityRows, span: 1, perRow: 0, group: '' },
-    { key: LOUNGE, kind: 'lounge' as const, rows: facilityRows, span: 1, perRow: 0, group: '' },
+    {
+      key: MEETING,
+      kind: 'meeting' as const,
+      rows: facilityRows,
+      span: 1,
+      perRow: 0,
+      group: '',
+      signH: 0,
+    },
+    {
+      key: LOUNGE,
+      kind: 'lounge' as const,
+      rows: facilityRows,
+      span: 1,
+      perRow: 0,
+      group: '',
+      signH: 0,
+    },
     ...(records
       ? [
           {
@@ -111,6 +140,7 @@ export function floorLayout(
             span: 1,
             perRow: 0,
             group: '',
+            signH: 0,
           },
         ]
       : []),
@@ -129,6 +159,7 @@ export function floorLayout(
       span,
       perRow,
       group: room.group ?? '',
+      signH: signSpace(room.signs ?? 0),
       rows: Math.min(maxRows, Math.max(1, needed)),
     };
   });
@@ -156,7 +187,9 @@ export function floorLayout(
   }
   const gridRows = grid.length;
   const heightOf = (r: number) =>
-    grid[r].length ? HEAD + Math.max(...grid[r].map((g) => g.entry.rows)) * ROW_H + PAD_B : 0;
+    grid[r].length
+      ? HEAD + Math.max(...grid[r].map((g) => g.entry.rows * ROW_H + g.entry.signH)) + PAD_B
+      : 0;
   const cells: Cell[] = [];
   const corridors: FloorLayout['corridors'] = [];
   const bands: FloorLayout['bands'] = [];
@@ -191,6 +224,7 @@ export function floorLayout(
     bands.push({ band, top, bottom: y, group: grid[band * 2][0]?.entry.group ?? '' });
     y += BAND_GAP;
   }
+  const lobby = y;
   const height = y + LOBBY_H;
   const rows: DeskRow[] = [];
   const seats: FloorLayout['seats'] = new Map();
@@ -211,7 +245,7 @@ export function floorLayout(
           lost += members.length;
           continue;
         }
-        const top = cell.y + HEAD + row * ROW_H;
+        const top = cell.y + HEAD + e.signH + row * ROW_H;
         rows.push({
           cell: cell.key,
           x: rowX,
@@ -231,7 +265,7 @@ export function floorLayout(
       }
     }
     if (!e.room.lanes.length)
-      rows.push({ cell: cell.key, x: rowX, y: cell.y + HEAD, seats: perRow });
+      rows.push({ cell: cell.key, x: rowX, y: cell.y + HEAD + e.signH, seats: perRow });
     if (lost) hidden.set(e.room.root, lost);
   }
   const spots = (key: string, xs: number[], ys: number[]) => {
@@ -245,8 +279,9 @@ export function floorLayout(
       })),
     );
   };
+  const floorWidth = SPINE_W + cols * cellW + (cols - 1) * GAP;
   return {
-    width: SPINE_W + cols * cellW + (cols - 1) * GAP,
+    width: floorWidth,
     height,
     spineX: SPINE_W / 2,
     entrance: { x: SPINE_W / 2, y: height - 26, cell: null, band: null },
@@ -261,5 +296,14 @@ export function floorLayout(
     lounge: spots(LOUNGE, [0.22, 0.42, 0.62, 0.82], [0.5, 0.9]),
     // Writing desks along the archive shelves.
     records: records ? spots(RECORDS, [0.2, 0.4, 0.6, 0.8], [0.55, 0.95]) : [],
+    // Clear of the corner plant on the right.
+    reception: reception
+      ? {
+          x: SPINE_W + 12,
+          y: lobby + 10,
+          w: Math.min(380, floorWidth - SPINE_W - 100),
+          h: LOBBY_H - 20,
+        }
+      : undefined,
   };
 }

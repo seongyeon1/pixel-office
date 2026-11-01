@@ -1,8 +1,18 @@
-import { expect, test } from '@playwright/test';
+import { showOffice } from './workbench-helpers';
+import { expect, test, type Page } from '@playwright/test';
 import { readFile, mkdtemp, mkdir, realpath, writeFile, appendFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+
+// The coworker specs leave their coworkers in the shared server: start from a floor without any.
+async function clearCoworkers(page: Page, origin: string) {
+  const { COORDINATOR_ID } = await import('../src/shared/coworkers');
+  const list = (await (await page.request.get('/api/coworkers')).json()) as { id: string }[];
+  for (const { id } of list)
+    if (id !== COORDINATOR_ID)
+      await page.request.delete(`/api/coworkers/${id}`, { headers: { origin } });
+}
 
 test('whole map is one office floor: worktree desks, raised hands, reports and going home', async ({
   page,
@@ -239,6 +249,7 @@ test('whole map is one office floor: worktree desks, raised hands, reports and g
       'title',
       roots[0],
     );
+    await showOffice(page);
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex campus-a4', exact: true }),
     ).toHaveAttribute('aria-pressed', 'true');
@@ -311,6 +322,7 @@ test('whole map shows app approvals and opens the managed task without mixing ex
   await page.goto('/#token=e2e-token');
   await expect(page.getByRole('button', { name: '전체 맵', exact: true })).toBeVisible();
   const origin = new URL(page.url()).origin;
+  await clearCoworkers(page, origin);
   const connected = await page.request.post('/api/projects/inspect', {
     headers: { origin },
     data: { path: root },
@@ -336,9 +348,17 @@ test('whole map shows app approvals and opens the managed task without mixing ex
       name: `전체 맵 동료 ${root} app-${run.id}-codex-implementer`,
       exact: true,
     });
-    await expect(manager).toHaveAttribute('data-mark', 'approval');
-    await expect(manager).toHaveAttribute('title', /앱 작업[\s\S]*승인 기다려요/);
-    await manager.click();
+    if (await manager.count()) {
+      await expect(manager).toHaveAttribute('data-mark', 'approval');
+      await expect(manager).toHaveAttribute('title', /앱 작업[\s\S]*승인 기다려요/);
+      await manager.click();
+    } else {
+      // A crowded room caps its sprites; the room's overflow entry opens all coworkers.
+      await room
+        .getByRole('button', { name: `프로젝트 동료 모두 보기 ${root}`, exact: true })
+        .click();
+      await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
+    }
     await expect(page.getByRole('heading', { name: '승인 필요', exact: true })).toBeVisible();
     await expect(page.locator('.current-task')).toContainText('전체 맵 승인 테스트');
     await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
@@ -347,5 +367,167 @@ test('whole map shows app approvals and opens the managed task without mixing ex
     );
   } finally {
     await page.request.post(`/api/runs/${run.id}/cancel`, { headers: { origin }, data: {} });
+  }
+});
+
+test('whole map groups work by coworker and lists it on the board', async ({ page }) => {
+  test.setTimeout(90000);
+  const { defaultTeam } = await import('../src/shared/contracts');
+  const fixtures = JSON.parse(await readFile('.pixel/e2e-observer.json', 'utf8'));
+  const sample = await realpath((await readFile('.pixel/e2e-project.txt', 'utf8')).trim());
+  const parent = await realpath(await mkdtemp(join(tmpdir(), 'pixel-team-')));
+  // The coworker owns a folder; its repository inside is where the sessions actually run.
+  const home = join(parent, 'team');
+  const repo = join(home, 'api');
+  const other = join(parent, 'other');
+  const longTitle = `긴 제목 ${'가나다라마바사아자차 '.repeat(20)}`.slice(0, 200);
+  const files: string[] = [];
+  const line = (data: unknown) => JSON.stringify(data) + '\n';
+  const codex = async (id: string, cwd: string, title: string) => {
+    const path = join(dirname(fixtures.codex), `${id}.jsonl`);
+    files.push(path);
+    const timestamp = new Date().toISOString();
+    await writeFile(
+      path,
+      line({ timestamp, type: 'session_meta', payload: { id, cwd } }) +
+        line({ timestamp, type: 'turn_context', payload: { model: 'gpt-6-sol', cwd } }) +
+        line({ timestamp, type: 'event_msg', payload: { type: 'user_message', message: title } }) +
+        line({ timestamp, type: 'event_msg', payload: { type: 'task_started' } }) +
+        line({
+          timestamp,
+          type: 'response_item',
+          payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"npm test"}' },
+        }),
+    );
+  };
+  const origin = 'http://127.0.0.1:4318';
+  let runId = '';
+  try {
+    for (const root of [repo, other]) {
+      await mkdir(root, { recursive: true });
+      execFileSync('git', ['init', '-b', 'main'], { cwd: root, stdio: 'pipe' });
+      await writeFile(join(root, 'README.md'), 'team fixture');
+      execFileSync('git', ['add', '.'], { cwd: root, stdio: 'pipe' });
+      execFileSync(
+        'git',
+        ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'seed'],
+        { cwd: root, stdio: 'pipe' },
+      );
+    }
+    await page.goto('/#token=e2e-token');
+    await expect(page.getByRole('button', { name: '전체 맵', exact: true })).toBeVisible();
+    for (const path of [repo, other, sample]) {
+      const inspected = await page.request.post('/api/projects/inspect', {
+        headers: { origin },
+        data: { path },
+      });
+      expect(inspected.ok()).toBe(true);
+    }
+    await clearCoworkers(page, origin);
+    const saved = await page.request.post('/api/coworkers', {
+      headers: { origin },
+      data: {
+        id: 'floor-mate',
+        name: '바닥 동료',
+        folder: home,
+        engine: 'claude',
+        role: '',
+        mode: 'solo',
+        bindings: [],
+        createdBy: 'user',
+      },
+    });
+    expect(saved.ok()).toBe(true);
+    await codex('team-long', repo, longTitle);
+    await codex('team-short', repo, '짧은 제목');
+    await codex('other-short', other, '다른 저장소 작업');
+    // An app run waiting for an approval sits first on the board.
+    const started = await page.request.post('/api/runs', {
+      headers: { origin },
+      data: {
+        projectPath: sample,
+        prompt: '보드 승인 테스트',
+        mode: 'codex',
+        implementer: 'codex',
+        team: defaultTeam(),
+      },
+    });
+    expect(started.ok()).toBe(true);
+    runId = (await started.json()).id;
+
+    await page.getByRole('button', { name: '전체 맵', exact: true }).click();
+    const team = page.getByRole('article', { name: '동료 방 바닥 동료', exact: true });
+    const temporary = page.getByRole('article', { name: `프로젝트 공간 ${other}`, exact: true });
+    await expect(team).toBeVisible({ timeout: 20000 });
+    await expect(temporary).toBeVisible();
+    const board = page.getByRole('complementary', { name: '지금 진행 중인 일' });
+    const rows = board.locator('.work-board-row');
+    const rowOf = (title: string) => board.locator('.work-board-row', { hasText: title });
+    await expect(rowOf('짧은 제목')).toBeVisible({ timeout: 20000 });
+
+    // The approval comes first, with where it came from.
+    await expect(rows.first()).toContainText('보드 승인 테스트');
+    await expect(rows.first().locator('.work-board-source')).toHaveText('오피스');
+    await expect(
+      rows.first().getByRole('button', { name: '보드 승인 테스트 승인', exact: true }),
+    ).toBeVisible();
+
+    // Hovering a board row lights the room that holds the work.
+    await expect(team).not.toHaveClass(/highlight/);
+    await rowOf('짧은 제목').hover();
+    await expect(team).toHaveClass(/highlight/);
+    await expect(temporary).not.toHaveClass(/highlight/);
+    await page.mouse.move(0, 0);
+
+    // A 200 character title still takes a single line on the sign and on the board.
+    const heightOf = async (locator: ReturnType<typeof rowOf>) =>
+      Math.round((await locator.boundingBox())!.height);
+    const sign = (title: string) => team.locator('.floor-sign', { hasText: title });
+    await expect(sign('긴 제목')).toBeVisible();
+    expect(await heightOf(sign('긴 제목'))).toBe(await heightOf(sign('짧은 제목')));
+    expect(await heightOf(rowOf('긴 제목'))).toBe(await heightOf(rowOf('짧은 제목')));
+
+    // After the arrival walk, someone is seated at a desk inside the coworker's room.
+    await expect(page.locator('.floor-worker[data-arriving]')).toHaveCount(0, { timeout: 30000 });
+    await expect
+      .poll(
+        async () => {
+          const room = (await team.boundingBox())!;
+          const desks = page.locator('.floor-worker[data-place="desk"]');
+          let seated = 0;
+          for (const box of await Promise.all(
+            (await desks.all()).map((desk) => desk.boundingBox()),
+          )) {
+            if (!box) continue;
+            const cx = box.x + box.width / 2,
+              cy = box.y + box.height / 2;
+            if (cx > room.x && cx < room.x + room.width && cy > room.y && cy < room.y + room.height)
+              seated++;
+          }
+          return seated;
+        },
+        { timeout: 15000 },
+      )
+      .toBeGreaterThan(0);
+
+    // A board row opens the worker's own repository, not the coworker's folder.
+    await rowOf('짧은 제목').getByRole('button').first().click();
+    await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: '레포 전환', exact: true })).toHaveAttribute(
+      'title',
+      repo,
+    );
+    await page.getByRole('button', { name: '전체 맵', exact: true }).click();
+
+    // A repository nobody owns is a temporary room; registering it fills the coworker form.
+    await temporary.getByRole('button', { name: /동료로 등록$/ }).click();
+    const coworkers = page.getByRole('region', { name: '동료 설정' });
+    await expect(coworkers.getByLabel('폴더', { exact: true })).toHaveValue(other);
+  } finally {
+    if (runId)
+      await page.request.post(`/api/runs/${runId}/cancel`, { headers: { origin }, data: {} });
+    await page.request.delete('/api/coworkers/floor-mate', { headers: { origin } });
+    for (const path of files) await rm(path, { force: true });
+    await rm(parent, { recursive: true, force: true });
   }
 });

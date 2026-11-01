@@ -357,3 +357,143 @@
 .department-panel form button:disabled {
   opacity: 0.5;
 }
+/* The floor on the left, the "지금 진행 중" board on the right; stacked with the board on top
+   on narrow screens. */
+.project-map-floor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+.work-board {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dce2d4;
+  border-radius: 8px;
+  background: #fbfaf5;
+  box-sizing: border-box;
+}
+.work-board h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.work-board h2 strong {
+  margin-left: 4px;
+  color: #385639;
+}
+.work-board h3 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: #7b8774;
+}
+.work-board section.waiting h3 {
+  color: #9a5b00;
+}
+.work-board ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.work-board-row {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.work-board-row.waiting {
+  border-left: 3px solid #e2a33a;
+}
+.work-board-row.highlight {
+  border-color: #9fc4e0;
+  background: #e8f1f8;
+}
+.work-board-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+.work-board-open:hover {
+  background: #f0f3ef;
+}
+.work-board-task {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.work-board-task strong,
+.work-board-now {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-task strong {
+  flex: 1 1 auto;
+  font-size: 13px;
+}
+.work-board-source {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #6b7563;
+  color: #fff;
+  font-size: 10px;
+}
+.work-board-source.slack {
+  background: #4a3f8a;
+}
+.work-board-source.office {
+  background: #55745e;
+}
+.work-board-now {
+  font-size: 12px;
+  color: #6b7563;
+}
+.work-board-now .now {
+  color: #2f7a4a;
+}
+.work-board-now .wait {
+  color: #a35f00;
+}
+.work-board-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 6px;
+}
+.work-board-actions button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.work-board-row > .inline-error {
+  display: block;
+  padding: 0 8px 6px;
+}
+.work-board-empty {
+  margin: 6px 0;
+  font-size: 13px;
+  color: #7b8774;
+}
+@media (max-width: 760px) {
+  .project-map-floor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .work-board {
+    order: -1;
+    position: static;
+    max-height: none;
+  }
+}

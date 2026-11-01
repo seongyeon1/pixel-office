@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import { createStore } from '../src/server/store.js';
 import { createServer } from '../src/server/transport.js';
-import type { Adapter } from '../src/shared/contracts.js';
+import type { Adapter, Run } from '../src/shared/contracts.js';
 import { createOrchestrator } from '../src/server/orchestrator.js';
 test('approval settings default to manual, require authentication and validate persisted values', async () => {
   const store = createStore(':memory:');
@@ -1197,6 +1197,68 @@ test('a boot-time Slack error shows in settings, and the server uses the given c
     });
     expect((await get('/api/coworkers')).statusCode).toBe(200);
     expect(listed).toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('office desk and pending interactions are read-only and carry no secrets', async () => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { writeSlackConfig } = await import('../src/server/slack/secrets.js');
+  const store = createStore(':memory:');
+  const a: Adapter = {
+    probe: async () => ({ installed: true, authenticated: true, detail: 'test' }),
+    execute: async () => ({ outcome: 'completed', text: '' }),
+    close: async () => {},
+  };
+  const adapters = { codex: a, claude: a };
+  const dataDir = await mkdtemp(join(tmpdir(), 'pixel-desk-'));
+  const { app } = await createServer({
+    store,
+    adapters,
+    orchestrator: createOrchestrator({ store, adapters, dataDir }),
+    token: 't',
+    port: 4317,
+    dataDir,
+  });
+  const host = '127.0.0.1:4317';
+  const origin = 'http://127.0.0.1:4317';
+  const cookie = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      headers: { host, origin },
+      payload: { token: 't' },
+    })
+  ).headers['set-cookie'] as string;
+  const get = (url: string) =>
+    app.inject({ method: 'GET', url, headers: { host, origin, cookie } });
+  try {
+    expect((await get('/api/office/desk')).json()).toEqual({ slack: 'off', requests: [] });
+    store.createRun({ id: 'live', status: 'waiting_approval' } as Run);
+    store.createRun({ id: 'over', status: 'completed' } as Run);
+    for (const runId of ['live', 'over'])
+      store.saveInteraction({
+        id: `i-${runId}`,
+        runId,
+        agentId: 'codex',
+        kind: 'approval',
+        title: 'Run it?',
+        details: {},
+        resolved: false,
+      });
+    await writeSlackConfig(dataDir, {
+      botToken: 'xoxb-111-secret-wxyz',
+      appToken: 'xapp-1-secret-app',
+      ownerId: 'U01ABC',
+    });
+    const desk = await get('/api/office/desk');
+    expect(desk.json()).toEqual({ slack: 'connected', requests: [] });
+    const pending = await get('/api/interactions');
+    expect(pending.json()).toHaveLength(1);
+    expect(desk.body + pending.body).not.toContain('xox');
   } finally {
     await app.close();
   }

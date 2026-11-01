@@ -232,6 +232,10 @@ export const answerSchema = z.union([
 ]);
 export const terminal = (status: RunStatus) =>
   ['completed', 'failed', 'cancelled', 'interrupted', 'needs_attention'].includes(status);
+export interface DeskState {
+  slack: 'connected' | 'off' | 'error';
+  requests: { jobId: string; phase: 'planning' | 'working'; tasks: number }[];
+}
 export const statusLabels: Record<RunStatus, string> = {
   queued: '준비 중',
   running: '작업 중',
@@ -303,6 +307,8 @@ export interface ObservedSession {
   worktree?: ObservedWorktree;
   parentId?: string;
   attention?: ObservedAttention | null;
+  /** Short Korean sentence for what the last event says the session is doing. */
+  action?: string;
   // Started by a script or hook (e.g. a work-log summary), not by a person.
   automated?: boolean;
   // Name of the repository behind origin, e.g. langconnect-enterprise.

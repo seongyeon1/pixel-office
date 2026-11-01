@@ -12,9 +12,11 @@ const name = (s: ObservedSession) => (s.provider === 'codex' ? 'Codex' : 'Claude
 export function ResumeDock({
   session,
   onClose,
+  active = true,
 }: {
   session: ObservedSession;
   onClose: () => void;
+  active?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const open = (mode: 'resume' | 'fork') => () =>
@@ -49,6 +51,7 @@ export function ResumeDock({
       </header>
       <Suspense fallback={<p role="status">터미널을 불러오는 중…</p>}>
         <TerminalPane
+          active={active}
           root={session.cwd || session.projectPath}
           storageKey={`pixel.resume:${session.id}`}
           recover={recover}

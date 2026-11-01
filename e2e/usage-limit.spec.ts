@@ -1,3 +1,4 @@
+import { newWork, showOffice, showSessions } from './workbench-helpers';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -6,6 +7,8 @@ for (const phase of ['구현', '검토', '모두']) {
     page,
   }) => {
     await page.goto('/#token=e2e-token');
+    await showOffice(page);
+    await showSessions(page);
     await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
     await page.getByRole('button', { name: '레포 전환', exact: true }).click();
     await page
@@ -16,8 +19,11 @@ for (const phase of ['구현', '검토', '모두']) {
       .getByRole('button', { name: '프로젝트 연결', exact: true })
       .click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
+    await newWork(page);
+    await showOffice(page);
     await page.getByLabel('작업 내용').fill(`${phase} 한도 테스트`);
     await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+    await expect(page.locator('.current-task')).toContainText(`${phase} 한도 테스트`);
     if (phase === '검토') {
       await page.getByRole('button', { name: 'Codex 선택', exact: true }).click();
       await page.getByRole('button', { name: '승인', exact: true }).click();

@@ -1,10 +1,16 @@
 import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { createStore } from '../src/server/store.js';
 import { createCoworkers } from '../src/server/coworkers.js';
-import { APPROVAL_GROUPS, DEFAULT_RULES, matchToolRule } from '../src/shared/coworkers.js';
+import {
+  APPROVAL_GROUPS,
+  COORDINATOR_ID,
+  DEFAULT_RULES,
+  coworkerForPath,
+  matchToolRule,
+} from '../src/shared/coworkers.js';
 
 const setup = () => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'pixel-coworkers-')));
@@ -154,4 +160,22 @@ test('moving a coworker onto another coworker folder is rejected', () => {
   coworkers.save(input('two', b));
   expect(() => coworkers.save(input('two', a))).toThrow('이미 이 폴더를 맡은 동료가 있어요.');
   expect(coworkers.get('two')?.folder).toBe(b);
+});
+
+test('coworkerForPath picks the deepest coworker folder and ignores the coordinator', () => {
+  const { coworkers, folder, input } = setup();
+  const app = folder('app');
+  const web = join(app, 'web');
+  mkdirSync(web);
+  const root = dirname(app);
+  coworkers.save(input('a', app));
+  coworkers.save(input('b', web));
+  const list = coworkers.list();
+  const pick = (path: string) => coworkerForPath(list, path)?.id;
+  expect(pick(app)).toBe('a');
+  expect(pick(join(web, 'src'))).toBe('b');
+  expect(pick(join(root, 'app-other'))).toBeUndefined();
+  expect(pick(root)).toBeUndefined();
+  expect(pick(`${app}/`)).toBe('a');
+  expect(pick(coworkers.get(COORDINATOR_ID)!.folder)).toBeUndefined();
 });

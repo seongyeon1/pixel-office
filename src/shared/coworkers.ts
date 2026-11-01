@@ -77,3 +77,13 @@ const globToRegExp = (pattern: string) =>
 
 export const matchToolRule = (rules: ToolRule[], tool: string): 'auto' | 'ask' | undefined =>
   rules.find((rule) => globToRegExp(rule.pattern).test(tool))?.action;
+
+// The coworker whose folder is the deepest one holding the path; the coordinator never owns a folder.
+export const coworkerForPath = (coworkers: Coworker[], path: string): Coworker | undefined => {
+  const target = path.replace(/\/+$/, '');
+  return coworkers
+    .filter(
+      (c) => c.id !== COORDINATOR_ID && (target === c.folder || target.startsWith(`${c.folder}/`)),
+    )
+    .sort((a, b) => b.folder.length - a.folder.length)[0];
+};

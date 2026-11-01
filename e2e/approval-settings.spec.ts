@@ -1,3 +1,4 @@
+import { newWork, showOffice } from './workbench-helpers';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -15,6 +16,8 @@ test('approval preference persists, releases a waiting tool and keeps questions 
     .getByRole('button', { name: '프로젝트 연결', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await newWork(page);
+  await showOffice(page);
   const setMode = (mode: string) =>
     page.evaluate(async (mode) => {
       const result = await fetch('/api/settings/approvals', {
@@ -43,7 +46,9 @@ test('approval preference persists, releases a waiting tool and keeps questions 
     await expect(page.getByLabel('도구 승인 방식')).toHaveValue('manual');
     // This control remains usable even while the model/persona fields are disabled.
     await page.getByLabel('도구 승인 방식').selectOption('auto');
-    await expect(page.getByRole('status')).toContainText('승인 방식을 저장했어요.');
+    await expect(page.getByRole('dialog').getByRole('status')).toContainText(
+      '승인 방식을 저장했어요.',
+    );
     // Floor sprites use depth ordering, but must stay below the settings overlay.
     const hitTestStyle = await page.addStyleTag({
       content: '.floor-building * { pointer-events: auto !important; }',
@@ -77,6 +82,9 @@ test('approval preference persists, releases a waiting tool and keeps questions 
     await page.getByRole('button', { name: '새 작업', exact: true }).click();
     await page.getByLabel('작업 내용').fill('자동 승인 테스트: 샘플 파일을 만들고 검토해 주세요');
     await page.getByRole('button', { name: '작업 시작', exact: true }).click();
+    await expect(page.locator('.current-task')).toContainText(
+      '자동 승인 테스트: 샘플 파일을 만들고 검토해 주세요',
+    );
     await expect(page.locator('.run-result.success')).toContainText('검토 완료');
     await expect(page.getByRole('heading', { name: '승인 필요' })).toHaveCount(0);
     await page.screenshot({ path: info.outputPath('pixel-colleagues.png'), fullPage: true });

@@ -4,6 +4,8 @@ import {
   LOUNGE,
   MEETING,
   RECORDS,
+  MAX_SIGNS,
+  signSpace,
   type FloorInput,
   type Loc,
 } from '../src/client/floor/layout.js';
@@ -266,4 +268,30 @@ test('away coworkers never wander to the lounge', () => {
   const away = [worker('idle', '/r', { active: false, away: true })];
   for (let clock = 0; clock < LOUNGE_CYCLE * 20; clock += 5000)
     expect(placements(away, L, clock).get('idle')!.kind).toBe('desk');
+});
+test('signs push the desks down and many signs stop at a capped height', () => {
+  // One-row facilities, so the room alone sets the height of its row.
+  const opts = { facilityRows: 1 };
+  const plain = floorLayout([{ root: '/a', lanes: [lane('/a', ['a1'])] }], 1400, opts);
+  const signed = (n: number) =>
+    floorLayout([{ root: '/a', lanes: [lane('/a', ['a1'])], signs: n }], 1400, opts);
+  const cellOf = (L: ReturnType<typeof floorLayout>) => L.cells.find((c) => c.key === '/a')!;
+  const two = signed(2);
+  expect(signSpace(2)).toBeGreaterThan(0);
+  expect(two.seats.get('a1')!.y - plain.seats.get('a1')!.y).toBe(signSpace(2));
+  expect(cellOf(two).h - cellOf(plain).h).toBe(signSpace(2));
+  // Eight jobs take no more room than the capped signs plus the "+N" line.
+  expect(cellOf(signed(8)).h).toBe(cellOf(signed(MAX_SIGNS + 1)).h);
+  expect(signSpace(8)).toBeGreaterThan(signSpace(MAX_SIGNS));
+});
+test('the reception desk sits in the lobby beside the entrance, clear of every room', () => {
+  for (const width of [360, 900, 1400]) {
+    const L = floorLayout(rooms, width, { reception: true });
+    const desk = L.reception!;
+    expect(desk.x).toBeGreaterThanOrEqual(L.spineX * 2);
+    expect(desk.x + desk.w).toBeLessThanOrEqual(L.width);
+    expect(desk.y + desk.h).toBeLessThanOrEqual(L.height);
+    for (const cell of L.cells) expect(overlaps(desk, cell)).toBe(false);
+  }
+  expect(floorLayout(rooms, 900).reception).toBeUndefined();
 });

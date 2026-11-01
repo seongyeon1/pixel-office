@@ -58,7 +58,9 @@ test('worktree cleanup protects active work and requires explicit file discard w
     await page.screenshot({ path: info.outputPath('worktree-confirm.png') });
     await remove.click();
     await expect(card).toHaveCount(0);
-    await expect(dialog.getByRole('status')).toContainText('브랜치와 작업 기록은 보존');
+    await expect(
+      dialog.getByRole('status').filter({ hasText: '브랜치와 작업 기록은 보존' }),
+    ).toBeVisible();
     const snapshot = await (await page.request.get(`/api/runs/${run.id}`)).json();
     expect(snapshot.run.removedWorktrees).toContain(run.worktreePath);
     expect(snapshot.run.prompt).toBe(prompt);

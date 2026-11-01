@@ -1,3 +1,4 @@
+import { newWork, showOffice, selectSession } from './workbench-helpers';
 import { expect, test, type Page } from '@playwright/test';
 import { readFile, writeFile, appendFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -13,6 +14,8 @@ async function connect(page: Page) {
     .getByRole('button', { name: '프로젝트 연결', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await newWork(page);
+  await showOffice(page);
 }
 
 test('documents render tables, images and diagrams, navigate locally and refresh without executing HTML', async ({
@@ -102,8 +105,7 @@ test('a completed run opens its Markdown artifact in the worktree and shows its 
   await expect(panel.locator('.document-diff')).toContainText('+# 작업 결과 보고서');
   await panel.getByRole('button', { name: '파일 README.md', exact: true }).click();
   await expect(panel.locator('article')).toHaveText('fixture');
-  if (test.info().project.name === 'mobile')
-    await page.getByRole('button', { name: '작업 공간 닫기' }).click();
+  await page.getByRole('button', { name: '작업 공간 닫기' }).click();
   await page
     .locator('.run-result')
     .getByRole('button', { name: '문서 열기 REPORT.md', exact: true })
@@ -235,9 +237,7 @@ test('a coworker document is opened from its task, with earlier requests kept se
         }),
     );
     await connect(page);
-    await page
-      .getByRole('button', { name: '세션 선택 Claude document-writer', exact: true })
-      .click({ timeout: 20000 });
+    await selectSession(page, '세션 선택 Claude document-writer');
     await page
       .locator('.session-task-card')
       .getByRole('button', { name: '작업 문서 보기' })

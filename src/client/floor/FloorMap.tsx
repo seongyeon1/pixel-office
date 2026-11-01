@@ -1,11 +1,23 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowUpRight, Coffee, DoorOpen, Merge, ScrollText, Users, X } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Coffee,
+  DoorOpen,
+  Merge,
+  ScrollText,
+  UserPlus,
+  Users,
+  X,
+} from 'lucide-react';
+import type { Provider } from '../../shared/contracts';
 import { repositoryName } from '../components/RepositoryList';
+import { PixelWorker } from '../office/PixelWorker';
 import type { ProjectRoom, ProjectWorker } from '../overview/projects';
+import type { BoardRow } from '../overview/team';
 import { FloorWorker } from './FloorWorker';
 import { hash, placements } from './choreography';
 import { describeModel, useModelCatalog } from '../models/catalog';
-import { FEET, SEAT_W, floorLayout, type Cell, type Loc } from './layout';
+import { FEET, MAX_SIGNS, SEAT_W, floorLayout, type Cell, type Loc } from './layout';
 import './floor.css';
 const facilityName: Record<string, string> = {
   meeting: '회의실',
@@ -107,24 +119,88 @@ function MergeControls({ room, merging }: { room: ProjectRoom; merging: RoomMerg
     </div>
   );
 }
-function RoomCell({
+// The door signs: what each piece of work in the room is and what it is doing right now.
+function RoomSigns({
+  room,
+  signs,
+  selectedId,
+  onOpen,
+  onHover,
+}: {
+  room: ProjectRoom;
+  signs: BoardRow[];
+  selectedId?: string;
+  onOpen: (root: string, worker: ProjectWorker) => void;
+  onHover?: (workerId?: string) => void;
+}) {
+  const more = signs.length - MAX_SIGNS;
+  return (
+    <ul
+      className="floor-signs"
+      aria-label={`${room.coworker?.name ?? repositoryName(room.root)} 맡은 일`}
+    >
+      {signs.slice(0, MAX_SIGNS).map((row) => (
+        <li key={row.id}>
+          <button
+            className={`floor-sign ${row.waiting ? 'waiting' : ''} ${row.workerId === selectedId ? 'highlight' : ''}`}
+            data-worker-id={row.workerId}
+            title={`${row.task}\n${row.action}`}
+            onClick={() => {
+              const w = room.workers.find((x) => x.id === row.workerId);
+              if (w) onOpen(w.root, w);
+            }}
+            onMouseEnter={() => onHover?.(row.workerId)}
+            onMouseLeave={() => onHover?.(undefined)}
+            onFocus={() => onHover?.(row.workerId)}
+            onBlur={() => onHover?.(undefined)}
+          >
+            <strong>{row.task}</strong>
+            <span>{row.action}</span>
+          </button>
+        </li>
+      ))}
+      {more > 0 && <li className="floor-sign-more">+{more}건 더 · 보드에서 볼 수 있어요</li>}
+    </ul>
+  );
+}
+export function RoomCell({
   cell,
   room,
   hidden,
   onOpenRoom,
   merging,
+  signs,
+  selectedId,
+  onOpen,
+  onHover,
+  onHoverRoom,
+  onRegister,
 }: {
   cell: Cell;
   room: ProjectRoom;
   hidden: number;
   onOpenRoom?: (root: string) => void;
   merging?: RoomMerging;
+  signs: BoardRow[];
+  selectedId?: string;
+  onOpen: (root: string, worker: ProjectWorker) => void;
+  onHover?: (workerId?: string) => void;
+  onHoverRoom?: (root?: string) => void;
+  onRegister?: (folder: string) => void;
 }) {
+  const name = room.coworker?.name ?? repositoryName(room.root);
+  // A coworker with nothing to do rests in a dark room; repositories nobody owns stay faint.
+  const resting = !!room.coworker && !room.workers.length;
+  const highlight = !!selectedId && room.workers.some((w) => w.id === selectedId);
   return (
     <article
-      className={`floor-cell floor-room ${cell.upper ? 'upper' : 'lower'} ${room.activeCount ? 'busy' : ''}`}
+      className={`floor-cell floor-room ${cell.upper ? 'upper' : 'lower'} ${room.activeCount ? 'busy' : ''} ${room.temporary ? 'temporary' : ''} ${resting ? 'resting' : ''} ${highlight ? 'highlight' : ''}`}
       style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h } as CSSProperties}
-      aria-label={`프로젝트 공간 ${room.root}`}
+      aria-label={room.coworker ? `동료 방 ${room.coworker.name}` : `프로젝트 공간 ${room.root}`}
+      onMouseEnter={() => onHoverRoom?.(room.root)}
+      onMouseLeave={() => onHoverRoom?.(undefined)}
+      onFocus={() => onHoverRoom?.(room.root)}
+      onBlur={() => onHoverRoom?.(undefined)}
     >
       <header>
         {onOpenRoom ? (
@@ -134,13 +210,13 @@ function RoomCell({
             title={room.root}
             onClick={() => onOpenRoom(room.root)}
           >
-            <strong>{repositoryName(room.root)}</strong>
+            <strong>{name}</strong>
             {room.repoName && <em className="floor-repo-name">{room.repoName}</em>}
             <ArrowUpRight size={14} />
           </button>
         ) : (
           <span className="floor-room-name" title={room.root}>
-            <strong>{repositoryName(room.root)}</strong>
+            <strong>{name}</strong>
           </span>
         )}
         <span
@@ -152,21 +228,50 @@ function RoomCell({
               ? `보고 ${room.reportCount}`
               : room.workers.length
                 ? `근무 ${room.workers.length}명`
-                : '비어 있음'}
+                : resting
+                  ? '쉬는 중'
+                  : '비어 있음'}
         </span>
-        <small>{room.pathLabel}</small>
+        <small>{room.temporary ? `임시 방 · ${room.pathLabel}` : room.pathLabel}</small>
       </header>
-      {!room.workers.length && <p className="floor-room-empty">지금 근무 중인 동료가 없어요.</p>}
-      {hidden > 0 && onOpenRoom && (
-        <button
-          className="floor-room-more"
-          aria-label={`프로젝트 동료 모두 보기 ${room.root}`}
-          onClick={() => onOpenRoom(room.root)}
-        >
-          +{hidden}명 더 보기
-        </button>
+      {signs.length > 0 && (
+        <RoomSigns
+          room={room}
+          signs={signs}
+          selectedId={selectedId}
+          onOpen={onOpen}
+          onHover={onHover}
+        />
       )}
-      {merging && <MergeControls room={room} merging={merging} />}
+      {!room.workers.length && (
+        <p className="floor-room-empty">
+          {resting ? '맡은 일이 없어 쉬는 중이에요.' : '지금 근무 중인 동료가 없어요.'}
+        </p>
+      )}
+      <div className="floor-room-actions">
+        {hidden > 0 && onOpenRoom && (
+          <button
+            className="floor-room-more"
+            aria-label={`프로젝트 동료 모두 보기 ${room.root}`}
+            onClick={() => onOpenRoom(room.root)}
+          >
+            +{hidden}명 더 보기
+          </button>
+        )}
+        {room.temporary && onRegister && (
+          <button
+            className="floor-register"
+            aria-label={`${name} 동료로 등록`}
+            title={`${room.root} 폴더를 맡을 동료 만들기`}
+            onClick={() => onRegister(room.root)}
+          >
+            <UserPlus size={11} aria-hidden="true" />
+            동료로 등록
+          </button>
+        )}
+      </div>
+      {/* Merging regroups repositories, so a coworker's room does not offer it. */}
+      {merging && !room.coworker && <MergeControls room={room} merging={merging} />}
       <span className="floor-door" aria-hidden="true" />
     </article>
   );
@@ -182,6 +287,13 @@ const OFFICE = {
 };
 // Viewport padding, the two side walls and the building's drop shadow, in CSS pixels.
 const FRAME = 4 + 18 + 16;
+// The coordinator at the reception desk and what the desk says right now.
+export interface Reception {
+  name: string;
+  provider: Provider;
+  summary: string;
+  busy: boolean;
+}
 const mapName = (w: ProjectWorker) =>
   `전체 맵 동료 ${w.root} ${w.visiting ? `${w.run!.id} 구현` : (w.session?.sessionId ?? w.run!.id)}`;
 export function FloorMap({
@@ -197,6 +309,11 @@ export function FloorMap({
   selectedId,
   label = '프로젝트 통합 맵',
   nameOf = mapName,
+  signs,
+  onHover,
+  onHoverRoom,
+  onRegister,
+  reception,
 }: {
   rooms: ProjectRoom[];
   // Everyone on duty, including rooms the search hides: arriving means joining this list.
@@ -214,18 +331,43 @@ export function FloorMap({
   selectedId?: string;
   label?: string;
   nameOf?: (w: ProjectWorker) => string;
+  // Board rows, shown as door signs in the room their worker sits in.
+  signs?: BoardRow[];
+  onHover?: (workerId?: string) => void;
+  // A hovered or focused room, so the board can light up all of its work.
+  onHoverRoom?: (root?: string) => void;
+  // Temporary rooms offer to make a coworker for their folder.
+  onRegister?: (folder: string) => void;
+  reception?: Reception;
 }) {
   const [box, width] = useWidth();
   const catalog = useModelCatalog();
+  // A room signs only for work seated in it, so the model filter hides those signs too.
+  const signsOf = useMemo(
+    () =>
+      new Map(
+        rooms.map((r) => [
+          r.root,
+          (signs ?? []).filter(
+            (s) => s.root === r.root && r.workers.some((w) => w.id === s.workerId),
+          ),
+        ]),
+      ),
+    [rooms, signs],
+  );
   // The walls and the building's shadow sit outside the layout.
   const layout = useMemo(
     () =>
       floorLayout(
-        departmentOf ? rooms.map((r) => ({ ...r, group: departmentOf(r.root).id })) : rooms,
+        rooms.map((r) => ({
+          ...r,
+          group: departmentOf?.(r.root).id,
+          signs: signsOf.get(r.root)!.length,
+        })),
         width - FRAME,
-        office ? OFFICE : undefined,
+        office ? OFFICE : reception ? { reception: true } : undefined,
       ),
-    [rooms, width, office, departmentOf],
+    [rooms, width, office, departmentOf, signsOf, !!reception],
   );
   const workers = useMemo(
     () =>
@@ -350,6 +492,13 @@ export function FloorMap({
                 hidden={layout.hidden.get(cell.key) ?? 0}
                 onOpenRoom={onOpenRoom}
                 merging={merging}
+                signs={signsOf.get(cell.key)!}
+                // Only the board-backed map lights rooms up; an office's selection stays on the mat.
+                selectedId={signs ? selectedId : undefined}
+                onOpen={onOpen}
+                onHover={onHover}
+                onHoverRoom={onHoverRoom}
+                onRegister={onRegister}
               />
             ) : (
               <div
@@ -446,8 +595,28 @@ export function FloorMap({
               onOpen={() => undefined}
             />
           ))}
+          {layout.reception && reception && (
+            <section
+              className={`floor-reception ${reception.busy ? 'busy' : ''}`}
+              style={{
+                left: layout.reception.x,
+                top: layout.reception.y,
+                width: layout.reception.w,
+                height: layout.reception.h,
+              }}
+              aria-label={`안내 데스크 ${reception.name}`}
+            >
+              <span className="floor-sprite" aria-hidden="true">
+                <PixelWorker provider={reception.provider} identity="coordinator" />
+              </span>
+              <span className="floor-reception-text">
+                <strong>안내 데스크 · {reception.name}</strong>
+                <span>{reception.summary}</span>
+              </span>
+            </section>
+          )}
           <i className="floor-plant corner" aria-hidden="true" />
-          <i className="floor-plant lobby" aria-hidden="true" />
+          {!layout.reception && <i className="floor-plant lobby" aria-hidden="true" />}
         </section>
         {/* The front wall, with the doorway at the foot of the spine. */}
         <div className="floor-base" aria-hidden="true">

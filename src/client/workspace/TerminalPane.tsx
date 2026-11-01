@@ -14,6 +14,7 @@ export function TerminalPane({
   idle,
   label = '레포 터미널',
   footer = '레포별 터미널 · 연결이 끊기면 5분 후 종료됩니다.',
+  active = true,
 }: {
   root: string;
   storageKey?: string;
@@ -23,10 +24,18 @@ export function TerminalPane({
   idle?: (start: (open: Open) => void, pending: boolean) => ReactNode;
   label?: string;
   footer?: string;
+  /** Only the selected pane may take keyboard focus when its connection becomes ready. */
+  active?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const generation = useRef(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const focus = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (active) focus.current();
+  }, [active]);
   const [info, setInfo] = useState<TerminalInfo | null>(null);
   const [status, setStatus] = useState('터미널을 열면 이 폴더에서 시작합니다.');
   const [pending, setPending] = useState(false);
@@ -78,6 +87,7 @@ export function TerminalPane({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container.current);
+    focus.current = () => term.focus();
     term.textarea?.setAttribute('aria-label', '터미널 입력');
     term.textarea?.setAttribute('data-testid', 'terminal-input');
     const ws = new WebSocket(
@@ -113,7 +123,7 @@ export function TerminalPane({
         setConnected(true);
         setError('');
         resize();
-        term.focus();
+        if (activeRef.current) term.focus();
       } else if (message.type === 'output') term.write(message.data);
       else if (message.type === 'exit') {
         setConnected(false);
@@ -138,6 +148,7 @@ export function TerminalPane({
       socket.current = null;
       ws.close();
       term.dispose();
+      focus.current = () => {};
     };
   }, [info, attempt, storageKey]);
   const start = async (open: Open) => {

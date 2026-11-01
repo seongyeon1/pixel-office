@@ -1,3 +1,4 @@
+import { showOffice } from './workbench-helpers';
 import { test, expect } from '@playwright/test';
 import { readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -42,6 +43,7 @@ for (const provider of ['claude', 'codex'] as const) {
     await writeFile(log, data);
     const terminal = page.getByRole('region', { name: '세션 이어서 작업 터미널', exact: true });
     const openDock = async () => {
+      await showOffice(page);
       await page.getByRole('button', { name: `캐릭터 ${name} ${sessionId}`, exact: true }).click();
       await page
         .locator('.session-task-card')
@@ -52,6 +54,7 @@ for (const provider of ['claude', 'codex'] as const) {
     let observedId = '';
     try {
       await page.goto('/#token=e2e-token');
+      await showOffice(page);
       await expect(
         page.getByRole('button', { name: `캐릭터 ${name} ${sessionId}`, exact: true }),
       ).toBeVisible({ timeout: 20000 });

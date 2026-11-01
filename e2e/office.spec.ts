@@ -1,3 +1,4 @@
+import { newWork, showOffice, showSessions, selectSession } from './workbench-helpers';
 import { test, expect } from '@playwright/test';
 import { readFile, mkdir } from 'node:fs/promises';
 async function connect(page: import('@playwright/test').Page) {
@@ -13,8 +14,16 @@ async function connect(page: import('@playwright/test').Page) {
     .getByRole('button', { name: '프로젝트 연결', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await newWork(page);
+  await showOffice(page);
 }
 test('office fits the viewport and supports model/persona selection', async ({ page }, info) => {
+  // Configure a future team without showing a historical run's saved team.
+  await page.route('**/api/runs**', (route) =>
+    new URL(route.request().url()).pathname === '/api/runs' && route.request().method() === 'GET'
+      ? route.fulfill({ json: [] })
+      : route.continue(),
+  );
   await page.goto('/#token=e2e-token');
   await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
@@ -130,10 +139,17 @@ test.afterEach(async ({ page }) => {
 test('single-agent mode shows the actual implementer instead of a reviewer role', async ({
   page,
 }) => {
+  // Configure a future team without showing a historical run's saved team.
+  await page.route('**/api/runs**', (route) =>
+    new URL(route.request().url()).pathname === '/api/runs' && route.request().method() === 'GET'
+      ? route.fulfill({ json: [] })
+      : route.continue(),
+  );
   await page.goto('/#token=e2e-token');
   await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
   if (await page.getByRole('button', { name: '새 작업', exact: true }).count())
     await page.getByRole('button', { name: '새 작업', exact: true }).click();
+  await newWork(page);
   await page.getByLabel('실행 방식').selectOption('claude');
   await page.getByRole('button', { name: 'Claude 선택', exact: true }).click();
   await expect(page.getByText('구현과 테스트를 담당해요', { exact: true })).toBeVisible();
@@ -248,7 +264,8 @@ test('existing sessions are discovered by repo and show live tools without execu
           },
         }),
     );
-    await page.goto('/#token=e2e-token');
+    await connect(page);
+    await showSessions(page);
     // One office shows observed sessions directly; wait for both to be discovered.
     await expect(
       page.getByRole('button', {
@@ -260,7 +277,7 @@ test('existing sessions are discovered by repo and show live tools without execu
     await expect(
       page.locator('.family-heading', { hasText: 'Claude · claude-external' }),
     ).toBeVisible();
-    await page.getByRole('button', { name: '세션 선택 Codex external-codex' }).click();
+    await selectSession(page, '세션 선택 Codex external-codex');
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex external-codex', exact: true }),
     ).toBeVisible();
@@ -283,7 +300,7 @@ test('existing sessions are discovered by repo and show live tools without execu
     await expect(movingAgent.locator('.floor-caption')).toHaveText('명령 실행');
     await page.getByRole('tab', { name: '작업 내역', exact: true }).click();
     await expect(page.locator('.observed-inspector')).toContainText('npm test');
-    await expect(page.locator('.observed-inspector')).toContainText('기록 · 이어가기');
+    await expect(page.locator('.session-task-card')).toContainText('기록 · 이어가기');
     await expect(page.getByRole('button', { name: '작업 중단', exact: true })).toHaveCount(0);
     await appendFile(
       f.codex,
@@ -305,29 +322,26 @@ test('existing sessions are discovered by repo and show live tools without execu
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(movingAgent).toHaveCSS('transition-duration', '0s');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.getByRole('button', { name: '세션 선택 Claude external-claude' }).click();
+    await selectSession(page, '세션 선택 Claude external-claude');
     await expect(page.locator('.observed-inspector')).toContainText('README.md');
     await expect(page.locator('.observed-inspector')).not.toContainText('npm test');
     await page.getByRole('tab', { name: '대화', exact: true }).click();
-    await page.getByLabel('에이전트에게 질문').fill('어떤 파일을 봤어?');
+    await page.getByLabel('지시 방식').selectOption('ask');
+    await page.getByLabel('작업 내용', { exact: true }).fill('어떤 파일을 봤어?');
     await page.getByRole('button', { name: '질문 보내기', exact: true }).click();
     await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
     await expect(page.locator('.agent-speech')).toContainText('README.md를 확인했어요.');
-    await page.getByRole('button', { name: '세션 선택 Codex external-codex', exact: true }).click();
+    await selectSession(page, '세션 선택 Codex external-codex');
     await expect(page.locator('.session-chat')).not.toContainText('README.md를 확인했어요.');
-    await expect(page.locator('.session-chat')).toContainText('작업 기록 기반 답변');
+    await expect(page.locator('.session-chat')).toContainText('이 동료에게 할 일을 맡겨보세요');
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page
-      .getByRole('button', { name: '세션 선택 Claude external-claude', exact: true })
-      .click();
+    await selectSession(page, '세션 선택 Claude external-claude');
     await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
     await page.reload();
     await expect(page.getByRole('heading', { level: 1, name: /오피스$/ })).toBeVisible();
-    await page
-      .getByRole('button', { name: '세션 선택 Claude external-claude', exact: true })
-      .click();
+    await selectSession(page, '세션 선택 Claude external-claude');
     await page.getByRole('tab', { name: '대화', exact: true }).click();
     await expect(page.locator('.session-chat')).toContainText('README.md를 확인했어요.');
     await expect(page.locator('.session-chat').getByRole('status')).toHaveCount(0);
@@ -382,7 +396,8 @@ test('separate Codex characters keep independent chats and expose failure and ca
           .map((row) => JSON.stringify(row))
           .join('\n') + '\n',
       );
-    await page.goto('/#token=e2e-token');
+    await connect(page);
+    await showSessions(page);
     // One office shows observed sessions directly; wait for both to be discovered.
     await expect(
       page.getByRole('button', { name: /^세션 선택 Codex chat-codex-[01]$/ }),
@@ -393,23 +408,26 @@ test('separate Codex characters keep independent chats and expose failure and ca
     await expect(
       page.getByRole('button', { name: '캐릭터 Codex chat-codex-1', exact: true }),
     ).toBeVisible();
-    await page.getByRole('button', { name: '세션 선택 Codex chat-codex-0', exact: true }).click();
+    await selectSession(page, '세션 선택 Codex chat-codex-0');
     await page.getByRole('tab', { name: '대화', exact: true }).click();
-    await page.getByLabel('에이전트에게 질문').fill('느린 답변 테스트');
+    await page.getByLabel('지시 방식').selectOption('ask');
+    await page.getByLabel('작업 내용', { exact: true }).fill('느린 답변 테스트');
     await page.getByRole('button', { name: '질문 보내기', exact: true }).click();
     await expect(page.locator('.session-chat').getByRole('status')).toContainText('답변 작성 중');
-    await page.getByRole('button', { name: '세션 선택 Codex chat-codex-1', exact: true }).click();
-    await expect(page.locator('.session-chat')).toContainText('이 동료의 작업이 궁금한가요?');
+    await selectSession(page, '세션 선택 Codex chat-codex-1');
+    await expect(page.locator('.session-chat')).toContainText('이 동료에게 할 일을 맡겨보세요');
     await expect(page.locator('.session-chat')).not.toContainText('느린 답변 테스트');
-    await page.getByRole('button', { name: '세션 선택 Codex chat-codex-0', exact: true }).click();
-    await page.getByRole('button', { name: '답변 중단', exact: true }).click();
+    await selectSession(page, '세션 선택 Codex chat-codex-0');
+    await page.getByRole('button', { name: '기다리기 중단', exact: true }).click();
     await expect(page.locator('.session-chat')).toContainText('답변 생성을 중단했어요.');
-    await page.getByLabel('에이전트에게 질문').fill('오류 테스트');
+    await page.getByLabel('지시 방식').selectOption('ask');
+    await page.getByLabel('작업 내용', { exact: true }).fill('오류 테스트');
     await page.getByRole('button', { name: '질문 보내기', exact: true }).click();
     await expect(page.locator('.session-chat').getByRole('alert')).toContainText(
       '샘플 공급자 연결 실패',
     );
     await expect(page.locator('.agent-speech')).toHaveCount(0);
+    await showSessions(page);
     await page.getByLabel('세션 검색').fill('독립 작업 1');
     await expect(page.getByRole('region', { name: '감지된 세션' }).getByRole('button')).toHaveCount(
       1,
@@ -571,6 +589,11 @@ test('a question from a terminal Claude is answered in the office and handed bac
   };
   const hook = { 'x-pixel-hook': 'e2e-hook' };
   try {
+    await page.goto('/#token=e2e-token');
+    await page.request.post('/api/terminal-hook/uninstall', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {},
+    });
     await writeFile(
       f.claude,
       line({
@@ -597,7 +620,8 @@ test('a question from a terminal Claude is answered in the office and handed bac
           },
         }),
     );
-    await page.goto('/#token=e2e-token');
+    await connect(page);
+    await showSessions(page);
     const coworker = page.getByRole('button', {
       name: '세션 선택 Claude asking-claude',
       exact: true,
@@ -608,7 +632,10 @@ test('a question from a terminal Claude is answered in the office and handed bac
     await expect(page.locator('.terminal-hook-hint')).toContainText('질문 연결을 켜면');
     await page.getByRole('button', { name: '팀 구성', exact: true }).click();
     await expect(page.locator('.terminal-hook-settings')).toContainText('꺼짐');
-    await page.locator('.terminal-hook-settings').getByRole('button', { name: '질문 연결 켜기' }).click();
+    await page
+      .locator('.terminal-hook-settings')
+      .getByRole('button', { name: '질문 연결 켜기' })
+      .click();
     await expect(page.locator('.terminal-hook-settings')).toContainText('켜짐');
     await page.getByRole('button', { name: '설정 완료' }).click();
     await expect(page.locator('.terminal-hook-hint')).toContainText('터미널에서 답해 주세요');
@@ -619,7 +646,7 @@ test('a question from a terminal Claude is answered in the office and handed bac
     });
     expect(opened.ok()).toBe(true);
     const { id } = await opened.json();
-    await page.getByRole('button', { name: '세션 선택 Claude asking-claude', exact: true }).click();
+    await selectSession(page, '세션 선택 Claude asking-claude');
     const card = page.locator('.terminal-question');
     await expect(card).toContainText('어느 브랜치에 올릴까요?', { timeout: 10000 });
     await card.getByRole('radio', { name: /develop/ }).check();
@@ -648,6 +675,10 @@ test('a question from a terminal Claude is answered in the office and handed bac
       ).json(),
     ).toEqual({ status: 'released' });
   } finally {
+    await page.request.post('/api/terminal-hook/uninstall', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {},
+    });
     await rm(f.claude, { force: true });
   }
 });
@@ -685,10 +716,10 @@ test('talking to a coworker runs a direct turn with approval, or types into the 
     await worker.click();
     await page.getByRole('tab', { name: '대화', exact: true }).click();
     const chat = page.locator('.session-chat');
-    await chat.getByRole('tab', { name: '지시 · 실제 실행' }).click();
+    await page.getByLabel('지시 방식').selectOption('say');
     // Nobody has a terminal open, so the app runs the turn itself and asks before acting.
-    await expect(chat).toContainText('앱이 이 세션을 이어받아 실행해요');
-    await page.getByLabel('동료에게 지시').fill('hello.txt를 고쳐줘');
+    await expect(page.locator('.work-composer')).toContainText('앱이 이 세션을 이어받아 실행해요');
+    await page.getByLabel('작업 내용', { exact: true }).fill('hello.txt를 고쳐줘');
     await page.getByRole('button', { name: '지시 보내기', exact: true }).click();
     await expect(chat).toContainText('나 · 직접 지시');
     await expect(chat).toContainText('샘플 파일 수정 승인');
@@ -707,11 +738,12 @@ test('talking to a coworker runs a direct turn with approval, or types into the 
     const terminal = page.getByRole('region', { name: '세션 이어서 작업 터미널', exact: true });
     await terminal.getByRole('button', { name: '이어서 작업', exact: true }).click();
     await expect(terminal).toContainText(`FAKE-CODEX resume ${sessionId}`);
-    await expect(chat).toContainText('이어가기 터미널로 전달돼요');
-    await page.getByLabel('동료에게 지시').fill('npm test 돌려줘');
+    await expect(page.locator('.work-composer')).toContainText('이어가기 터미널로 전달돼요');
+    await page.getByLabel('작업 내용', { exact: true }).fill('npm test 돌려줘');
     await page.getByRole('button', { name: '지시 보내기', exact: true }).click();
     await expect(chat).toContainText('나 · 터미널 지시');
     await expect(terminal).toContainText('GOT:npm test 돌려줘');
+    await page.getByRole('button', { name: '이어서 작업 숨기기' }).click();
     await expect(chat.getByRole('status')).toContainText('터미널에서 작업 중');
     await page.getByRole('button', { name: '기다리기 중단', exact: true }).click();
     await expect(chat).toContainText('답변 생성을 중단했어요.');
@@ -719,6 +751,10 @@ test('talking to a coworker runs a direct turn with approval, or types into the 
       true,
     );
     // Leave no terminal behind for later tests.
+    await page
+      .locator('.session-task-card')
+      .getByRole('button', { name: '이어서 작업', exact: true })
+      .click();
     await terminal.getByRole('button', { name: '터미널 종료', exact: true }).click();
     await expect(terminal.getByRole('button', { name: '이어서 작업', exact: true })).toBeVisible();
   } finally {

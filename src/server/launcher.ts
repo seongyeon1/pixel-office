@@ -46,7 +46,10 @@ export function resolveHarness(
 }
 export function launchCommand(raw: Omit<LaunchInput, 'root' | 'harness'>, command: string) {
   const input = launchSchema.omit({ root: true, harness: true }).parse(raw);
-  return `${command}${input.provider === 'claude' ? ` --session-id ${input.id}` : ''}${input.model ? ` --model ${quote(input.model)}` : ''} ${quote(input.provider === 'codex' ? `<!-- pixel-office-launch:${input.id} -->\n${input.prompt}` : input.prompt)}`;
+  const prompt = input.prompt
+    ? ` ${quote(input.provider === 'codex' ? `<!-- pixel-office-launch:${input.id} -->\n${input.prompt}` : input.prompt)}`
+    : '';
+  return `${command}${input.provider === 'claude' ? ` --session-id ${input.id}` : ''}${input.model ? ` --model ${quote(input.model)}` : ''}${prompt}`;
 }
 export function createLauncher({
   terminals,

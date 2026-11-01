@@ -288,17 +288,157 @@
   font-size: 12px;
   color: #858a78;
 }
-.floor-room-more {
+.floor-room-actions {
   position: absolute;
   right: 8px;
   bottom: 6px;
   z-index: 1;
+  display: flex;
+  gap: 4px;
+}
+.floor-room-more,
+.floor-register {
   padding: 2px 8px;
   border: 1px solid #c5d1ba;
   border-radius: 10px;
   background: #fbfaf5;
   font-size: 11px;
   color: #47613b;
+}
+.floor-register {
+  gap: 3px;
+  border-color: #8fae80;
+  font-weight: 700;
+  color: #2f5a34;
+}
+/* Door signs: a paper card per piece of work, its title on top and what it is doing below. */
+.floor-signs {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  /* Below the 40px header; n cards (33px + 3px gap) end before the desks layout.ts moves down
+     by signSpace(n) = 36n (+20 for the "+N" line). */
+  top: 42px;
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.floor-signs > li {
+  min-width: 0;
+}
+.floor-sign {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  height: 33px;
+  padding: 2px 8px;
+  border: 2px solid #dccb92;
+  border-radius: 3px;
+  background: #f6ecc4;
+  color: #3a2f10;
+  text-align: left;
+}
+.floor-sign strong,
+.floor-sign span {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.floor-sign strong {
+  font-size: 11px;
+  line-height: 14px;
+}
+.floor-sign span {
+  font-size: 10.5px;
+  line-height: 13px;
+  color: #2f7a4a;
+}
+.floor-sign.waiting {
+  border-color: #e2a33a;
+}
+.floor-sign.waiting span {
+  color: #a35f00;
+}
+.floor-sign:hover,
+.floor-sign:focus-visible,
+.floor-sign.highlight {
+  border-color: #6fa3cc;
+  background: #fff6d6;
+}
+.floor-sign-more {
+  padding-left: 4px;
+  font-size: 10.5px;
+  line-height: 17px;
+  color: #6b6248;
+}
+/* The room of the work picked on the board, or of a hovered sign. */
+.floor-room.highlight {
+  border-color: #7fb3d9;
+  box-shadow: 0 0 0 3px #9fcbe8aa;
+}
+/* A repository nobody owns yet: a faint rug with a dashed edge. */
+.floor-room.temporary {
+  border-style: dashed;
+  border-color: #cfd0bf;
+  background-color: #e3e2d6;
+  background-image: none;
+}
+.floor-room.temporary > header .floor-room-name {
+  border-style: dashed;
+}
+/* A coworker with nothing to do: the lights are off. */
+.floor-room.resting {
+  border-color: #a6a895;
+  background-color: #b8baa8;
+  background-image: repeating-linear-gradient(90deg, #b2b4a2 0 2px, transparent 2px 9px);
+}
+.floor-room.resting .floor-room-empty {
+  color: #4f5446;
+}
+/* The coordinator's reception desk in the lobby. */
+.floor-reception {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  box-sizing: border-box;
+  border: 4px solid #c9bddb;
+  border-radius: 3px;
+  background: #e4dcef;
+  color: #4a3d63;
+}
+.floor-reception.busy {
+  border-color: #a58fcf;
+}
+.floor-reception .floor-sprite {
+  flex-shrink: 0;
+}
+.floor-reception-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.floor-reception-text strong,
+.floor-reception-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.floor-reception-text strong {
+  font-size: 12px;
+}
+.floor-reception-text span {
+  font-size: 11px;
+  color: #5d5274;
 }
 /* Desk rows, seen from the front: the chair is behind the coworker, the monitor's back and the
    desk are in front, so only the head shows over the screen. Row y: head 4-24, body to 49. */
