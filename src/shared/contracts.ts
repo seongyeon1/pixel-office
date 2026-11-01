@@ -303,6 +303,8 @@ export interface ObservedSession {
   worktree?: ObservedWorktree;
   parentId?: string;
   attention?: ObservedAttention | null;
+  /** Short Korean sentence for what the last event says the session is doing. */
+  action?: string;
   // Started by a script or hook (e.g. a work-log summary), not by a person.
   automated?: boolean;
   // Name of the repository behind origin, e.g. langconnect-enterprise.

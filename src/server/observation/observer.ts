@@ -13,6 +13,7 @@ import type {
   ObservedAttention,
   ObservedWorktree,
 } from '../../shared/contracts.js';
+import { describeAction } from '../../shared/actions.js';
 const exec = promisify(execFile);
 type RecordValue = Record<string, any>;
 type Parsed = {
@@ -574,6 +575,7 @@ export function createObservation(options: Options = {}) {
             cursor.openTurn = item.kind !== 'complete';
             cursor.lastKind = item.kind;
             cursor.info.activity = item.activity;
+            cursor.info.action = describeAction(item);
             cursor.info.updatedAt = item.timestamp;
           }
         }

@@ -615,3 +615,28 @@ test('folders outside git join the observed folder around them, but never the ho
   }
   observer.close();
 });
+
+test('sets a Korean action sentence from the last event', async () => {
+  const f = await fixture();
+  const dir = join(f.claudeHome, 'projects', 'p');
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    join(dir, 's1.jsonl'),
+    line({ timestamp, type: 'user', sessionId: 's1', cwd: f.repo, message: { content: 'go' } }) +
+      line({
+        timestamp,
+        type: 'assistant',
+        sessionId: 's1',
+        cwd: f.repo,
+        message: {
+          content: [
+            { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/r/app/README.md' } },
+          ],
+        },
+      }),
+  );
+  const observer = createObservation({ ...f, now: () => Date.parse(timestamp) });
+  await observer.scan();
+  expect(observer.list().sessions[0].action).toBe('README.md 읽는 중');
+  observer.close();
+});
