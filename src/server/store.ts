@@ -161,6 +161,13 @@ export function createStore(path: string) {
       return job;
     },
     getJob,
+    listOpenJobs(): Job[] {
+      return (
+        db.prepare(`SELECT data FROM jobs WHERE json_extract(data, '$.state')='open'`).all() as {
+          data: string;
+        }[]
+      ).map((r) => JSON.parse(r.data));
+    },
     getJobByThread: (threadKey: string) =>
       jobOf(db.prepare('SELECT data FROM jobs WHERE thread_key=?').get(threadKey)),
     updateJob(id: string, patch: Partial<Omit<Job, 'id' | 'threadKey'>>): Job {
@@ -403,6 +410,19 @@ export function createStore(path: string) {
           data: string;
         }[]
       ).map((r) => JSON.parse(r.data));
+    },
+    // Unresolved interactions of runs that are still going.
+    pendingAll(): Interaction[] {
+      return (
+        db
+          .prepare(
+            `SELECT i.data, json_extract(r.data, '$.status') AS status FROM interactions i
+             JOIN runs r ON r.id=i.run_id WHERE i.resolved=0`,
+          )
+          .all() as { data: string; status: Run['status'] }[]
+      )
+        .filter((r) => !terminal(r.status))
+        .map((r) => JSON.parse(r.data));
     },
     resolveInteraction(id: string) {
       return (

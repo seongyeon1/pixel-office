@@ -232,6 +232,10 @@ export const answerSchema = z.union([
 ]);
 export const terminal = (status: RunStatus) =>
   ['completed', 'failed', 'cancelled', 'interrupted', 'needs_attention'].includes(status);
+export interface DeskState {
+  slack: 'connected' | 'off' | 'error';
+  requests: { jobId: string; phase: 'planning' | 'working'; tasks: number }[];
+}
 export const statusLabels: Record<RunStatus, string> = {
   queued: '준비 중',
   running: '작업 중',

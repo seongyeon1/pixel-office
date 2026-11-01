@@ -31,6 +31,7 @@ import {
   type HarnessCatalog,
   type ProjectSummary,
   type OfficeEvent,
+  type DeskState,
   type SessionConversation,
 } from '../shared/contracts.js';
 import type { Store } from './store.js';
@@ -54,6 +55,7 @@ import {
   type SlackConfig,
 } from './slack/secrets.js';
 import { slackErrorCode } from './slack/errors.js';
+import { deskRequests } from './slack/desk.js';
 import { resumeCommand, resumeFolder, ResumeConflict, type AgentCommands } from './resume.js';
 export async function createServer({
   store,
@@ -508,6 +510,15 @@ export async function createServer({
     const error = slackError ?? slack?.error?.();
     return error ? { ...maskSlack(saved), error } : maskSlack(saved);
   });
+  app.get('/api/office/desk', async (): Promise<DeskState> => {
+    const configured = !!(await readSlackConfig(slackDir));
+    const failed = !!(slackError ?? slack?.error?.());
+    return {
+      slack: !configured ? 'off' : failed ? 'error' : 'connected',
+      requests: deskRequests(store.listOpenJobs(), store.getRun, Date.now()),
+    };
+  });
+  app.get('/api/interactions', async () => store.pendingAll());
   app.post('/api/settings/slack', async (req, reply) => {
     const config = slackConfigSchema.parse(req.body);
     if (!slack) return reply.code(503).send({ error: 'Slack 연결 기능을 사용할 수 없어요.' });
