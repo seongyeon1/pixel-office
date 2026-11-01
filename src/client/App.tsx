@@ -134,6 +134,8 @@ export function App() {
   );
   const [targetSessionId, setTargetSessionId] = useState<string>();
   const [modal, setModal] = useState<'project' | 'team' | null>(null);
+  // A temporary room's folder to start a coworker for; only the team modal it opened uses it.
+  const [registerFolder, setRegisterFolder] = useState<string>();
   const [harnessOpen, setHarnessOpen] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [path, setPath] = useState(() => localStorage.getItem('pixel.project') ?? '');
@@ -440,6 +442,7 @@ export function App() {
     };
   }, [tab, state.run?.id, state.run?.status, workspaceOpen]);
   useEffect(() => {
+    if (!modal) setRegisterFolder(undefined);
     if (!modal) return;
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setModal(null);
@@ -1336,6 +1339,11 @@ export function App() {
           <ProjectMap
             projects={projects}
             observation={observation}
+            runs={allRuns}
+            onRegister={(folder) => {
+              setRegisterFolder(folder);
+              setModal('team');
+            }}
             onConnect={() => setModal('project')}
             onRestore={async (id) => {
               await api(`/observed/${id}/restore`, {});
@@ -1661,6 +1669,7 @@ export function App() {
                   implementer={implementer}
                   onRoleChange={setImplementer}
                   disabled={busy}
+                  newCoworkerFolder={registerFolder}
                 />
                 <TerminalHookSettings />
                 <button className="primary full" onClick={() => setModal(null)}>

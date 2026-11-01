@@ -16,12 +16,15 @@ export function TeamPanel({
   implementer,
   onRoleChange,
   disabled = false,
+  newCoworkerFolder,
 }: {
   team: TeamConfig;
   onChange: (t: TeamConfig) => void;
   implementer: Provider;
   onRoleChange: (p: Provider) => void;
   disabled?: boolean;
+  // Opens the new-coworker form for this folder.
+  newCoworkerFolder?: string;
 }) {
   const [catalog, setCatalog] = useState<Record<string, { id: string; label: string }[]>>({});
   useEffect(() => {
@@ -40,7 +43,7 @@ export function TeamPanel({
     <div className="team-settings">
       <ApprovalSettings />
       <SlackSettings />
-      <CoworkerSettings />
+      <CoworkerSettings folder={newCoworkerFolder} />
       <p className="muted">모델과 담당 역할을 정해주세요. 직급 지침은 격리 환경에서만 적용됩니다.</p>
       {(['claude', 'codex'] as const).map((id) => (
         <section className="team-setting" key={id}>

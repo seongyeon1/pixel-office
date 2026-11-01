@@ -1,5 +1,6 @@
 import {
   terminal,
+  type DeskState,
   type Interaction,
   type ObservedSession,
   type ProjectSummary,
@@ -205,4 +206,14 @@ export function boardRows(rooms: ProjectRoom[], interactions: Interaction[]): Bo
         b.worker.updatedAt.localeCompare(a.worker.updatedAt),
     )
     .map(({ row }) => row);
+}
+
+// What the reception desk says: Slack's state, or how many requests the coordinator is handling.
+export function deskSummary(desk: DeskState | undefined): string {
+  if (!desk) return '상태 확인 중';
+  if (desk.slack === 'off') return 'Slack 연결 안 됨';
+  if (desk.slack === 'error') return 'Slack 연결 오류';
+  if (!desk.requests.length) return '대기 중';
+  const planning = desk.requests.some((r) => r.phase === 'planning');
+  return `요청 ${desk.requests.length}건 · ${planning ? '배정 계획 중' : '동료 작업 중'}`;
 }

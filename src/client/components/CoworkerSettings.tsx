@@ -59,7 +59,8 @@ const blank = (name = '', folder = ''): Draft => ({
   createdBy: 'user',
 });
 
-export function CoworkerSettings() {
+// `folder` opens the form for a new coworker of that folder right away, e.g. from a temporary room.
+export function CoworkerSettings({ folder }: { folder?: string }) {
   const [list, setList] = useState<Coworker[]>([]);
   const [suggestions, setSuggestions] = useState<{ name: string; folder: string }[]>([]);
   const [folders, setFolders] = useState<ProjectSummary[]>([]);
@@ -82,6 +83,7 @@ export function CoworkerSettings() {
     );
   };
   useEffect(() => {
+    if (folder) open(blank(folder.split('/').filter(Boolean).pop(), folder), true);
     load().catch((e: Error) => setError(e.message));
     api<ProjectSummary[]>('/projects').then(setFolders, () => {});
     api<LaunchHarnessList>('/settings/harnesses').then(
@@ -198,7 +200,13 @@ export function CoworkerSettings() {
         >
           <label>
             이름
-            <input value={draft.name} onChange={(e) => patch({ name: e.target.value })} required />
+            <input
+              value={draft.name}
+              // Opened from a temporary room: bring the form into view below the other settings.
+              autoFocus={isNew && !!folder}
+              onChange={(e) => patch({ name: e.target.value })}
+              required
+            />
           </label>
           <label>
             동료 id

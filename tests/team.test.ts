@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { boardRows, teamRooms } from '../src/client/overview/team.js';
+import { boardRows, deskSummary, teamRooms } from '../src/client/overview/team.js';
 import {
   defaultTeam,
   type Interaction,
@@ -250,4 +250,23 @@ test('a reviewed run that is not the latest one keeps its reviewer desk', () => 
   const rows = boardRows(rooms, []);
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ workerId: 'run:r1', action: '코드 검토' });
+});
+
+test('the reception desk says whether Slack is on and what the coordinator is doing', () => {
+  expect(deskSummary(undefined)).toBe('상태 확인 중');
+  expect(deskSummary({ slack: 'off', requests: [] })).toBe('Slack 연결 안 됨');
+  expect(deskSummary({ slack: 'error', requests: [] })).toBe('Slack 연결 오류');
+  expect(deskSummary({ slack: 'connected', requests: [] })).toBe('대기 중');
+  expect(
+    deskSummary({
+      slack: 'connected',
+      requests: [
+        { jobId: 'a', phase: 'working', tasks: 2 },
+        { jobId: 'b', phase: 'planning', tasks: 0 },
+      ],
+    }),
+  ).toBe('요청 2건 · 배정 계획 중');
+  expect(
+    deskSummary({ slack: 'connected', requests: [{ jobId: 'a', phase: 'working', tasks: 1 }] }),
+  ).toBe('요청 1건 · 동료 작업 중');
 });
