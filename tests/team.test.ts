@@ -219,3 +219,35 @@ test('an idle coworker still has a room', () => {
   ]);
   expect(boardRows(rooms, [])).toEqual([]);
 });
+
+test('a waiting subagent makes its parent row wait', () => {
+  const parent = session('p', '/r/app');
+  const sub = session('s', '/r/app', {
+    parentId: 'p',
+    attention: { kind: 'approval', certain: true, since: new Date(0).toISOString() },
+  });
+  const rows = boardRows(team({ sessions: [parent, sub] }), []);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ workerId: 'observed:p', waiting: true, action: '승인 기다려요' });
+});
+
+test('a reviewed run that is not the latest one keeps its reviewer desk', () => {
+  const r = run('r1', { mode: 'collaborate', implementer: 'codex', phase: 'review' });
+  const implementer = session('impl', '/r/app', {
+    provider: 'codex',
+    status: 'idle',
+    managed: {
+      runId: 'r1',
+      role: 'implementer',
+      executionMode: 'isolated',
+      resumable: true,
+      busy: false,
+    },
+  });
+  const rooms = team({ projects: [project('/r/app')], runs: [r], sessions: [implementer] });
+  expect(rooms[0].workers.map((w) => w.id).sort()).toEqual(['observed:impl', 'run:r1']);
+  expect(rooms[0].workers.find((w) => w.id === 'observed:impl')!.label).toBe('앱 작업 · impl');
+  const rows = boardRows(rooms, []);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ workerId: 'run:r1', action: '코드 검토' });
+});

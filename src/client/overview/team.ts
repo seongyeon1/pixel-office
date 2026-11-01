@@ -97,11 +97,9 @@ export function teamRooms({
 
   const lanesOf = new Map<ProjectRoom, Map<string, ProjectLane>>();
   const placed = new Set<string>();
-  const represented = new Set<string | undefined>();
   const seat = (room: ProjectRoom, w: ProjectWorker, lane: Omit<ProjectLane, 'workers'>) => {
     if (placed.has(w.id)) return;
     placed.add(w.id);
-    represented.add(w.run?.id).add(w.session?.managed?.runId);
     room.workers.push(w);
     let byKey = lanesOf.get(room);
     if (!byKey) lanesOf.set(room, (byKey = new Map()));
@@ -111,7 +109,10 @@ export function teamRooms({
   };
   for (const room of base) {
     for (const w of [...room.workers, ...room.offDuty])
-      if (!w.run && w.session?.managed) w.run = known.get(w.session.managed.runId);
+      if (!w.run && w.session?.managed) {
+        w.run = known.get(w.session.managed.runId);
+        if (w.run) w.label = `앱 작업 · ${w.label}`;
+      }
     const target = (w: ProjectWorker) => (w.run && runRoom(w.run)) ?? home.get(room)!;
     // Subagents and visiting implementers stay beside the coworker they follow.
     const lead = (w: ProjectWorker) => w.parentId ?? w.visiting;
@@ -126,9 +127,11 @@ export function teamRooms({
     home.get(room)!.automations.push(...room.automations);
   }
 
-  // Unfinished runs nobody sits at yet, e.g. a coworker's second Slack request in the same folder.
+  // Unfinished runs beyond each repository's latest one, e.g. a coworker's second Slack request in
+  // the same folder; runWorkers adds only the desks no session of that run already takes.
+  const latest = new Set(base.map((room) => room.latestRun?.id));
   for (const run of known.values()) {
-    if (terminal(run.status) || represented.has(run.id)) continue;
+    if (terminal(run.status) || latest.has(run.id)) continue;
     let room = runRoom(run) ?? temporary.get(run.projectPath);
     if (!room) {
       room = { ...emptyRoom(run.projectPath), temporary: true };
@@ -158,9 +161,11 @@ export function boardRows(rooms: ProjectRoom[], interactions: Interaction[]): Bo
     Number(a.waiting) - Number(b.waiting) ||
     Number(a.active) - Number(b.active) ||
     a.updatedAt.localeCompare(b.updatedAt);
+  const rowOf = new Map<string, string>();
   for (const room of rooms)
     for (const w of room.workers) {
       if (w.parentId || w.visiting) continue;
+      rowOf.set(w.id, w.run ? `run:${w.run.id}` : w.id);
       const id = w.run ? `run:${w.run.id}` : w.id;
       const current = rows.get(id)?.worker;
       if (current && ahead(w, current) <= 0) continue;
@@ -185,6 +190,13 @@ export function boardRows(rooms: ProjectRoom[], interactions: Interaction[]): Bo
             : undefined,
         },
       });
+    }
+  // A subagent blocked on a prompt makes the work it belongs to wait.
+  for (const room of rooms)
+    for (const w of room.workers) {
+      const folded = w.parentId && rows.get(rowOf.get(w.parentId) ?? '')?.row;
+      if (folded && w.waiting && !folded.waiting)
+        Object.assign(folded, { waiting: true, action: w.action ?? w.caption });
     }
   return [...rows.values()]
     .sort(
