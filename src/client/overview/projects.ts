@@ -7,6 +7,7 @@ import {
   type Provider,
   type Run,
 } from '../../shared/contracts';
+import type { Coworker } from '../../shared/coworkers';
 import { hasReport, isAway, onDuty, type Seen } from '../floor/roster';
 import { modelFamily, type ModelFamily } from '../models/family';
 export type WorkerMark = 'question' | 'approval' | 'report' | null;
@@ -34,6 +35,10 @@ export interface ProjectWorker {
   family: ModelFamily;
   session?: ObservedSession;
   run?: Run;
+  // Filled by teamRooms: the work's title, where it came from, and what is happening right now.
+  task?: string;
+  source?: 'slack' | 'office' | 'terminal';
+  action?: string;
 }
 export interface ProjectLane {
   key: string;
@@ -59,6 +64,9 @@ export interface ProjectRoom {
   reportCount: number;
   staleCount: number;
   latestRun: Run | null;
+  // Set by teamRooms: the coworker owning this room, or a repository nobody owns yet.
+  coworker?: Coworker;
+  temporary?: boolean;
 }
 const markCaption: Record<Exclude<WorkerMark, null>, string> = {
   question: '질문 있어요',
@@ -118,22 +126,7 @@ export function projectRooms(
   const get = (root: string) => {
     let room = rooms.get(root);
     if (!room) {
-      room = {
-        root,
-        pathLabel: root,
-        repoName: '',
-        connected: false,
-        workers: [],
-        lanes: [],
-        offDuty: [],
-        automations: [],
-        activeCount: 0,
-        observedCount: 0,
-        waitingCount: 0,
-        reportCount: 0,
-        staleCount: 0,
-        latestRun: null,
-      };
+      room = emptyRoom(root);
       rooms.set(root, room);
     }
     return room;
@@ -174,80 +167,107 @@ export function projectRooms(
       length++;
     room.pathLabel = length < parts.length ? '…/' + parts.slice(-length).join('/') : room.root;
     const run = room.latestRun;
-    if (run && !terminal(run.status)) {
-      const reviewing = run.mode === 'collaborate' && run.phase === 'review';
-      const provider = reviewing
-        ? run.implementer === 'codex'
-          ? 'claude'
-          : 'codex'
-        : run.mode === 'collaborate'
-          ? run.implementer
-          : run.mode;
-      const waiting = run.status === 'waiting_approval' || run.status === 'waiting_input';
-      const base = {
-        label: '앱 작업',
-        prompt: run.prompt,
-        stale: false,
-        root: room.root,
-        lane: run.worktreePath,
-        certain: true,
-        updatedAt: run.createdAt,
-        run,
-      };
-      const represented = (p: Provider) =>
-        sessions.some((s) => s.managed?.runId === run.id && s.provider === p);
-      if (!represented(provider))
-        room.workers.push({
-          ...base,
-          id: `run:${run.id}`,
-          identity: provider,
-          provider,
-          family: modelFamily(provider, run.team[provider].model || 'default'),
-          caption:
-            waiting || run.status === 'queued'
-              ? statusLabels[run.status]
-              : run.phase === 'review'
-                ? '코드 검토'
-                : run.phase === 'revise'
-                  ? '수정 작업'
-                  : '구현 작업',
-          active: true,
-          waiting,
-          mark: run.status === 'waiting_input' ? 'question' : waiting ? 'approval' : null,
-        });
-      // The implementer brings the work over and stands by while it is reviewed.
-      if (reviewing && !represented(run.implementer))
-        room.workers.push({
-          ...base,
-          id: `run:${run.id}:implementer`,
-          identity: run.implementer,
-          provider: run.implementer,
-          family: modelFamily(run.implementer, run.team[run.implementer].model || 'default'),
-          caption: '리뷰 받는 중',
-          active: true,
-          waiting: false,
-          mark: null,
-          visiting: `run:${run.id}`,
-        });
-    }
+    if (run && !terminal(run.status)) room.workers.push(...runWorkers(run, room.root, sessions));
     room.lanes = lanes(room);
     const named = room.workers.find((w) => w.session?.repoName)?.session?.repoName ?? '';
     room.repoName = named && named !== parts.at(-1) ? named : '';
-    room.observedCount = room.workers.filter((w) => w.session).length;
-    room.reportCount = room.workers.filter((w) => w.mark === 'report').length;
-    room.offDuty.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    room.workers.sort(
-      (a, b) =>
-        Number(b.waiting) - Number(a.waiting) ||
-        Number(b.active) - Number(a.active) ||
-        a.id.localeCompare(b.id),
-    );
-    room.activeCount = room.workers.filter((w) => w.active).length;
-    room.waitingCount = room.workers.filter((w) => w.waiting).length;
-    room.staleCount = room.workers.filter((w) => w.stale).length;
+    tally(room);
   }
   // Stable rooms: polling must not reshuffle the map while someone is clicking.
   return [...rooms.values()].sort((a, b) => a.root.localeCompare(b.root));
+}
+
+export const emptyRoom = (root: string): ProjectRoom => ({
+  root,
+  pathLabel: root,
+  repoName: '',
+  connected: false,
+  workers: [],
+  lanes: [],
+  offDuty: [],
+  automations: [],
+  activeCount: 0,
+  observedCount: 0,
+  waitingCount: 0,
+  reportCount: 0,
+  staleCount: 0,
+  latestRun: null,
+});
+
+// The desks an unfinished app run takes when no observed session of that run already sits there.
+export function runWorkers(run: Run, root: string, sessions: ObservedSession[]): ProjectWorker[] {
+  const workers: ProjectWorker[] = [];
+  const reviewing = run.mode === 'collaborate' && run.phase === 'review';
+  const provider = reviewing
+    ? run.implementer === 'codex'
+      ? 'claude'
+      : 'codex'
+    : run.mode === 'collaborate'
+      ? run.implementer
+      : run.mode;
+  const waiting = run.status === 'waiting_approval' || run.status === 'waiting_input';
+  const base = {
+    label: '앱 작업',
+    prompt: run.prompt,
+    stale: false,
+    root,
+    lane: run.worktreePath,
+    certain: true,
+    updatedAt: run.createdAt,
+    run,
+  };
+  const represented = (p: Provider) =>
+    sessions.some((s) => s.managed?.runId === run.id && s.provider === p);
+  if (!represented(provider))
+    workers.push({
+      ...base,
+      id: `run:${run.id}`,
+      identity: provider,
+      provider,
+      family: modelFamily(provider, run.team[provider].model || 'default'),
+      caption:
+        waiting || run.status === 'queued'
+          ? statusLabels[run.status]
+          : run.phase === 'review'
+            ? '코드 검토'
+            : run.phase === 'revise'
+              ? '수정 작업'
+              : '구현 작업',
+      active: true,
+      waiting,
+      mark: run.status === 'waiting_input' ? 'question' : waiting ? 'approval' : null,
+    });
+  // The implementer brings the work over and stands by while it is reviewed.
+  if (reviewing && !represented(run.implementer))
+    workers.push({
+      ...base,
+      id: `run:${run.id}:implementer`,
+      identity: run.implementer,
+      provider: run.implementer,
+      family: modelFamily(run.implementer, run.team[run.implementer].model || 'default'),
+      caption: '리뷰 받는 중',
+      active: true,
+      waiting: false,
+      mark: null,
+      visiting: `run:${run.id}`,
+    });
+  return workers;
+}
+
+// Sorts desks and counts what the room shows; run again after workers move between rooms.
+export function tally(room: ProjectRoom) {
+  room.observedCount = room.workers.filter((w) => w.session).length;
+  room.reportCount = room.workers.filter((w) => w.mark === 'report').length;
+  room.offDuty.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  room.workers.sort(
+    (a, b) =>
+      Number(b.waiting) - Number(a.waiting) ||
+      Number(b.active) - Number(a.active) ||
+      a.id.localeCompare(b.id),
+  );
+  room.activeCount = room.workers.filter((w) => w.active).length;
+  room.waitingCount = room.workers.filter((w) => w.waiting).length;
+  room.staleCount = room.workers.filter((w) => w.stale).length;
 }
 
 // Desks are grouped by worktree; subagents sit right after the coworker who spawned them.
@@ -280,13 +300,11 @@ function lanes(room: ProjectRoom): ProjectLane[] {
     // Followers whose lead sits in another lane still get a desk here.
     lane.workers = [...ordered, ...lane.workers.filter((w) => !ordered.includes(w))];
   }
-  return [...byKey.values()].sort(
-    (a, b) =>
-      Number(b.main) - Number(a.main) ||
-      a.branch.localeCompare(b.branch) ||
-      a.key.localeCompare(b.key),
-  );
+  return [...byKey.values()].sort(laneOrder);
 }
+// The main checkout first, then worktrees by branch.
+export const laneOrder = (a: ProjectLane, b: ProjectLane) =>
+  Number(b.main) - Number(a.main) || a.branch.localeCompare(b.branch) || a.key.localeCompare(b.key);
 
 // Keeps only one model family on the floor; rooms without such a coworker disappear.
 export function withFamily(rooms: ProjectRoom[], family: string): ProjectRoom[] {
